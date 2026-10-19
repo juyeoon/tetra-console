@@ -16,7 +16,7 @@ import org.testcontainers.utility.DockerImageName;
 
 /**
  * MySQL 8.4 컨테이너 하나를 모든 통합 테스트가 공유한다.
- * dev-docs/db/init의 DDL로 공용 스키마 1개 + 테넌트 스키마 2개를 만들고, 앱은 DML 권한만 있는 계정으로 붙는다.
+ * db/migration의 DDL(db-schema V1 사본)로 공용 스키마 1개 + 테넌트 스키마 2개를 만들고, 앱은 DML 권한만 있는 계정으로 붙는다.
  */
 public final class MySqlTestDatabase {
 
@@ -28,7 +28,11 @@ public final class MySqlTestDatabase {
 
 	public static final String APP_PASSWORD = "ops_app_pw";
 
-	private static final Path DDL_DIR = Path.of("dev-docs", "db", "init");
+	/**
+	 * 테스트 DDL = db-schema 저장소 V1 사본(api/db/migration, 커밋됨 — 새 clone · CI에서도 돈다).
+	 * 시드 V2는 넣지 않는다 — 이 테스트는 seed/platform_base.sql로 요금제 · 템플릿을 직접 넣는다.
+	 */
+	private static final Path DDL_DIR = Path.of("db", "migration");
 
 	private static final MySQLContainer CONTAINER = new MySQLContainer(DockerImageName.parse("mysql:8.4"))
 		.withDatabaseName("bootstrap")
@@ -63,12 +67,12 @@ public final class MySqlTestDatabase {
 				Statement st = root.createStatement()) {
 			st.execute("CREATE SCHEMA tetra_platform DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci");
 			root.setCatalog("tetra_platform");
-			run(root, ddl("tetra_platform.sql"));
+			run(root, ddl("platform/V1__init_platform_schema.sql"));
 			for (String tenantId : new String[] { TENANT_A, TENANT_B }) {
 				String schema = "t_" + tenantId;
 				st.execute("CREATE SCHEMA " + schema + " DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci");
 				root.setCatalog(schema);
-				run(root, ddl("tenant_schema.sql"));
+				run(root, ddl("tenant/V1__init_tenant_schema.sql"));
 			}
 			// 앱 런타임 계정: tetra_platform.*와 t\_%.*에 DML만 (격리 결정 문서의 계정과 권한)
 			st.execute("CREATE USER '" + APP_USER + "'@'%' IDENTIFIED BY '" + APP_PASSWORD + "'");
