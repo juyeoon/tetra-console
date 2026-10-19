@@ -1,0 +1,50 @@
+# api(Operations Console 백엔드) 전용 규칙. 공통 규칙은 저장소 루트의 .gitignore에 있다.
+HELP.md
+.gradle
+build/
+!gradle/wrapper/gradle-wrapper.jar
+!**/src/main/**/build/
+!**/src/test/**/build/
+
+### 로컬 설정·비밀 (커밋하지 않는다, CLAUDE.md §10) ###
+.env
+application-local.yml
+src/main/resources/application-local.yml
+
+### 참고 문서(사람이 따로 관리)·Claude Code 지침 — 커밋하지 않는다. docs/(작업 로그 등)는 커밋한다 ###
+dev-docs/
+CLAUDE.md
+
+### Kubernetes 매니페스트 — K8s 설계 담당이 관리, 커밋하지 않는다 ###
+deploy/
+
+### STS ###
+.apt_generated
+.classpath
+.factorypath
+.project
+.settings
+.springBeans
+.sts4-cache
+bin/
+!**/src/main/**/bin/
+!**/src/test/**/bin/
+
+### IntelliJ IDEA ###
+.idea
+*.iws
+*.iml
+*.ipr
+out/
+!**/src/main/**/out/
+!**/src/test/**/out/
+
+### NetBeans ###
+/nbproject/private/
+/nbbuild/
+/dist/
+/nbdist/
+/.nb-gradle/
+
+### VS Code ###
+.vscode/

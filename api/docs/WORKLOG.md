@@ -1,0 +1,86 @@
+# WORKLOG
+
+## 2026-10-14 KST — 지침 수정 (DDL 경로, Spring Boot 버전)
+- 한 일: CLAUDE.md의 DDL 경로를 실제 위치 `docs/db/init/`로 고침(§2, §3, §12). 기술 스택을 Spring Boot 4.1.x + Spring Cloud AWS 4.2.x로 바꿈(3.x 무료 지원 종료, 사용자 요청)
+- 파일: CLAUDE.md, WORKLOG.md(신규)
+- 남은 것: Spring Cloud AWS 공식 호환표가 Boot 4.0.x까지라 Boot 4.1에서의 SQS 동작을 통합 테스트로 확인
+
+## 2026-10-14 KST — 지침 수정 (init.sql 역할)
+- 한 일: CLAUDE.md §2·§3에서 `docs/db/init/*.sql`을 "로컬 테스트용 DDL"로 명시. 엔티티 기준은 물리 ERD, 운영 스키마는 WF5 마이그레이션 Job
+- 파일: CLAUDE.md
+- 남은 것: 로컬 실행용 docker-compose(MySQL 8.4 + init.sql) 추가 예정
+
+## 2026-10-14 KST — 프로젝트 뼈대, 엔티티, 테넌트 라우팅
+- 한 일: Spring Initializr로 Boot 4.1.1 / Gradle 9.7.1 프로젝트 생성. Spring Cloud AWS 4.2.0 BOM, AWS SDK(sfn·sesv2·s3) 추가. application.yml(환경 변수 참조만), TetraProperties(@Validated, 비밀 값 기본값 없음). 엔티티 18개(공용 catalog 지정), 상태 enum, 스키마 멀티테넌시(SchemaTenantIdentifierResolver, SchemaMultiTenantConnectionProvider: 반납 시 tetra_platform 복귀, 실패 시 풀에서 제거), 이중 확인(TenantGuardListener). 테스트 기반(MySQL 8.4 Testcontainers, 공용 1 + 테넌트 2 스키마, DML 전용 앱 계정), ddl-auto=validate 테스트 통과
+- 파일: build.gradle, settings.gradle, gradlew*, gradle/, src/main/resources/application.yml, src/main/java/com/tetra/ops/{OpsApiApplication, config/*, tenancy/*, domain/**, common/time/Kst}.java, src/test/java/com/tetra/ops/{SchemaValidationTest, support/MySqlTestDatabase}.java, src/test/resources/{application-test.yml, seed/platform_base.sql}
+- 남은 것: INT UNSIGNED 컬럼은 Long + columnDefinition "int unsigned"로 매핑(TODO(미정) event_id 타입). 오프라인 JDK 21은 ~/.jdks에 설치(JAVA_HOME 지정 필요)
+
+## 2026-10-14 KST — API·상태 변경·리스너 구현
+- 한 일: §6 경로 전체 구현. 오류 응답(ErrorCode enum, GlobalExceptionHandler), JWT 쿠키 인증(Spring Security 리소스 서버 + Nimbus HS256), TenantRouter(eventId/tenantId → READY 확인 → 컨텍스트), EventStatusService(승인·반려·배포 결과, 조건부 UPDATE, registry → event 순서), TenantActivityService.deactivateIfIdle, 승인(slug 재시도 5회, RSA 2048, 커밋 후 SFN·SES), 반려, 이벤트 상세·진행 결과(state 4종)·CSV presigned URL, OPS-03·04 목록, 대시보드, 테넌트 목록·개요(배지)·이벤트·리소스·수정·이메일 확인·등록(WF5, HMAC 링크, OPS-07-1 메일), SQS 리스너 2개, 501 껍데기 3개
+- 파일: src/main/java/com/tetra/ops/{auth, common, config, dashboard, event, external, listener, stub, tenant, tenancy/TenantRouter}/*, domain/**/*Repository.java
+- 남은 것: TODO(미정) — 개인키 메일 문구, SFN input 키 이름·일시 형식, history_file_path 형식, 이메일 형식 규칙, 06-3 정렬, CSRF, READY 아닌 테넌트 응답 코드
+
+## 2026-10-14 KST — §12 테스트, 배포·로컬 실행 파일
+- 한 일: 통합 테스트 67개(MySQL 8.4 Testcontainers, 풀 크기 1로 반납 시 스키마 초기화까지 검증). 승인·반려 트랜잭션 내용, CHECK 제약, 중복 요청·중복 메시지, 교차 접근·이중 확인, 테넌트 비활성, SFN·SES 실패, 비밀 값 로그 미노출, 설정 누락 시 기동 실패, ElasticMQ로 실제 @SqsListener ack/재전달 확인(Boot 4.1 + Spring Cloud AWS 4.2 동작 확인). 이벤트 bulk UPDATE에 tenant_id 조건 추가. 로컬 docker-compose로 실제 jar 스모크 테스트(로그인→승인→409, 로그에 개인키·JWT·비밀번호 없음) 후 정리
+- 파일: src/test/**, .gitignore(.env·application-local.yml·docs/), .gitattributes, .env.example, deploy/example/{deployment,configmap,secret,serviceaccount}.yaml, Dockerfile, docker-compose.yml, docker/local/mysql-init/00-init.sh, docs/db/local/local_seed.sql, build.gradle(plain jar 끔, app.jar), TetraProperties(csv 기본값 버그 수정)
+- 남은 것: docs/를 gitignore에 넣어 테스트가 docs/db/init에 의존(새 clone·CI에서 DDL 필요). 승인 시 hosting_end_at이 이미 지났으면 chk_auth_key_expires로 500
+
+## 2026-10-14 KST — 반려 시 테넌트 알림 기록, 이미지 빌드에서 docs 제외
+- 한 일: 반려 트랜잭션에 tenant_notification INSERT 추가(이벤트명·반려 사유 포함, is_read 0). CLAUDE.md §7.4에서 "테넌트 알림은 기록하지 않는다" 삭제하고 INSERT 항목 추가. .dockerignore로 빌드 컨텍스트를 app.jar만 남김(docs/·init.sql 제외), docker build로 확인. 전체 테스트 68개 통과
+- 파일: CLAUDE.md, src/main/java/com/tetra/ops/event/EventStatusService.java, .../domain/tenant/TenantNotification.java, .../domain/tenant/TenantNotificationRepository.java(신규), src/test/java/com/tetra/ops/RejectApiTest.java, .dockerignore(신규)
+- 남은 것: TODO(미정) 반려 알림 category·priority·문구(임시 APPLICATION / WARNING)
+
+## 2026-10-15 KST — 결정 반영 (승인 409, 비활성 기준, 승인 알림, 총 재고, 배포 결과 보정)
+- 한 일: 호스팅 종료 시각이 지난 신청 승인 시 409 HOSTING_PERIOD_ENDED(트랜잭션 롤백, 외부 호출 없음). 테넌트 비활성 판정을 화면설계서 OPS-06 기준으로 변경(APPLIED 또는 APPROVED·SCHEDULED/OPEN, OPEN_FAILED 제외). 승인 트랜잭션에 tenant_notification INSERT 추가. OPS-04-3 총 재고를 event.stock_count로 변경. SQS 승인 결과 SUCCEEDED면 DEPLOY_FAILED → DEPLOYED도 허용. CLAUDE.md §7.3·§7.4·§7.8·§8 반영. 테스트 72개 통과
+- 파일: CLAUDE.md, src/main/java/com/tetra/ops/{common/error/ErrorCode, event/EventStatusService, event/EventReader, domain/platform/EventRegistryRepository, tenant/TenantActivityService}.java, src/test/java/com/tetra/ops/{ApproveApiTest, RejectApiTest, StepFunctionsResultHandlerTest, EventQueryApiTest}.java
+- 남은 것: TODO(미정) 승인 알림 priority·문구(임시 INFO). OPS-04-3 탭 막기 조건은 프런트·화면설계서 담당과 확인
+
+## 2026-10-15 KST — 상태 변화 알림 (운영자·테넌트)
+- 한 일: NotificationService 추가(알림은 이 서비스에서만). 승인·반려(운영자+테넌트), 배포 결과(PENDING→DEPLOYED/DEPLOY_FAILED, DEPLOY_FAILED→DEPLOYED), 테넌트 등록·자동 비활성, 환경 준비 READY/FAILED, 개인키·비밀번호 설정 메일 실패를 운영자 알림으로 남김. 우선순위는 추천표대로(실패 URGENT, 반려 WARNING, 그 외 INFO). 중복 메시지는 상태가 안 바뀌어 알림도 1건. CLAUDE.md §5·§7.3·§7.4·§7.12·§8 수정, §7.13 알림 표 추가. 테스트 78개 통과
+- 파일: CLAUDE.md, src/main/java/com/tetra/ops/notification/NotificationService.java(신규), .../domain/platform/OperatorNotification.java, .../event/{EventStatusService, EventCommandService}.java, .../tenant/{TenantActivityService, TenantWriter, TenantCommandService}.java, .../listener/StepFunctionsResultHandler.java, src/test/java/com/tetra/ops/NotificationTest.java(신규)
+- 남은 것: TODO(미정) 알림 문구
+
+## 2026-10-15 KST — 저장소 구조 변경 (api/ 하위로 이동)
+- 한 일: 프런트와 저장소를 같이 쓰기 위해 이 앱의 파일 전체를 api/ 아래로 옮김(docs/ 포함, build·.gradle은 지우고 다시 빌드). 루트에 공통 .gitignore(OS·IDE·.env)와 .gitattributes(gradlew·*.sh LF, *.bat·*.cmd CRLF, *.jar binary) 새로 작성, 기존 .gitignore는 api/.gitignore(앱 전용)로 둠. CLAUDE.md에 저장소 구조 설명 추가, WORKLOG 위치를 api/로 정정. api/에서 전체 빌드·테스트 78개 통과
+- 파일: ../.gitignore(신규), ../.gitattributes(이동·수정), .gitignore, CLAUDE.md, (그 외 전 파일 경로 이동)
+- 남은 것: 없음
+
+## 2026-10-15 KST — 문서 폴더 정리, deploy·지침 ignore, K8s 이식 문서
+- 한 일: 참고 문서 폴더 docs/ → dev-docs/(커밋하지 않음)로 이름 변경, 새 docs/(커밋함)를 만들고 WORKLOG.md를 docs/로 이동. api/.gitignore에 dev-docs/·CLAUDE.md·deploy/ 추가(deploy는 K8s 설계 담당이 관리). 테스트(MySqlTestDatabase)·docker-compose·.dockerignore의 경로를 dev-docs로 변경. CLAUDE.md에 문서 폴더 규칙 추가, §2·§3·§10·§12·§13·작업 로그 경로 수정. K8s 설계 담당용 dev-docs/K8s_이식_반영사항.md 작성(환경 변수, IRSA 권한, 사전 인프라, DB, 프로브·종료, 확장, 네트워크·HTTPS, 예시 매니페스트). 전체 테스트 78개 통과
+- 파일: docs/WORKLOG.md(이동), dev-docs/(이름 변경), dev-docs/K8s_이식_반영사항.md(신규), .gitignore, .dockerignore, docker-compose.yml, CLAUDE.md, src/test/java/com/tetra/ops/{SchemaValidationTest, support/MySqlTestDatabase}.java
+- 남은 것: K8s 문서의 리소스 값·Secret 채우는 방식은 담당 결정
+
+## 2026-10-15 KST — 팀 브랜치·커밋 규칙을 지침에 반영
+- 한 일: CLAUDE.md Git 항목에 팀 규칙 추가(브랜치 <type>/<이슈번호>-<설명>, type 9종, 커밋 <type>(<scope>): <요약> + 본문 + Refs #이슈, scope는 web·api, 봇 형식 제외)
+- 파일: CLAUDE.md
+- 남은 것: 규칙 강제(commit-msg 훅·CI)와 루트 문서 위치는 확인 후 진행
+
+## 2026-10-15 KST — 화면(web)과 한 이미지로 서빙: 보안 설정·SPA 경로·dist 포함
+- 한 일: SecurityConfig를 /api/**·/actuator/**만 인증, 나머지(화면 파일) 공개로 변경. CookieBearerTokenResolver가 인증 경로에서만 쿠키를 읽게 함(화면 요청에 만료 쿠키가 붙어도 401 안 남). SpaWebConfig 추가(있는 파일은 그대로, /api/**·확장자 있는 경로는 넘기지 않음, 그 밖은 index.html). build.gradle processResources에서 ../web/dist를 classpath:static/에 포함(JAR, WAR 아님). 폴더 이름은 컨벤션대로 web/. CLAUDE.md 저장소 구조·§3 반영, Dockerfile·.gitattributes 주석 수정. SpaRoutingTest 5개 추가(테스트용 static은 src/test/resources/static), 임시 복사본에서 web/dist가 jar의 static/에 들어가는 것 확인. 전체 테스트 83개 통과
+- 파일: src/main/java/com/tetra/ops/config/{SecurityConfig, SpaWebConfig(신규)}.java, .../auth/CookieBearerTokenResolver.java, build.gradle, Dockerfile, CLAUDE.md, ../.gitattributes, src/test/java/com/tetra/ops/SpaRoutingTest.java(신규), src/test/resources/static/{index.html, assets/app.js}(신규)
+- 남은 것: 정적 파일 캐시 헤더(index.html no-cache, 해시 파일 장기 캐시)는 web 빌드 결과를 보고 결정
+
+## 2026-10-15 KST — 프런트용 API 문서 자동 생성 (springdoc)
+- 한 일: springdoc-openapi-starter-webmvc-ui 3.1.1 추가(Spring Boot 4.1 기준 버전). /v3/api-docs(JSON)·/swagger-ui.html, 문서화 대상 /api/**, API_DOCS_ENABLED로만 켬(기본 false). OpenApiConfig: 설명(쿠키 인증·일시 +09:00·상태 값·오류 형식), 쿠키 인증 스킴, ErrorResponse 스키마, @ApiErrorCodes로 엔드포인트별 오류 code를 상태 코드별로 문서화(401·500 자동). 컨트롤러에 화면 ID 태그·설명, 요청·응답 주요 필드 @Schema. ApiDocsTest 3개(경로 19개·쿠키 인증·오류 code·Swagger UI), 테스트가 build/openapi.json을 남김. CLAUDE.md §10·.env.example·K8s 문서에 API_DOCS_ENABLED 추가. 전체 테스트 86개 통과
+- 파일: build.gradle, src/main/resources/application.yml, .env.example, src/main/java/com/tetra/ops/config/OpenApiConfig.java(신규), .../common/error/{ApiErrorCodes(신규), ErrorResponse}.java, .../{auth/AuthController, dashboard/DashboardController, event/EventController, event/EventCommandService, tenant/TenantController, tenant/TenantCommandService, stub/NotImplementedController}.java, src/test/java/com/tetra/ops/ApiDocsTest.java(신규), src/test/resources/application-test.yml, CLAUDE.md, dev-docs/K8s_이식_반영사항.md
+- 남은 것: TODO(미정) 운영 환경 문서 노출 여부(지금은 기본 꺼짐)
+
+## 2026-10-15 KST — 로컬 테스트 환경
+- 한 일: local 프로필 추가 — LocalStepFunctionsGateway(호출 생략, 시작됨 처리), LocalMailGateway(build/local-mail/에 파일 저장, 본문은 로그에 안 남김), 실제 AWS 구현은 @Profile("!local"). docker-compose에 ElasticMQ(결과 큐 2개) 추가, MySQL healthcheck. bootRun이 api/.env를 환경 변수로 읽게 함. 스크립트: docker/local/send-sfn-result.ps1(결과 메시지 전송), create-tenant-schema.ps1(새 테넌트 스키마). docs/로컬_실행.md 작성. .env.example에 로컬 전용 키, 루트 .gitattributes에 *.ps1 CRLF. 로컬 .env(커밋하지 않음) 생성. 실제로 띄워 로그인→승인(개인키 메일 파일)→SQS 결과(DEPLOYED)→테넌트 등록(링크 메일 파일)→스키마 생성→READY→대시보드 알림까지 확인 후 데이터 초기화. 전체 테스트 86개 통과
+- 파일: src/main/java/com/tetra/ops/external/{LocalStepFunctionsGateway, LocalMailGateway}.java(신규), .../external/{AwsStepFunctionsGateway, SesMailGateway}.java, docker-compose.yml, docker/local/{elasticmq.conf, send-sfn-result.ps1, create-tenant-schema.ps1}(신규), build.gradle, .env.example, docs/로컬_실행.md(신규), CLAUDE.md, ../.gitattributes
+- 남은 것: 없음
+
+## 2026-10-15 KST — 로컬 실행 가이드를 dev-docs로 이동
+- 한 일: docs/로컬_실행.md를 dev-docs/로컬_실행.md로 옮김(커밋하지 않음). 로컬 실행 코드·compose·스크립트는 커밋 대상으로 둠. .env·.env.example·docker-compose.yml·CLAUDE.md의 가이드 경로 수정
+- 파일: dev-docs/로컬_실행.md(이동), .env.example, docker-compose.yml, CLAUDE.md
+- 남은 것: 없음
+
+## 2026-10-15 KST — 진행 결과 탭 판정값, CSV 다운로드 헤더
+- 한 일: 이벤트 상세 응답 status에 resultAvailable 추가(결과 API와 같은 state 판정 resultState를 공유, IN_PROGRESS면 false → 프런트가 OPS-04 진행 결과 탭을 막음). CSV presigned URL에 Content-Disposition: attachment(filename=issuance-history-{event_id}.csv)를 넣어 파일로 저장되게 함. CLAUDE.md §7.5·§7.8 반영. 테스트 추가(상태별 resultAvailable, S3 서명 URL 헤더). 전체 테스트 88개 통과
+- 파일: src/main/java/com/tetra/ops/event/{EventReader, EventDetailResponse, EventQueryService}.java, .../external/{DownloadUrlSigner, S3DownloadUrlSigner}.java, src/test/java/com/tetra/ops/{EventQueryApiTest, external/S3DownloadUrlSignerTest(신규)}.java, CLAUDE.md
+- 남은 것: OPS-08 알림센터는 Portal 화면 확정 후
+
+## 2026-10-15 KST — 물리 ERD 갱신 반영 (template 정리, event.layout_config)
+- 한 일: template에서 위치·테마 5개 컬럼 삭제(타입당 1행, uk_template_event_type), event에 layout_config(JSON, 읽기 전용) 추가. 승인 Step Functions input에 layout_config를 JSON 객체로 추가(물리·논리 ERD "event.json layout으로 그대로 전달"). 테스트 seed·TestData·로컬 seed 갱신(템플릿 file_path apps/coupon/, 이벤트 layout_config). CLAUDE.md §7.3 input 목록 수정. 새 DDL로 엔티티 검증 포함 전체 테스트 88개 통과, 로컬 DB를 새 DDL로 다시 만들어 seed 적재 확인
+- 파일: src/main/java/com/tetra/ops/domain/platform/Template.java, .../domain/tenant/Event.java, .../event/EventCommandService.java, src/test/resources/seed/platform_base.sql, src/test/java/com/tetra/ops/{support/TestData, ApproveApiTest}.java, dev-docs/db/local/local_seed.sql, CLAUDE.md
+- 남은 것: TODO(미정) Step Functions input 키 이름은 담당과 맞춤(layout_config 포함)

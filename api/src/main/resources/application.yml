@@ -1,0 +1,67 @@
+# 키와 ${ENV_NAME} 참조만 둔다. 환경별 값·비밀 값은 ConfigMap·Secret(환경 변수)으로 주입한다 (CLAUDE.md §10).
+# 기본값은 비밀이 아니고 환경과 무관한 값에만 둔다.
+spring:
+  application:
+    name: tetra-ops-api
+  datasource:
+    url: ${DB_URL}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+  jpa:
+    open-in-view: false   # 요청 시작 때 기본 스키마로 세션이 열리지 않도록 끈다 (라우팅은 트랜잭션 시작 시점에 결정)
+    hibernate:
+      ddl-auto: none      # 스키마를 만들거나 바꾸지 않는다
+  jackson:
+    time-zone: Asia/Seoul
+  cloud:
+    aws:
+      region:
+        static: ${AWS_REGION}
+  lifecycle:
+    timeout-per-shutdown-phase: 30s
+
+server:
+  shutdown: graceful
+
+# 프런트용 API 문서(/v3/api-docs, /swagger-ui.html). 기본 꺼짐, dev 등에서 API_DOCS_ENABLED=true로 켠다
+springdoc:
+  api-docs:
+    enabled: ${API_DOCS_ENABLED:false}
+  swagger-ui:
+    enabled: ${API_DOCS_ENABLED:false}
+  paths-to-match: /api/**
+  default-produces-media-type: application/json
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      group:
+        readiness:
+          include: readinessState,db
+
+tetra:
+  env: ${TETRA_ENV}
+  aws:
+    region: ${AWS_REGION}
+  sfn:
+    approve-state-machine-arn: ${SFN_APPROVE_STATE_MACHINE_ARN}
+    tenant-state-machine-arn: ${SFN_TENANT_STATE_MACHINE_ARN}
+  sqs:
+    approve-result-queue: ${SQS_APPROVE_RESULT_QUEUE}
+    tenant-result-queue: ${SQS_TENANT_RESULT_QUEUE}
+  mail:
+    from: ${MAIL_FROM}
+  portal:
+    base-url: ${PORTAL_BASE_URL}
+  csv:
+    presign-ttl: ${CSV_PRESIGN_TTL:PT5M}
+  auth:
+    jwt-secret: ${OPS_JWT_SECRET}
+  password-link:
+    hmac-secret: ${PASSWORD_LINK_HMAC_SECRET}
