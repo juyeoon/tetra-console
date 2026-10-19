@@ -14,7 +14,7 @@ import com.tetra.ops.support.MySqlTestDatabase;
 import jakarta.persistence.EntityManagerFactory;
 
 /**
- * 엔티티 매핑이 DDL(dev-docs/db/init)과 맞는지 ddl-auto=validate로 확인한다 (§12).
+ * 엔티티 매핑이 DDL(db/migration — db-schema V1 사본)과 맞는지 ddl-auto=validate로 확인한다 (§12).
  * 공용 엔티티는 catalog(tetra_platform)로, 테넌트 엔티티는 기본 스키마(t_aaaaaaaaaaaa)로 검증된다.
  */
 @SpringBootTest
