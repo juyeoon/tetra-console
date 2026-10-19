@@ -1,0 +1,59 @@
+import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { Avatar, Box, ButtonBase, Divider, ListItemIcon, Menu, MenuItem, Typography } from '@mui/material';
+import KeyboardArrowDownRoundedIcon from '@mui/icons-material/KeyboardArrowDownRounded';
+import LogoutOutlinedIcon from '@mui/icons-material/LogoutOutlined';
+import SettingsOutlinedIcon from '@mui/icons-material/SettingsOutlined';
+import { mockOperator } from '@/mocks/dashboard';
+import { color, font, ink, radius, size, text, tones, type } from '@/theme/theme';
+
+export default function UserMenu() {
+  const navigate = useNavigate();
+  const [anchor, setAnchor] = useState<HTMLElement | null>(null);
+
+  return (
+    <>
+      <ButtonBase
+        onClick={(e) => setAnchor(e.currentTarget)}
+        sx={{ gap: 1, px: 1, py: 0.5, borderRadius: radius.md, '&:hover': { bgcolor: ink[5] } }}
+      >
+        <Avatar sx={{ width: size.avatarSm, height: size.avatarSm, bgcolor: color.periTint, color: color.navy, ...type.caption, fontWeight: font.weight.semibold }}>{mockOperator.name.slice(0, 1)}</Avatar>
+        <Typography variant="body1" sx={{ display: { xs: 'none', sm: 'block' }, whiteSpace: 'nowrap', fontWeight: font.weight.medium }}>
+          {mockOperator.name}님
+        </Typography>
+        <KeyboardArrowDownRoundedIcon sx={{ fontSize: size.iconSm, color: text.tertiary }} />
+      </ButtonBase>
+      <Menu
+        anchorEl={anchor}
+        open={!!anchor}
+        onClose={() => setAnchor(null)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+        transformOrigin={{ vertical: 'top', horizontal: 'right' }}
+        slotProps={{ paper: { sx: { mt: 0.5, minWidth: 220 } } }}
+      >
+        <Box sx={{ px: 2, py: 1 }}>
+          <Typography variant="subtitle1">{mockOperator.name}</Typography>
+          <Typography variant="caption">{mockOperator.email}</Typography>
+        </Box>
+        <Divider sx={{ my: 0.5 }} />
+        <MenuItem
+          onClick={() => {
+            setAnchor(null);
+            navigate('/settings');
+          }}
+        >
+          <ListItemIcon>
+            <SettingsOutlinedIcon sx={{ fontSize: size.iconMd }} />
+          </ListItemIcon>
+          시스템 설정
+        </MenuItem>
+        <MenuItem onClick={() => navigate('/login')} sx={{ color: tones.red.fg }}>
+          <ListItemIcon sx={{ color: 'inherit' }}>
+            <LogoutOutlinedIcon sx={{ fontSize: size.iconMd }} />
+          </ListItemIcon>
+          로그아웃
+        </MenuItem>
+      </Menu>
+    </>
+  );
+}
