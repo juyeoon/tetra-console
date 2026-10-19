@@ -1,0 +1,94 @@
+plugins {
+	id 'java'
+	id 'org.springframework.boot' version '4.1.1'
+	id 'io.spring.dependency-management' version '1.1.7'
+}
+
+group = 'com.tetra'
+version = '0.0.1-SNAPSHOT'
+
+java {
+	toolchain {
+		languageVersion = JavaLanguageVersion.of(21)
+	}
+}
+
+repositories {
+	mavenCentral()
+}
+
+dependencyManagement {
+	imports {
+		// Spring Cloud AWS(@SqsListener)와 AWS SDK v2 버전을 함께 맞춘다.
+		// 공식 호환표는 Boot 4.0.x까지라 Boot 4.1과의 동작은 통합 테스트(SqsListenerContainerTest, ElasticMQ)로 확인한다.
+		mavenBom 'io.awspring.cloud:spring-cloud-aws-dependencies:4.2.0'
+	}
+}
+
+dependencies {
+	implementation 'org.springframework.boot:spring-boot-starter-actuator'
+	implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+	implementation 'org.springframework.boot:spring-boot-starter-security'
+	// 운영자 JWT(HS256) 발급·검증. Spring Security에 포함된 Nimbus를 쓰려고 추가 (별도 JWT 라이브러리 대신)
+	implementation 'org.springframework.boot:spring-boot-starter-security-oauth2-resource-server'
+	implementation 'org.springframework.boot:spring-boot-starter-validation'
+	implementation 'org.springframework.boot:spring-boot-starter-webmvc'
+	implementation 'io.awspring.cloud:spring-cloud-aws-starter-sqs'
+	// 프런트용 API 문서 자동 생성(OpenAPI JSON + Swagger UI). 3.1.x가 Spring Boot 4.1 기준. API_DOCS_ENABLED로만 켠다
+	implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:3.1.1'
+	implementation 'software.amazon.awssdk:sfn'
+	implementation 'software.amazon.awssdk:sesv2'
+	implementation 'software.amazon.awssdk:s3'
+	runtimeOnly 'com.mysql:mysql-connector-j'
+	annotationProcessor 'org.springframework.boot:spring-boot-configuration-processor'
+
+	testImplementation 'org.springframework.boot:spring-boot-starter-data-jpa-test'
+	testImplementation 'org.springframework.boot:spring-boot-starter-security-test'
+	testImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
+	testImplementation 'org.springframework.boot:spring-boot-testcontainers'
+	testImplementation 'org.testcontainers:testcontainers-junit-jupiter'
+	testImplementation 'org.testcontainers:testcontainers-mysql'
+	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+// 화면(web/)과 API를 한 이미지로: CI가 먼저 web/에서 빌드한 dist/를 classpath:static/에 넣는다.
+// dist가 없으면(API만 로컬 개발) 아무것도 넣지 않고 지나간다.
+tasks.named('processResources') {
+	from('../web/dist') {
+		into 'static'
+	}
+}
+
+// 로컬 실행: api/.env(커밋하지 않음)의 KEY=VALUE를 환경 변수로 넣어 띄운다. 운영과 같은 방식(환경 변수)으로 설정을 받는다.
+tasks.named('bootRun') {
+	def envFile = file('.env')
+	if (envFile.exists()) {
+		envFile.eachLine('UTF-8') { line ->
+			def trimmed = line.trim()
+			if (trimmed && !trimmed.startsWith('#') && trimmed.contains('=')) {
+				def (key, value) = [trimmed.substring(0, trimmed.indexOf('=')).trim(), trimmed.substring(trimmed.indexOf('=') + 1).trim()]
+				if (value.length() >= 2 && ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'")))) {
+					value = value.substring(1, value.length() - 1)
+				}
+				if (value) {
+					environment key, value
+				}
+			}
+		}
+	}
+}
+
+// 컨테이너 이미지에는 실행 가능한 jar 하나만 넣는다
+tasks.named('jar') {
+	enabled = false
+}
+
+tasks.named('bootJar') {
+	archiveFileName = 'app.jar'
+}
+
+tasks.named('test') {
+	useJUnitPlatform()
+	systemProperty 'user.timezone', 'Asia/Seoul'
+	jvmArgs '-Dfile.encoding=UTF-8', '-Dstdout.encoding=UTF-8', '-Dstderr.encoding=UTF-8'
+}

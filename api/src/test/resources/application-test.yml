@@ -1,0 +1,43 @@
+# 테스트 전용 값. 실제 환경 값·비밀이 아니다.
+spring:
+  datasource:
+    # url·username·password는 테스트 베이스 클래스가 Testcontainers 값으로 넣는다
+    url: jdbc:mysql://placeholder/tetra_platform
+    username: placeholder
+    password: placeholder
+  cloud:
+    aws:
+      region:
+        static: ap-northeast-2
+      credentials:
+        access-key: test
+        secret-key: test
+      sqs:
+        enabled: false
+
+springdoc:
+  api-docs:
+    enabled: true
+  swagger-ui:
+    enabled: true
+
+tetra:
+  env: test
+  aws:
+    region: ap-northeast-2
+  sfn:
+    approve-state-machine-arn: arn:aws:states:ap-northeast-2:000000000000:stateMachine:approve
+    tenant-state-machine-arn: arn:aws:states:ap-northeast-2:000000000000:stateMachine:tenant
+  sqs:
+    approve-result-queue: approve-result
+    tenant-result-queue: tenant-result
+  mail:
+    from: Tetra Operation <no-reply@tetra-operation.com>
+  portal:
+    base-url: https://portal.example.test
+  csv:
+    presign-ttl: PT5M
+  auth:
+    jwt-secret: test-jwt-secret-0123456789abcdef0123456789
+  password-link:
+    hmac-secret: test-hmac-secret
