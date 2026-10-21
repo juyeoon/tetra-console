@@ -144,8 +144,8 @@ public class EventCommandService {
 	}
 
 	/**
-	 * Step Functions input. TODO(미정): 키 이름과 일시 형식은 승인 등록 state machine 담당과 맞춤.
-	 * 임시로 snake_case 키, 일시는 +09:00이 붙은 ISO-8601.
+	 * 승인 등록 워크플로우(ops-workflows WF1-2) input. 키는 snake_case, event_id는 숫자,
+	 * 일시 4개는 KST 벽시계 yyyy-MM-dd'T'HH:mm:ss(오프셋 없음, 초 항상 포함), layout_config는 JSON 객체.
 	 */
 	private String approveInput(RoutedEvent routed, Event event) {
 		String templateFilePath = templates.findById(event.getTemplateId())
@@ -160,10 +160,13 @@ public class EventCommandService {
 		input.put("layout_config", jsonMapper.readTree(event.getLayoutConfig()));
 		input.put("banner_image_path", event.getBannerImagePath());
 		input.put("traffic_plan_code", event.getTrafficPlanCode());
-		input.put("hosting_start_at", Kst.toOffset(event.getHostingStartAt()).toString());
-		input.put("start_at", Kst.toOffset(event.getStartAt()).toString());
-		input.put("end_at", Kst.toOffset(event.getEndAt()).toString());
-		input.put("hosting_end_at", Kst.toOffset(event.getHostingEndAt()).toString());
+		input.put("hosting_start_at", Kst.wallClock(event.getHostingStartAt()));
+		input.put("start_at", Kst.wallClock(event.getStartAt()));
+		input.put("end_at", Kst.wallClock(event.getEndAt()));
+		input.put("hosting_end_at", Kst.wallClock(event.getHostingEndAt()));
+		// event.json의 name·returnUrl이 된다
+		input.put("name", event.getName());
+		input.put("endpoint_url", event.getEndpointUrl());
 		return jsonMapper.writeValueAsString(input);
 	}
 

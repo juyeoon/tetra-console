@@ -115,6 +115,10 @@ class StepFunctionsResultHandlerTest extends IntegrationTest {
 		handler.handleApproveResult(message("approve-abc", "SUCCEEDED", null, null));
 		handler.handleApproveResult(message("approve-" + EVENT_ID, "RUNNING", null, null));
 		handler.handleApproveResult(message("approve-999999", "SUCCEEDED", null, null));
+		// 재실행 접미어는 -r 뒤에 숫자가 있어야 한다
+		handler.handleApproveResult(message("approve-" + EVENT_ID + "-r", "SUCCEEDED", null, null));
+		handler.handleApproveResult(message("approve-" + EVENT_ID + "-rx", "SUCCEEDED", null, null));
+		handler.handleApproveResult(message("approve-" + EVENT_ID + "-r1-r2", "SUCCEEDED", null, null));
 
 		assertThat(data.registry(EVENT_ID)).containsEntry("hosting_status", "PENDING");
 		assertThat(hostingLogs()).isEmpty();
@@ -163,6 +167,65 @@ class StepFunctionsResultHandlerTest extends IntegrationTest {
 		handler.handleTenantResult(message("tenant-zzzzzzzzzzzz", "SUCCEEDED", null, null));
 
 		assertThat(data.tenantRow(B)).containsEntry("provisioning_status", "PROVISIONING");
+	}
+
+	// ---- 수동 재실행 (실행 이름 끝 -rN, ops-workflows 계약) ----
+
+	@Test
+	void approveRerunNameIsAcceptedAndCorrectsDeployFailed() {
+		data.event(12, A).approved("DEPLOY_FAILED", "SCHEDULED", "rerun012").insert();
+
+		handler.handleApproveResult(message("approve-12-r1", "SUCCEEDED", null, null));
+
+		assertThat(data.registry(12)).containsEntry("hosting_status", "DEPLOYED");
+		assertThat(data.eventRow(A, 12)).containsEntry("hosting_status", "DEPLOYED");
+		List<Map<String, Object>> logs = data.statusLogs(A, 12)
+			.stream()
+			.filter(l -> "HOSTING".equals(l.get("status_type")))
+			.toList();
+		assertThat(logs).hasSize(1);
+		assertThat(logs.get(0)).containsEntry("prev_status", "DEPLOY_FAILED").containsEntry("new_status", "DEPLOYED");
+	}
+
+	@Test
+	void approveRerunWithPendingEventMarksDeployed() {
+		handler.handleApproveResult(message("approve-" + EVENT_ID + "-r2", "SUCCEEDED", null, null));
+
+		assertThat(data.registry(EVENT_ID)).containsEntry("hosting_status", "DEPLOYED");
+	}
+
+	@Test
+	void tenantRerunSucceededTurnsFailedIntoReady() {
+		data.tenant(B, "B사", "INACTIVE", "FAILED");
+
+		handler.handleTenantResult(message("tenant-" + B + "-r1", "SUCCEEDED", null, null));
+		handler.handleTenantResult(message("tenant-" + B + "-r1", "SUCCEEDED", null, null));
+
+		assertThat(data.tenantRow(B)).containsEntry("provisioning_status", "READY");
+		assertThat(data.count("SELECT COUNT(*) FROM tetra_platform.operator_notification WHERE tenant_id = ?", B))
+			.isEqualTo(1);
+	}
+
+	@ParameterizedTest
+	@ValueSource(strings = { "FAILED", "TIMED_OUT", "ABORTED" })
+	void tenantRerunFailureKeepsFailed(String status) {
+		data.tenant(B, "B사", "INACTIVE", "FAILED");
+
+		handler.handleTenantResult(message("tenant-" + B + "-r2", status, "E", "C"));
+
+		assertThat(data.tenantRow(B)).containsEntry("provisioning_status", "FAILED");
+		assertThat(data.count("SELECT COUNT(*) FROM tetra_platform.operator_notification WHERE tenant_id = ?", B))
+			.isZero();
+	}
+
+	@Test
+	void readyTenantIsNotChangedByLateResults() {
+		data.tenant(B, "B사", "INACTIVE", "READY");
+
+		handler.handleTenantResult(message("tenant-" + B + "-r1", "FAILED", "E", "C"));
+		handler.handleTenantResult(message("tenant-" + B, "SUCCEEDED", null, null));
+
+		assertThat(data.tenantRow(B)).containsEntry("provisioning_status", "READY");
 	}
 
 }

@@ -28,9 +28,10 @@ public class StepFunctionsResultHandler {
 
 	private static final Logger log = LoggerFactory.getLogger(StepFunctionsResultHandler.class);
 
-	private static final Pattern APPROVE_NAME = Pattern.compile("^approve-(\\d{1,10})$");
+	// 수동 재실행은 실행 이름 끝에 -r1, -r2…가 붙는다(ops-workflows 계약). event_id는 INT UNSIGNED라 10자리 이하
+	private static final Pattern APPROVE_NAME = Pattern.compile("^approve-(\\d{1,10})(-r\\d+)?$");
 
-	private static final Pattern TENANT_NAME = Pattern.compile("^tenant-([a-z0-9]{12})$");
+	private static final Pattern TENANT_NAME = Pattern.compile("^tenant-([a-z0-9]{12})(-r\\d+)?$");
 
 	private final JsonMapper jsonMapper;
 

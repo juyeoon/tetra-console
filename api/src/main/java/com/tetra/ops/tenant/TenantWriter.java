@@ -61,15 +61,23 @@ class TenantWriter {
 		return tenant;
 	}
 
-	/** provisioning_status PROVISIONING → READY / FAILED. 상태 로그는 없고 운영자 알림만 남긴다. @return 바꿨으면 true */
+	/**
+	 * 환경 준비 결과 반영. 상태 로그는 없고 운영자 알림만 남긴다.
+	 * - 실패: PROVISIONING → FAILED
+	 * - 성공: PROVISIONING → READY, 또는 FAILED → READY (실패 뒤 수동 재실행 tenant-{id}-rN이 성공한 경우)
+	 * 이미 FAILED인데 실패가 다시 오면 그대로 둔다(승인 쪽 DEPLOY_FAILED → DEPLOYED와 같은 방식, 조건부 UPDATE).
+	 * @return 바꿨으면 true, 바꿀 상태가 아니면(이미 처리됨) false
+	 */
 	@Transactional
 	public boolean finishProvisioning(String tenantId, boolean succeeded, String detail) {
-		ProvisioningStatus to = succeeded ? ProvisioningStatus.READY : ProvisioningStatus.FAILED;
-		if (tenants.updateProvisioningStatus(tenantId, ProvisioningStatus.PROVISIONING, to) == 0) {
-			return false;
+		boolean changed = succeeded
+				? tenants.updateProvisioningStatus(tenantId, ProvisioningStatus.PROVISIONING, ProvisioningStatus.READY) == 1
+						|| tenants.updateProvisioningStatus(tenantId, ProvisioningStatus.FAILED, ProvisioningStatus.READY) == 1
+				: tenants.updateProvisioningStatus(tenantId, ProvisioningStatus.PROVISIONING, ProvisioningStatus.FAILED) == 1;
+		if (changed) {
+			notifications.provisioningFinished(tenantId, succeeded, detail);
 		}
-		notifications.provisioningFinished(tenantId, succeeded, detail);
-		return true;
+		return changed;
 	}
 
 	@Transactional
