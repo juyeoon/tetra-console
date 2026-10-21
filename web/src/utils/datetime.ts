@@ -26,6 +26,24 @@ export function formatDateTime(iso: string | null | undefined): string {
   return t ? `${t.y}.${t.mo}.${t.d} ${t.h}:${t.mi}` : '-';
 }
 
+/** '2026-10-20T18:09:11+09:00' → '18:09' (차트 축). 값이 없으면 '-' */
+export function formatTime(iso: string | null | undefined): string {
+  const t = iso ? kst(iso) : null;
+  return t ? `${t.h}:${t.mi}` : '-';
+}
+
+/** 지금 기준 경과 — '방금 전' · 'N분 전' · 'N시간 전' · 'N일 전'(7일 미만), 그보다 오래면 날짜. 미래 값은 '방금 전' */
+export function formatRelative(iso: string | null | undefined, now: Date): string {
+  const date = iso ? new Date(iso) : null;
+  if (!date || Number.isNaN(date.getTime())) return '-';
+  const minutes = Math.floor((now.getTime() - date.getTime()) / 60_000);
+  if (minutes < 1) return '방금 전';
+  if (minutes < 60) return `${minutes}분 전`;
+  if (minutes < 60 * 24) return `${Math.floor(minutes / 60)}시간 전`;
+  if (minutes < 60 * 24 * 7) return `${Math.floor(minutes / (60 * 24))}일 전`;
+  return formatDate(iso);
+}
+
 /** '2026-10-20T18:09:11+09:00' → '2026.10.20'. 값이 없으면 '-' */
 export function formatDate(iso: string | null | undefined): string {
   const t = iso ? kst(iso) : null;

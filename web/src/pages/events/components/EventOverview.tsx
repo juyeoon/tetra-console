@@ -5,16 +5,14 @@ import InfoList from '@/components/common/InfoList';
 import PlanBadge from '@/components/common/PlanBadge';
 import SectionTitle from '@/components/common/SectionTitle';
 import StatusChip, { EmptyValue } from '@/components/common/StatusChip';
-import { useAppData } from '@/store/AppDataContext';
 import { type } from '@/theme/theme';
-import type { TetraEvent } from '@/types';
-import { publicKeyOf, subdomainOf } from '@/utils/event';
 import { formatNumber, formatPeriod } from '@/utils/format';
 import { applicationStatusMeta, eventStatusMeta, eventTypeLabel, hostingStatusMeta } from '@/utils/status';
+import type { EventView } from '../eventView';
 import StatusTimeline from './StatusTimeline';
 
 interface EventOverviewProps {
-  event: TetraEvent;
+  event: EventView;
   /** 신청상태 행 오른쪽 끝에 놓일 승인/반려 버튼 (승인 대기 중일 때만 전달) */
   statusActions?: ReactNode;
 }
@@ -24,17 +22,14 @@ interface EventOverviewProps {
  * 좌측: 기본 정보 / 우측: 상태 + 리소스 / 하단: 신청 상태 로그
  */
 export default function EventOverview({ event, statusActions }: EventOverviewProps) {
-  const { getTenant } = useAppData();
   const appMeta = applicationStatusMeta[event.applicationStatus];
-  const domain = subdomainOf(event);
-  const publicKey = publicKeyOf(event);
 
   const basic = [
     { label: '이벤트ID', value: event.id },
     { label: '이벤트명', value: event.name },
-    { label: '이벤트타입', value: eventTypeLabel[event.type] },
+    { label: '이벤트타입', value: eventTypeLabel[event.type] ?? event.type },
     { label: '테넌트ID', value: <Box sx={type.mono}>{event.tenantId}</Box> },
-    { label: '테넌트명', value: getTenant(event.tenantId)?.name ?? '-' },
+    { label: '테넌트명', value: event.tenantName },
     { label: '호스팅 기간', value: formatPeriod(event.hostingPeriod.start, event.hostingPeriod.end) },
     { label: '이벤트 기간', value: formatPeriod(event.eventPeriod.start, event.eventPeriod.end) },
     { label: '구매 플랜', value: <PlanBadge plan={event.plan} /> },
@@ -57,11 +52,11 @@ export default function EventOverview({ event, statusActions }: EventOverviewPro
     },
   ];
 
-  // 할당 도메인·인증키는 승인 시점에 발급 (승인 전 '-', 만료 시 회수)
+  // 할당 도메인({slug}.{tenant_id}.{플랫폼 도메인})·인증키는 승인 시점에 발급 (승인 전 '-', 만료 시 회수 — 서버가 null로 준다)
   const resources = [
     { label: '템플릿ID', value: event.templateId },
-    { label: '할당 도메인', value: domain ?? <EmptyValue />, action: domain && <CopyButton value={domain} /> },
-    { label: '인증키', value: publicKey ? <CopyButton value={publicKey} label="공개키 복사" toast="공개키가 복사되었습니다." /> : <EmptyValue /> },
+    { label: '할당 도메인', value: event.domain ?? <EmptyValue />, action: event.domain && <CopyButton value={event.domain} /> },
+    { label: '인증키', value: event.publicKey ? <CopyButton value={event.publicKey} label="공개키 복사" toast="공개키가 복사되었습니다." /> : <EmptyValue /> },
   ];
 
   return (

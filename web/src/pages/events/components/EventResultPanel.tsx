@@ -11,9 +11,10 @@ import SectionTitle from '@/components/common/SectionTitle';
 import StatCard from '@/components/common/StatCard';
 import StateMessage from '@/components/common/StateMessage';
 import { chartColors, color, font, line, radius, size, text, tones, type } from '@/theme/theme';
-import type { EventResult, TetraEvent } from '@/types';
+import type { EventResult } from '@/types';
 import { formatNumber, formatPercent } from '@/utils/format';
 import { eventStatusMeta, hostingStatusMeta } from '@/utils/status';
+import type { ResultView } from '../eventView';
 
 type DoneResult = Extract<EventResult, { state: 'DONE' }>;
 
@@ -45,6 +46,8 @@ function Legend({ fill, label }: { fill: string; label: ReactNode }) {
 
 function DoneView({ r }: { r: DoneResult }) {
   const total = r.issued + r.soldOut + r.dropped;
+  // 발급 기록이 하나도 없으면 막대 비율을 0으로 (0으로 나누지 않게)
+  const ratio = (value: number) => (total === 0 ? 0 : (value / total) * 100);
   const parts = [
     { label: '발급 성공', value: r.issued, fill: chartColors.secondary },
     { label: '품절', value: r.soldOut, fill: chartColors.primary },
@@ -68,7 +71,7 @@ function DoneView({ r }: { r: DoneResult }) {
         <SectionTitle>발급 결과 구성</SectionTitle>
         <Stack direction="row" sx={{ height: 8, borderRadius: 4, overflow: 'hidden', gap: '2px' }}>
           {parts.map((p) => (
-            <Box key={p.label} sx={{ width: `${(p.value / total) * 100}%`, bgcolor: p.fill }} title={p.label} />
+            <Box key={p.label} sx={{ width: `${ratio(p.value)}%`, bgcolor: p.fill }} title={p.label} />
           ))}
         </Stack>
         <Stack direction="row" flexWrap="wrap" useFlexGap spacing={3} sx={{ mt: 1.5 }}>
@@ -124,10 +127,11 @@ function DoneView({ r }: { r: DoneResult }) {
   );
 }
 
-export default function EventResultPanel({ event }: { event: TetraEvent }) {
-  const r = event.result;
-  const hosting = event.hostingStatus ? hostingStatusMeta[event.hostingStatus].label : '-';
-  const status = event.eventStatus ? eventStatusMeta[event.eventStatus].label : '-';
+/** OPS-04-3 이벤트 진행 결과 — 결과 API state를 화면 상태로 바꾼 값(eventView.toResultView)을 그린다 */
+export default function EventResultPanel({ result }: { result: ResultView }) {
+  const r = result.body;
+  const hosting = result.hostingStatus ? hostingStatusMeta[result.hostingStatus].label : '-';
+  const status = result.eventStatus ? eventStatusMeta[result.eventStatus].label : '-';
 
   switch (r.state) {
     case 'NONE':
@@ -148,7 +152,7 @@ export default function EventResultPanel({ event }: { event: TetraEvent }) {
             items={[
               { label: '호스팅상태', value: hosting },
               { label: '이벤트상태', value: status },
-              { label: '이벤트 오픈 예정', value: event.eventPeriod.start },
+              { label: '이벤트 오픈 예정', value: result.openAt },
             ]}
           />
         </StateMessage>
@@ -171,7 +175,7 @@ export default function EventResultPanel({ event }: { event: TetraEvent }) {
             items={[
               { label: '호스팅상태', value: hosting },
               { label: '이벤트상태', value: status },
-              { label: '이벤트 종료 예정', value: event.eventPeriod.end },
+              { label: '이벤트 종료 예정', value: result.endAt },
             ]}
           />
           <Link component={RouterLink} to="/monitoring/traffic" variant="body1" sx={{ mt: 2 }}>

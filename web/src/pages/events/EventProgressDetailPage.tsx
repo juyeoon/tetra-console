@@ -1,54 +1,61 @@
+import { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { Button, Stack, Tab, Tabs, Tooltip, Typography } from '@mui/material';
 import FileDownloadRoundedIcon from '@mui/icons-material/FileDownloadRounded';
 import PageHeader from '@/components/layout/PageHeader';
+import NotFoundView from '@/components/common/NotFoundView';
+import { QueryError, QueryLoading } from '@/components/common/QueryStatus';
 import { useTabParam } from '@/components/common/useTabParam';
-import { useAppData } from '@/store/AppDataContext';
+import { errorMessage } from '@/api/client';
+import { fetchEventResult, fetchHistoryCsvUrl } from '@/api/events';
+import { useApiQuery } from '@/hooks/useApiQuery';
 import { useToast } from '@/store/ToastContext';
 import { size, text } from '@/theme/theme';
-import type { TetraEvent } from '@/types';
-import { withSeconds } from '@/utils/event';
 import ApplicationContentPlaceholder from './components/ApplicationContentPlaceholder';
-import NotFoundView from '@/components/common/NotFoundView';
 import EventOverview from './components/EventOverview';
 import EventResultPanel from './components/EventResultPanel';
+import { toResultView, type ResultView } from './eventView';
+import { useEventDetail } from './useEventDetail';
 
 const TABS = ['overview', 'application', 'result'] as const;
 const BREADCRUMBS = ['모니터링', '이벤트 진행 현황', '상세'];
 const BACK = { to: '/events/progress', label: '이벤트 진행 현황 목록으로 돌아가기' };
 
-/** TODO: 발급 이력 CSV 다운로드 API(이벤트 종료 처리 WF4에서 생성된 파일)로 교체. 현재는 분당 집계를 CSV로 내려준다 */
-function downloadCsv(event: TetraEvent) {
-  if (event.result.state !== 'DONE') return;
-  const lines = ['minute,issued,sold_out', ...event.result.perMinute.map((m) => `${m.minute},${m.issued},${m.soldOut}`)];
-  const blob = new Blob(['﻿' + lines.join('\n')], { type: 'text/csv;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `issuance_${event.id}.csv`;
-  a.click();
-  URL.revokeObjectURL(url);
-}
-
-function ResultActions({ event }: { event: TetraEvent }) {
+/**
+ * 발급 이력 CSV — 이벤트 종료 처리(WF4)가 만든 파일의 presigned URL을 받아 내려받는다.
+ * 결과 전이면 서버가 409 RESULT_NOT_READY를 주고, 그 문구를 토스트로 보여 준다.
+ */
+function ResultActions({ eventId, result }: { eventId: number; result: ResultView | undefined }) {
   const toast = useToast();
-  const done = event.result.state === 'DONE';
-  const aggregatedAt = event.result.state === 'DONE' ? event.result.aggregatedAt : '-';
+  const [loading, setLoading] = useState(false);
+  const ready = !!result?.csvReady;
+
+  const download = async () => {
+    setLoading(true);
+    try {
+      const { url } = await fetchHistoryCsvUrl(eventId);
+      window.location.assign(url);
+      toast('발급 이력 CSV 다운로드를 시작했습니다.');
+    } catch (e) {
+      toast(errorMessage(e), 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} alignItems={{ xs: 'flex-start', sm: 'center' }}>
       <Typography variant="body2" sx={{ color: text.tertiary }}>
-        이벤트 오픈 {withSeconds(event.eventPeriod.start)} · 집계 기준 {aggregatedAt}
+        이벤트 오픈 {result?.openAt ?? '-'} · 집계 기준 {result?.aggregatedAt ?? '-'}
       </Typography>
-      <Tooltip title={done ? '' : '결과가 집계된 뒤 내려받을 수 있습니다.'}>
+      <Tooltip title={ready ? '' : '결과가 집계된 뒤 내려받을 수 있습니다.'}>
         <span>
           <Button
             variant="outlined"
             startIcon={<FileDownloadRoundedIcon sx={{ fontSize: `${size.iconMd} !important` }} />}
-            disabled={!done}
-            onClick={() => {
-              downloadCsv(event);
-              toast('발급 이력 CSV 다운로드를 시작했습니다.');
-            }}
+            disabled={!ready}
+            loading={loading}
+            onClick={() => void download()}
           >
             발급 이력 CSV 다운로드
           </Button>
@@ -58,14 +65,39 @@ function ResultActions({ event }: { event: TetraEvent }) {
   );
 }
 
+/** 진행 결과 탭 — 탭을 열 때 결과 API를 부른다 */
+function ResultTab({ eventId, onLoaded }: { eventId: number; onLoaded: (result: ResultView) => void }) {
+  const query = useApiQuery((signal) => fetchEventResult(eventId, signal), [eventId]);
+  const result = useMemo(() => (query.data ? toResultView(query.data, new Date()) : undefined), [query.data]);
+  // 머리글(오픈 · 집계 시각, CSV 버튼)도 같은 결과를 쓴다
+  useEffect(() => {
+    if (result) onLoaded(result);
+  }, [result, onLoaded]);
+  if (query.loading && !result) return <QueryLoading />;
+  if (!result) return <QueryError error={query.error} onRetry={query.reload} />;
+  return <EventResultPanel result={result} />;
+}
+
 /** OPS-04-1 / 04-2 / 04-3 이벤트 진행 현황 상세 */
 export default function EventProgressDetailPage() {
-  const { eventId } = useParams();
-  const { getEvent } = useAppData();
+  const { eventId: rawEventId } = useParams();
+  const detail = useEventDetail(rawEventId);
   const [tab, setTab] = useTabParam(TABS, 'overview');
-  const event = getEvent(Number(eventId));
+  const [result, setResult] = useState<ResultView | undefined>(undefined);
+  const { event } = detail;
 
-  if (!event || event.applicationStatus !== 'APPROVED') return <NotFoundView breadcrumbs={BREADCRUMBS} back={BACK} message="이벤트를 찾을 수 없습니다" />;
+  // 승인되지 않은 이벤트는 진행 현황에 없다
+  if (detail.notFound || (event && event.applicationStatus !== 'APPROVED')) {
+    return <NotFoundView breadcrumbs={BREADCRUMBS} back={BACK} message="이벤트를 찾을 수 없습니다" />;
+  }
+  if (!event) {
+    return (
+      <>
+        <PageHeader breadcrumbs={BREADCRUMBS} back={BACK} title="상세" />
+        {detail.loading ? <QueryLoading /> : <QueryError error={detail.error} onRetry={detail.reload} />}
+      </>
+    );
+  }
 
   return (
     <>
@@ -73,7 +105,7 @@ export default function EventProgressDetailPage() {
         breadcrumbs={BREADCRUMBS}
         back={BACK}
         title={event.name}
-        actions={tab === 'result' ? <ResultActions event={event} /> : undefined}
+        actions={tab === 'result' ? <ResultActions eventId={event.id} result={result} /> : undefined}
       />
       <Tabs value={tab} onChange={(_, v) => setTab(v)} sx={{ mb: 3 }}>
         <Tab value="overview" label="개요" />
@@ -82,7 +114,7 @@ export default function EventProgressDetailPage() {
       </Tabs>
       {tab === 'overview' && <EventOverview event={event} />}
       {tab === 'application' && <ApplicationContentPlaceholder />}
-      {tab === 'result' && <EventResultPanel event={event} />}
+      {tab === 'result' && <ResultTab eventId={event.id} onLoaded={setResult} />}
     </>
   );
 }

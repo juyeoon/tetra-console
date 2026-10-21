@@ -1,30 +1,53 @@
+import { useMemo } from 'react';
 import { Link as RouterLink } from 'react-router-dom';
 import { Box, ButtonBase, Card, Link, Stack, Typography } from '@mui/material';
-import CheckCircleOutlineRoundedIcon from '@mui/icons-material/CheckCircleOutlineRounded';
+import ErrorOutlineRoundedIcon from '@mui/icons-material/ErrorOutlineRounded';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import WarningAmberRoundedIcon from '@mui/icons-material/WarningAmberRounded';
 import PageHeader from '@/components/layout/PageHeader';
+import { QueryError, QueryLoading } from '@/components/common/QueryStatus';
+import SampleDataChip from '@/components/common/SampleDataChip';
 import SectionTitle from '@/components/common/SectionTitle';
 import StatCard from '@/components/common/StatCard';
+import { fetchDashboard } from '@/api/dashboard';
+import { useApiQuery } from '@/hooks/useApiQuery';
 import { mockDashboard } from '@/mocks/dashboard';
 import { ink, layout, radius, size, text, tones } from '@/theme/theme';
+import { formatDateTime } from '@/utils/datetime';
+import { alertView } from './dashboardView';
 import LiveTrafficCard from './LiveTrafficCard';
 import TenantFlowCard from './TenantFlowCard';
 
+const BREADCRUMBS = ['대시보드 (홈)'];
+
 const alertMeta = {
+  urgent: { icon: <ErrorOutlineRoundedIcon />, tone: tones.red },
   warning: { icon: <WarningAmberRoundedIcon />, tone: tones.amber },
   info: { icon: <InfoOutlinedIcon />, tone: tones.blue },
-  success: { icon: <CheckCircleOutlineRoundedIcon />, tone: tones.green },
 };
 
+/** OPS-02 대시보드 — 테넌트 수 · 진행 중 이벤트 · 최근 알림은 API, 클러스터 · 트래픽 · 상위 테넌트는 예시 데이터(API 없음) */
 export default function DashboardPage() {
-  const d = mockDashboard;
+  const query = useApiQuery((signal) => fetchDashboard(signal), []);
+  const alerts = useMemo(() => (query.data ? query.data.recentNotifications.map((n) => alertView(n, new Date())) : []), [query.data]);
+
+  if (!query.data) {
+    return (
+      <>
+        <PageHeader breadcrumbs={BREADCRUMBS} />
+        {query.loading ? <QueryLoading /> : <QueryError error={query.error} onRetry={query.reload} />}
+      </>
+    );
+  }
+
+  const { tenants, openEvents } = query.data;
+  const cluster = mockDashboard.cluster;
   return (
     <>
-      <PageHeader breadcrumbs={['대시보드 (홈)']} />
+      <PageHeader breadcrumbs={BREADCRUMBS} />
 
       <Box sx={{ display: 'grid', gap: layout.cardGap, gridTemplateColumns: { xs: '1fr', md: 'repeat(3, 1fr)' }, mb: layout.cardGap }}>
-        <StatCard fill="peri" label="활성 테넌트 수 / 전체 테넌트 수" value={`${d.tenants.active}개사 / ${d.tenants.total}개사`} sub={`이번 달 신규 ${d.tenants.newThisMonth}개사`} />
+        <StatCard fill="peri" label="활성 테넌트 수 / 전체 테넌트 수" value={`${tenants.active}개사 / ${tenants.total}개사`} sub={`이번 달 신규 ${tenants.newThisMonth}개사`} />
         {/* 숫자만 표시, 기준 시각은 카드 제목 옆 괄호 */}
         <StatCard
           fill="blue"
@@ -32,17 +55,22 @@ export default function DashboardPage() {
             <>
               현재 진행 중인 이벤트{' '}
               <Box component="span" sx={{ fontWeight: 400, color: text.tertiary, whiteSpace: 'nowrap' }}>
-                ({d.asOf} 기준)
+                ({formatDateTime(openEvents.asOf)} 기준)
               </Box>
             </>
           }
-          value={`${d.ongoingEvents}건`}
+          value={`${openEvents.count}건`}
         />
         <StatCard
           fill="peri"
-          label="클러스터 사용량 (전체)"
-          value={`CPU ${d.cluster.cpu}% · Mem ${d.cluster.mem}%`}
-          sub={`노드 ${d.cluster.nodes}/${d.cluster.maxNodes} · ${d.cluster.autoscale}`}
+          label={
+            <>
+              클러스터 사용량 (전체)
+              <SampleDataChip />
+            </>
+          }
+          value={`CPU ${cluster.cpu}% · Mem ${cluster.mem}%`}
+          sub={`노드 ${cluster.nodes}/${cluster.maxNodes} · ${cluster.autoscale}`}
         />
       </Box>
 
@@ -61,9 +89,9 @@ export default function DashboardPage() {
           >
             최근 알림
           </SectionTitle>
-          {/* 알림센터 최신 5건 — 클릭 시 알림센터로 이동 */}
+          {/* 운영자 알림 최신 5건 — 클릭 시 알림센터로 이동 */}
           <Stack spacing={0.5}>
-            {d.alerts.slice(0, 5).map((a) => {
+            {alerts.map((a) => {
               const m = alertMeta[a.level];
               return (
                 <ButtonBase
@@ -84,6 +112,11 @@ export default function DashboardPage() {
                 </ButtonBase>
               );
             })}
+            {alerts.length === 0 && (
+              <Typography variant="body2" sx={{ color: text.tertiary, py: 2 }}>
+                새 알림이 없습니다.
+              </Typography>
+            )}
           </Stack>
         </Card>
         <TenantFlowCard />

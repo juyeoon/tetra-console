@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Box, Card, Stack, Typography } from '@mui/material';
 import { LineChart } from '@mui/x-charts/LineChart';
 import HighlightValue from '@/components/common/HighlightValue';
+import SampleDataChip from '@/components/common/SampleDataChip';
 import SectionTitle from '@/components/common/SectionTitle';
 import { mockDashboard } from '@/mocks/dashboard';
 import { chartColors, font, line, size, text, tones } from '@/theme/theme';
@@ -62,6 +63,7 @@ export default function LiveTrafficCard() {
         }
       >
         실시간 트래픽 처리 현황
+        <SampleDataChip />
       </SectionTitle>
 
       <Box sx={{ display: 'grid', gap: 3, gridTemplateColumns: { xs: '1fr', lg: 'minmax(220px, 18%) 1fr' }, alignItems: 'start' }}>
