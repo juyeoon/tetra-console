@@ -61,6 +61,8 @@ tetra:
     from: ${MAIL_FROM}
   portal:
     base-url: ${PORTAL_BASE_URL}
+  # 이벤트 도메인 루트: {slug}.{tenant_id}.{platform-domain}. 환경별로 다르면 PLATFORM_DOMAIN으로 덮어쓴다
+  platform-domain: ${PLATFORM_DOMAIN:tetraops.cloud}
   csv:
     presign-ttl: ${CSV_PRESIGN_TTL:PT5M}
   auth:

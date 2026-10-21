@@ -206,8 +206,22 @@ class TenantApiTest extends IntegrationTest {
 			.andExpect(status().isBadRequest())
 			.andExpect(jsonPath("$.fields.name").value("100자 이하로 입력해 주세요."))
 			.andExpect(jsonPath("$.fields.email").value("이메일 형식이 올바르지 않습니다."))
-			.andExpect(jsonPath("$.fields.rootDomain").value("도메인 형식이 올바르지 않습니다."))
+			.andExpect(jsonPath("$.fields.rootDomain").value("도메인 형식이 올바르지 않습니다. (예: e-corp.com — http://, 경로, 포트 없이)"))
 			.andExpect(jsonPath("$.fields.contactName").value("필수 입력입니다."));
+	}
+
+	@Test
+	void rootDomainIsStoredLowerCaseAndRejectsUrl() throws Exception {
+		register(VALID.replace("\"e-corp.com\"", "\"  E-Corp.COM \"")).andExpect(status().isCreated());
+		assertThat(data.count("SELECT COUNT(*) FROM tetra_platform.tenant WHERE BINARY root_domain = 'e-corp.com'"))
+			.isEqualTo(1);
+		ArgumentCaptor<String> input = ArgumentCaptor.forClass(String.class);
+		verify(stepFunctions).startExecution(anyString(), anyString(), input.capture());
+		assertThat(input.getValue()).contains("\"root_domain\":\"e-corp.com\"");
+
+		register(VALID.replace("\"e-corp.com\"", "\"https://e-corp.com/shop\"").replace("minho.park", "other"))
+			.andExpect(status().isBadRequest())
+			.andExpect(jsonPath("$.fields.rootDomain").value("도메인 형식이 올바르지 않습니다. (예: e-corp.com — http://, 경로, 포트 없이)"));
 	}
 
 	@Test

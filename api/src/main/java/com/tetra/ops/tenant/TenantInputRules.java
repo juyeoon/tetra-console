@@ -1,12 +1,13 @@
 package com.tetra.ops.tenant;
 
+import java.util.Locale;
 import java.util.Map;
 import java.util.regex.Pattern;
 
 import com.tetra.ops.common.error.ApiException;
 import com.tetra.ops.common.error.ErrorCode;
 
-/** 테넌트 입력 검증. 길이는 물리 ERD(이름 100, 이메일 255, 도메인 253). 앞뒤 공백은 잘라서 저장한다. */
+/** 테넌트 입력 검증. 길이는 물리 ERD(이름 100, 이메일 255, 도메인 253). 앞뒤 공백은 잘라서 저장한다(도메인은 소문자로도 바꾼다). */
 final class TenantInputRules {
 
 	static final int NAME_MAX = 100;
@@ -19,9 +20,15 @@ final class TenantInputRules {
 	private static final Pattern EMAIL = Pattern
 		.compile("^[A-Za-z0-9._%+-]+@[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*\\.[A-Za-z]{2,}$");
 
-	// TODO(미정): 도메인 형식 정규식. 임시로 RFC 1123 호스트명(라벨 63자, 점 1개 이상, 영문 TLD)
+	/**
+	 * 회사 root 도메인: RFC 1123 호스트명, 소문자 기준(소문자로 바꾼 뒤 검사 · 저장). 전체 253자 · 라벨 63자,
+	 * 점 1개 이상, 영문 TLD 2~63자. http(s)://·경로·포트·공백·밑줄·끝의 점·한글 도메인·퓨니코드 TLD(MVP 제외)는 거부.
+	 * web/src/utils/validation.ts의 isDomain과 같은 규칙 — 예시 표(TenantInputRulesTest · validation.test.ts)도 같이 고친다.
+	 */
 	private static final Pattern DOMAIN = Pattern
-		.compile("^(?=.{1,253}$)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\\.)+[A-Za-z]{2,63}$");
+		.compile("^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,63}$");
+
+	static final String DOMAIN_INVALID = "도메인 형식이 올바르지 않습니다. (예: e-corp.com — http://, 경로, 포트 없이)";
 
 	private TenantInputRules() {
 	}
@@ -49,13 +56,18 @@ final class TenantInputRules {
 		return trimmed;
 	}
 
+	/** 앞뒤 공백 제거 → 소문자(Locale.ROOT) → 형식 검사. 소문자로 바꾼 값을 돌려준다(저장 값). */
 	static String domain(String field, String value, Map<String, String> fields) {
 		String trimmed = text(field, value, DOMAIN_MAX, fields);
-		if (trimmed != null && !DOMAIN.matcher(trimmed).matches()) {
-			fields.put(field, "도메인 형식이 올바르지 않습니다.");
+		if (trimmed == null) {
 			return null;
 		}
-		return trimmed;
+		String normalized = trimmed.toLowerCase(Locale.ROOT);
+		if (!DOMAIN.matcher(normalized).matches()) {
+			fields.put(field, DOMAIN_INVALID);
+			return null;
+		}
+		return normalized;
 	}
 
 	static void throwIfInvalid(Map<String, String> fields) {
