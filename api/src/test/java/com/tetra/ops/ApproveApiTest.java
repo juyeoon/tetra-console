@@ -88,10 +88,28 @@ class ApproveApiTest extends IntegrationTest {
 		ArgumentCaptor<String> input = ArgumentCaptor.forClass(String.class);
 		verify(stepFunctions).startExecution(eq("arn:aws:states:ap-northeast-2:000000000000:stateMachine:approve"),
 				eq("approve-1043"), input.capture());
-		assertThat(input.getValue()).contains("\"tenant_id\":\"" + A + "\"", "\"event_id\":1043",
-				"\"slug\":\"" + event.get("slug") + "\"", "\"template_file_path\":\"apps/coupon/\"", "+09:00");
+		var json = tools.jackson.databind.json.JsonMapper.builder().build().readTree(input.getValue());
+		// 키 목록 스냅샷 (ops-workflows WF1-2 계약)
+		assertThat(json.propertyNames()).containsExactly("tenant_id", "event_id", "slug", "template_file_path",
+				"layout_config", "banner_image_path", "traffic_plan_code", "hosting_start_at", "start_at", "end_at",
+				"hosting_end_at", "name", "endpoint_url");
+		assertThat(json.path("tenant_id").asString()).isEqualTo(A);
+		assertThat(json.path("event_id").isNumber()).isTrue();
+		assertThat(json.path("event_id").asLong()).isEqualTo(1043L);
+		assertThat(json.path("slug").asString()).isEqualTo(event.get("slug"));
+		assertThat(json.path("template_file_path").asString()).isEqualTo("apps/coupon/");
+		assertThat(json.path("name").asString()).isEqualTo("추석맞이 쿠폰");
+		assertThat(json.path("endpoint_url").asString()).isEqualTo("https://shop.example.com/event");
+		// 일시 4개: KST 벽시계 yyyy-MM-dd'T'HH:mm:ss, 오프셋 없음. 테스트 이벤트는 초가 0이라 ":00"까지 나와야 한다
+		String startAt = TestData.FUTURE.format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss"));
+		assertThat(startAt).endsWith(":00:00");
+		assertThat(json.path("start_at").asString()).isEqualTo(startAt);
+		for (String key : List.of("hosting_start_at", "start_at", "end_at", "hosting_end_at")) {
+			assertThat(json.path(key).asString()).as(key).matches("^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}$");
+		}
+		assertThat(input.getValue()).doesNotContain("+09:00");
 		// layout_config는 문자열이 아니라 JSON 객체로 들어간다 (event.json layout으로 그대로 전달)
-		var layout = tools.jackson.databind.json.JsonMapper.builder().build().readTree(input.getValue()).path("layout_config");
+		var layout = json.path("layout_config");
 		assertThat(layout.isObject()).isTrue();
 		assertThat(layout.path("theme").asString()).isEqualTo("WHITE");
 		assertThat(layout.path("issueButton").path("v").asString()).isEqualTo("BOTTOM");
