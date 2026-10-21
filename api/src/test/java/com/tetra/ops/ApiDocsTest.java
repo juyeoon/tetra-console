@@ -64,6 +64,25 @@ class ApiDocsTest extends IntegrationTest {
 	}
 
 	@Test
+	void nestedRecordsHaveDistinctSchemaNames() throws Exception {
+		JsonNode schemas = apiDocs().path("components").path("schemas");
+		// 이벤트 상세 basic과 테넌트 개요 basic이 같은 이름 "Basic"으로 합쳐지지 않는다
+		assertThat(schemas.has("Basic")).isFalse();
+		assertThat(schemas.path("EventDetailResponse").path("properties").path("basic").path("$ref").asString())
+			.endsWith("/EventDetailBasic");
+		assertThat(schemas.path("EventDetailBasic").path("properties").has("eventId")).isTrue();
+		for (String name : new String[] { "EventDetailStatus", "EventDetailResources", "EventDetailApplicationLog" }) {
+			assertThat(schemas.has(name)).as(name).isTrue();
+		}
+		assertThat(schemas.path("TenantOverviewResponse").path("properties").path("basic").path("$ref").asString())
+			.endsWith("/TenantBasic");
+		assertThat(schemas.path("TenantBasic").path("properties").has("provisioningStatus")).isTrue();
+		assertThat(schemas.path("TenantItem").path("properties").has("provisioningStatus")).isTrue();
+		assertThat(schemas.path("TenantItem").path("properties").has("createdAt")).isTrue();
+		assertThat(schemas.path("RegisterResponse").path("properties").has("provisioningStatus")).isTrue();
+	}
+
+	@Test
 	void swaggerUiIsServed() throws Exception {
 		mvc.perform(get("/swagger-ui/index.html")).andExpect(status().isOk());
 	}

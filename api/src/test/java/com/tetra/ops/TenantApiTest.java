@@ -63,6 +63,7 @@ class TenantApiTest extends IntegrationTest {
 	void registerCreatesInactiveProvisioningTenantAndSendsSignedLink(CapturedOutput output) throws Exception {
 		String body = register(VALID).andExpect(status().isCreated())
 			.andExpect(jsonPath("$.mailSent").value(true))
+			.andExpect(jsonPath("$.provisioningStatus").value("PROVISIONING"))
 			.andReturn()
 			.getResponse()
 			.getContentAsString();
@@ -157,6 +158,7 @@ class TenantApiTest extends IntegrationTest {
 
 		String body = register(VALID).andExpect(status().isCreated())
 			.andExpect(jsonPath("$.mailSent").value(true))
+			.andExpect(jsonPath("$.provisioningStatus").value("FAILED"))
 			.andReturn()
 			.getResponse()
 			.getContentAsString();
@@ -174,7 +176,10 @@ class TenantApiTest extends IntegrationTest {
 	void mailFailureStillReturns201WithFlag() throws Exception {
 		when(mail.send(any())).thenReturn(false);
 
-		register(VALID).andExpect(status().isCreated()).andExpect(jsonPath("$.mailSent").value(false));
+		// 메일만 실패: 환경 준비는 계속 진행 중 → 화면은 "메일 발송 실패"로 (스키마 생성 실패 FAILED와 구분)
+		register(VALID).andExpect(status().isCreated())
+			.andExpect(jsonPath("$.mailSent").value(false))
+			.andExpect(jsonPath("$.provisioningStatus").value("PROVISIONING"));
 		assertThat(data.count("SELECT COUNT(*) FROM tetra_platform.tenant")).isEqualTo(1);
 	}
 
@@ -231,7 +236,8 @@ class TenantApiTest extends IntegrationTest {
 			.contentType(MediaType.APPLICATION_JSON)
 			.content("{\"name\":\"  A사(변경)  \"}"))
 			.andExpect(status().isOk())
-			.andExpect(jsonPath("$.name").value("A사(변경)"));
+			.andExpect(jsonPath("$.name").value("A사(변경)"))
+			.andExpect(jsonPath("$.provisioningStatus").value("READY"));
 		assertThat(data.tenantRow(A)).containsEntry("name", "A사(변경)");
 
 		mvc.perform(patch("/api/ops/tenants/{id}", A).cookie(operatorCookie())
@@ -269,7 +275,7 @@ class TenantApiTest extends IntegrationTest {
 	@Test
 	void listIsNewestFirstWithCounts() throws Exception {
 		data.tenant(A, "A사", "a@a.com", "ACTIVE", "READY", TestData.BASE);
-		data.tenant(B, "B사", "b@b.com", "INACTIVE", "READY", TestData.BASE.plusDays(1));
+		data.tenant(B, "B사", "b@b.com", "INACTIVE", "FAILED", TestData.BASE.plusDays(1));
 
 		mvc.perform(get("/api/ops/tenants").cookie(operatorCookie()))
 			.andExpect(status().isOk())
@@ -278,7 +284,11 @@ class TenantApiTest extends IntegrationTest {
 			.andExpect(jsonPath("$.items[0].tenantId").value(B))
 			.andExpect(jsonPath("$.items[0].email").value("b@b.com"))
 			.andExpect(jsonPath("$.items[0].accountStatus").value("INACTIVE"))
-			.andExpect(jsonPath("$.items[1].tenantId").value(A));
+			.andExpect(jsonPath("$.items[0].provisioningStatus").value("FAILED"))
+			.andExpect(jsonPath("$.items[0].createdAt").value("2026-10-02T10:00:00+09:00"))
+			.andExpect(jsonPath("$.items[1].tenantId").value(A))
+			.andExpect(jsonPath("$.items[1].provisioningStatus").value("READY"))
+			.andExpect(jsonPath("$.items[1].createdAt").value("2026-10-01T10:00:00+09:00"));
 	}
 
 	@Test
@@ -297,6 +307,7 @@ class TenantApiTest extends IntegrationTest {
 			.andExpect(status().isOk())
 			.andExpect(jsonPath("$.basic.contactName").value("A사 담당자"))
 			.andExpect(jsonPath("$.basic.createdAt").value("2026-10-01T10:00:00+09:00"))
+			.andExpect(jsonPath("$.basic.provisioningStatus").value("READY"))
 			.andExpect(jsonPath("$.buckets.content").value("tetra-storage-test-" + A))
 			.andExpect(jsonPath("$.buckets.auditLog").value("tetra-audit-logs-test-" + A))
 			.andExpect(jsonPath("$.statusLogs[0].badge").value("ENDED"))

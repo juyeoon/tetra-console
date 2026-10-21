@@ -82,7 +82,8 @@ public class TenantController {
 			@RequestBody TenantCommandService.UpdateRequest request) {
 		Tenant tenant = commandService.update(tenantId, request);
 		return new TenantQueryService.Basic(tenant.getTenantId(), tenant.getName(), tenant.getContactName(),
-				tenant.getEmail(), tenant.getAccountStatus(), Kst.toOffset(tenant.getCreatedAt()));
+				tenant.getEmail(), tenant.getAccountStatus(), Kst.toOffset(tenant.getCreatedAt()),
+				tenant.getProvisioningStatus());
 	}
 
 	@Operation(summary = "OPS-06-2 테넌트 이벤트 목록", description = "신청시각 내림차순. 승인 전 건은 hostingStatus·eventStatus가 null")

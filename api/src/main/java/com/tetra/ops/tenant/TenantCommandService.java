@@ -13,6 +13,7 @@ import com.tetra.ops.common.RandomIds;
 import com.tetra.ops.common.error.ApiException;
 import com.tetra.ops.common.error.ErrorCode;
 import com.tetra.ops.config.TetraProperties;
+import com.tetra.ops.domain.ProvisioningStatus;
 import com.tetra.ops.domain.platform.Tenant;
 import com.tetra.ops.domain.platform.TenantRepository;
 import com.tetra.ops.external.MailGateway;
@@ -86,7 +87,9 @@ public class TenantCommandService {
 
 	public record RegisterResponse(@Schema(example = "k7f2m9qx4b1t") String tenantId,
 			@Schema(description = "비밀번호 설정 메일 발송 요청 성공 여부. false면 \"메일 발송에 실패했습니다\" 상태 화면."
-					+ " 테넌트 스키마 생성에 실패하면 메일을 보내지 않으므로 false (provisioningStatus는 FAILED)") boolean mailSent) {
+					+ " 테넌트 스키마 생성에 실패하면 메일을 보내지 않으므로 false (provisioningStatus는 FAILED)") boolean mailSent,
+			@Schema(description = "응답 시점의 환경 준비 상태. 보통 PROVISIONING(환경 준비 중). "
+					+ "FAILED면 스키마 생성 또는 StartExecution 실패 — 스키마 생성 실패면 mailSent도 false") ProvisioningStatus provisioningStatus) {
 	}
 
 	@Schema(description = "name · contactName · email 중 정확히 하나만 보낸다")
@@ -122,7 +125,7 @@ public class TenantCommandService {
 		// 실패하면 환경 준비도 메일도 하지 않는다. 스키마 없이 비밀번호를 설정해도 Portal이 쓸 수 없고, 재시도 경로는 수동이다
 		if (!schemaCreator.create(tenantId)) {
 			writer.finishProvisioning(tenantId, false, SCHEMA_CREATION_FAILED);
-			return new RegisterResponse(tenantId, false);
+			return registered(tenantId, false);
 		}
 
 		// ---- 커밋 후 ② Step Functions (테넌트 환경 준비) ----
@@ -140,7 +143,15 @@ public class TenantCommandService {
 			log.warn("비밀번호 설정 메일 발송 실패: tenantId={}", tenantId);
 			notifications.passwordSetupMailFailed(tenantId);
 		}
-		return new RegisterResponse(tenantId, mailSent);
+		return registered(tenantId, mailSent);
+	}
+
+	/** 환경 준비 상태는 DB에서 다시 읽는다(실패 반영 · 결과 리스너가 먼저 바꾼 경우까지 그대로 보여 준다). */
+	private RegisterResponse registered(String tenantId, boolean mailSent) {
+		ProvisioningStatus provisioningStatus = tenants.findById(tenantId)
+			.map(Tenant::getProvisioningStatus)
+			.orElseThrow(() -> new IllegalStateException("방금 등록한 테넌트가 없습니다: " + tenantId));
+		return new RegisterResponse(tenantId, mailSent, provisioningStatus);
 	}
 
 	/** OPS-06-M3. name · contactName · email 중 정확히 하나. 확인 절차·상태 로그 없음. */

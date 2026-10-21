@@ -17,6 +17,7 @@ import com.tetra.ops.domain.ApplicationStatus;
 import com.tetra.ops.domain.EventStatus;
 import com.tetra.ops.domain.EventType;
 import com.tetra.ops.domain.HostingStatus;
+import com.tetra.ops.domain.ProvisioningStatus;
 import com.tetra.ops.domain.platform.EventRegistry;
 import com.tetra.ops.domain.platform.EventRegistryRepository;
 import com.tetra.ops.domain.platform.Tenant;
@@ -24,6 +25,8 @@ import com.tetra.ops.domain.platform.TenantRepository;
 import com.tetra.ops.domain.platform.TenantStatusLog;
 import com.tetra.ops.domain.platform.TenantStatusLogRepository;
 import com.tetra.ops.tenancy.TenantRouter;
+
+import io.swagger.v3.oas.annotations.media.Schema;
 
 /** OPS-06 목록, 06-1 개요, 06-2 이벤트. 06-3 리소스만 테넌트 스키마로 라우팅한다. */
 @Service
@@ -55,15 +58,23 @@ public class TenantQueryService {
 	public record TenantListResponse(Map<AccountStatus, Long> counts, List<TenantItem> items) {
 	}
 
-	public record TenantItem(String tenantId, String name, String email, AccountStatus accountStatus) {
+	public record TenantItem(String tenantId, String name, String email, AccountStatus accountStatus,
+			@Schema(description = PROVISIONING_STATUS_DESCRIPTION) ProvisioningStatus provisioningStatus,
+			@Schema(description = "가입일시(목록 정렬 기준, 내림차순)") OffsetDateTime createdAt) {
 	}
 
 	public record TenantOverviewResponse(Basic basic, Buckets buckets, List<StatusLogItem> statusLogs) {
 	}
 
+	/** 이벤트 상세의 basic과 이름이 겹치지 않게 문서 스키마 이름을 따로 준다. */
+	@Schema(name = "TenantBasic")
 	public record Basic(String tenantId, String name, String contactName, String email, AccountStatus accountStatus,
-			OffsetDateTime createdAt) {
+			OffsetDateTime createdAt,
+			@Schema(description = PROVISIONING_STATUS_DESCRIPTION) ProvisioningStatus provisioningStatus) {
 	}
+
+	static final String PROVISIONING_STATUS_DESCRIPTION = "환경 준비 상태. PROVISIONING(준비 중) · READY(완료) · "
+			+ "FAILED(스키마 생성 또는 환경 준비 실패, 운영자 알림 확인)";
 
 	public record Buckets(String content, String auditLog) {
 	}
@@ -102,7 +113,8 @@ public class TenantQueryService {
 	public TenantListResponse list() {
 		List<TenantItem> items = tenants.findAllByOrderByCreatedAtDescTenantIdAsc()
 			.stream()
-			.map(t -> new TenantItem(t.getTenantId(), t.getName(), t.getEmail(), t.getAccountStatus()))
+			.map(t -> new TenantItem(t.getTenantId(), t.getName(), t.getEmail(), t.getAccountStatus(),
+					t.getProvisioningStatus(), Kst.toOffset(t.getCreatedAt())))
 			.toList();
 		Map<AccountStatus, Long> counts = new EnumMap<>(AccountStatus.class);
 		for (AccountStatus status : AccountStatus.values()) {
@@ -131,7 +143,7 @@ public class TenantQueryService {
 		}).toList();
 		return new TenantOverviewResponse(
 				new Basic(tenant.getTenantId(), tenant.getName(), tenant.getContactName(), tenant.getEmail(),
-						tenant.getAccountStatus(), Kst.toOffset(tenant.getCreatedAt())),
+						tenant.getAccountStatus(), Kst.toOffset(tenant.getCreatedAt()), tenant.getProvisioningStatus()),
 				new Buckets(buckets.content(tenantId), buckets.auditLog(tenantId)), items);
 	}
 
