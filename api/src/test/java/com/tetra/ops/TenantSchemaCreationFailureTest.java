@@ -36,7 +36,8 @@ class TenantSchemaCreationFailureTest extends IntegrationTest {
 			.contentType(MediaType.APPLICATION_JSON)
 			.content(VALID))
 			.andExpect(status().isCreated())
-			.andExpect(jsonPath("$.mailSent").value(false));
+			.andExpect(jsonPath("$.mailSent").value(false))
+			.andExpect(jsonPath("$.provisioningStatus").value("FAILED"));
 	}
 
 	private long schemaCount(String schema) {
