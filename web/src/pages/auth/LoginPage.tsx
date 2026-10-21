@@ -1,27 +1,41 @@
 import { useState, type FormEvent } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { Alert, Box, Button, IconButton, InputAdornment, Stack, TextField, Typography } from '@mui/material';
 import VisibilityOffOutlinedIcon from '@mui/icons-material/VisibilityOffOutlined';
 import VisibilityOutlinedIcon from '@mui/icons-material/VisibilityOutlined';
 import CheckerMark from '@/components/common/CheckerMark';
 import FormField from '@/components/common/FormField';
+import { useAuth } from '@/store/AuthContext';
+import { loginTarget, type LoginRedirectState } from '@/store/authState';
 import { color, onNavy, radius, size, text } from '@/theme/theme';
 
 export default function LoginPage() {
   const navigate = useNavigate();
-  const [id, setId] = useState('');
+  const location = useLocation();
+  const { state, login } = useAuth();
+  // RequireAuth가 넘겨 준 값(loginRedirectState). 직접 로그아웃이면 비어 있다
+  const { from, expired } = (location.state ?? {}) as LoginRedirectState;
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPw, setShowPw] = useState(false);
   const [error, setError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
 
-  const handleSubmit = (e: FormEvent) => {
+  // 이미 로그인한 상태로 들어오면 돌려보낸다
+  if (state.status === 'authenticated' && !submitting) return <Navigate to={loginTarget(from)} replace />;
+
+  const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    if (!id.trim() || !password) {
-      setError('운영자 ID와 비밀번호를 모두 입력해주세요.');
+    if (!email.trim() || !password) {
+      setError('이메일과 비밀번호를 모두 입력해주세요.');
       return;
     }
-    // TODO: 로그인 API 연동 (ID/비밀번호 불일치 시 에러 메시지만 노출, 계정 잠금 없음)
-    navigate('/');
+    // 불일치 시 서버 문구만 노출 (계정 잠금 없음)
+    setSubmitting(true);
+    const result = await login(email, password);
+    setSubmitting(false);
+    if (result.ok) navigate(loginTarget(from), { replace: true });
+    else setError(result.message);
   };
 
   return (
@@ -82,22 +96,29 @@ export default function LoginPage() {
             권한이 부여된 운영자 계정으로만 접속할 수 있습니다.
           </Typography>
 
-          {error && (
+          {error ? (
             <Alert severity="error" sx={{ mb: 2 }}>
               {error}
             </Alert>
+          ) : (
+            expired && (
+              <Alert severity="info" sx={{ mb: 2 }}>
+                로그인이 만료되었습니다. 다시 로그인해 주세요.
+              </Alert>
+            )
           )}
 
           <Stack spacing={2}>
-            <FormField label="운영자 ID" htmlFor="login-id">
+            <FormField label="이메일" htmlFor="login-email">
               <TextField
-                id="login-id"
+                id="login-email"
                 fullWidth
+                type="email"
                 autoComplete="username"
-                placeholder="operator@tetra-ops.internal"
-                value={id}
+                placeholder="operator@tetra-operation.com"
+                value={email}
                 onChange={(e) => {
-                  setId(e.target.value);
+                  setEmail(e.target.value);
                   setError('');
                 }}
               />
@@ -129,7 +150,7 @@ export default function LoginPage() {
             </FormField>
           </Stack>
 
-          <Button type="submit" variant="contained" size="large" fullWidth sx={{ mt: 3 }}>
+          <Button type="submit" variant="contained" size="large" fullWidth loading={submitting} sx={{ mt: 3 }}>
             로그인
           </Button>
         </Box>
