@@ -1,5 +1,5 @@
 import type { Tone } from '@/theme/theme';
-import type { AccountLogReason, AccountStatus, ApplicationStatus, EventStatus, EventType, HostingStatus } from '@/types';
+import type { AccountStatus, ApplicationStatus, EventStatus, EventType, HostingStatus } from '@/types';
 
 interface StatusMeta {
   label: string;
@@ -37,26 +37,10 @@ export const accountStatusMeta: Record<AccountStatus, StatusMeta> = {
   INACTIVE: { label: '비활성', tone: 'grey' },
 };
 
-/** 계정 상태 로그 사유 배지 — [신청 완료](파랑) / [반려](빨강) / [종료](회색) */
-export const accountLogReasonMeta: Record<AccountLogReason, StatusMeta> = {
-  APPLIED: { label: '신청 완료', tone: 'blue' },
-  REJECTED: { label: '반려', tone: 'red' },
-  ENDED: { label: '종료', tone: 'grey' },
-};
-
 export const eventTypeLabel: Record<EventType, string> = {
   COUPON: '쿠폰',
   TIMESALE: '타임세일',
   LIVE_COMMERCE: '라이브커머스',
-};
-
-/** 신청 목록 기본 정렬 — 승인 대기 중 → 신청됨(처리 중) → 나머지(신청시각 최신순) */
-export const applicationSortRank: Record<ApplicationStatus, number> = {
-  APPLIED: 0,
-  APPLYING: 1,
-  APPLY_FAILED: 2,
-  APPROVED: 2,
-  REJECTED: 2,
 };
 
 /** 상태별 건수를 meta 정의 순서대로 집계 */

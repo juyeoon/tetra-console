@@ -99,3 +99,151 @@ export interface RegisterResponse {
 
 /** PATCH /tenants/{id} — 정확히 하나만 보낸다 */
 export type UpdateRequest = { name: string } | { contactName: string } | { email: string };
+
+// ---------------------------------------------------------------- 이벤트 (EventListService · EventDetailResponse · EventResultResponse)
+
+/** GET /applications — 승인 대기 중 → 신청됨(처리 중) → 나머지(신청시각 내림차순) */
+export interface ApplicationListResponse {
+  counts: Record<ApplicationStatus, number>;
+  items: ApplicationItem[];
+}
+
+export interface ApplicationItem {
+  eventId: number;
+  tenantName: string;
+  eventType: EventType;
+  name: string;
+  appliedAt: string;
+  applicationStatus: ApplicationStatus;
+  /** 승인 · 반려 처리 일시. 그 밖(신청 실패 포함)은 null */
+  processedAt: string | null;
+}
+
+/** GET /live-events — 승인된 이벤트. counts는 PENDING · HOSTING · ENDED만 */
+export interface LiveEventListResponse {
+  counts: Partial<Record<HostingStatus, number>>;
+  items: LiveEventItem[];
+}
+
+export interface LiveEventItem {
+  eventId: number;
+  tenantName: string;
+  eventType: EventType;
+  name: string;
+  hostingStartAt: string;
+  startAt: string;
+  hostingStatus: HostingStatus | null;
+  eventStatus: EventStatus | null;
+  trafficPlanCode: string;
+}
+
+/** 신청 상태 로그 한 줄 (status_type APPLICATION, 오름차순). REJECTED의 detail = 반려 사유 */
+export interface EventApplicationLog {
+  changedAt: string;
+  prevStatus: ApplicationStatus | null;
+  newStatus: ApplicationStatus;
+  detail: string | null;
+}
+
+/** GET /events/{id} (문서 스키마 EventDetail*) */
+export interface EventDetailResponse {
+  basic: {
+    eventId: number;
+    name: string;
+    eventType: EventType;
+    tenantId: string;
+    tenantName: string;
+    hostingStartAt: string;
+    hostingEndAt: string;
+    startAt: string;
+    endAt: string;
+    trafficPlanCode: string;
+    stockCount: number;
+    appliedAt: string;
+    endpointUrl: string;
+  };
+  /** 승인 전에는 hostingStatus · eventStatus가 null */
+  status: {
+    applicationStatus: ApplicationStatus;
+    hostingStatus: HostingStatus | null;
+    eventStatus: EventStatus | null;
+    resultAvailable: boolean;
+  };
+  /** domain = {slug}.{tenant_id}, fullDomain = domain.{플랫폼 도메인}. 승인 전 · 만료면 null */
+  resources: {
+    templateId: number;
+    domain: string | null;
+    fullDomain: string | null;
+    publicKey: string | null;
+  };
+  applicationLogs: EventApplicationLog[];
+}
+
+/** POST /events/{id}/approve — 409 APPLICATION_NOT_APPLIED · HOSTING_PERIOD_ENDED · TENANT_NOT_READY */
+export interface ApproveResponse {
+  eventId: number;
+  applicationStatus: ApplicationStatus;
+  hostingStatus: HostingStatus | null;
+  eventStatus: EventStatus | null;
+  /** false면 OPS-03-M1 "개인키 메일 발송 실패" 상태 (승인은 됨) */
+  privateKeyMailSent: boolean;
+}
+
+/** POST /events/{id}/reject — 400 fields.reason, 409 APPLICATION_NOT_APPLIED */
+export interface RejectResponse {
+  eventId: number;
+  applicationStatus: ApplicationStatus;
+}
+
+/** GET /events/{id}/result — state별로 쓰지 않는 값은 null */
+export interface EventResultResponse {
+  eventId: number;
+  /** IN_PROGRESS = 이벤트가 끝나기 전(오픈 전 포함) */
+  state: 'IN_PROGRESS' | 'AGGREGATING' | 'END_FAILED' | 'READY';
+  eventOpenAt: string | null;
+  aggregatedAt: string | null;
+  hostingStatus: HostingStatus | null;
+  eventStatus: EventStatus | null;
+  endAt: string | null;
+  failure: { cause: string | null; occurredAt: string | null } | null;
+  result: {
+    metrics: {
+      successCount: number;
+      totalStock: number;
+      selloutRate: number;
+      soldoutCount: number;
+      peakConcurrent: number;
+      maxCapacity: number;
+      capacityUsageRate: number;
+      peakAt: string | null;
+    };
+    composition: { successCount: number; soldoutCount: number; abandonedCount: number };
+    perMinute: { minute: string; successCount: number; soldoutCount: number }[];
+  } | null;
+}
+
+/** GET /events/{id}/result/history-csv — 결과 전이면 409 RESULT_NOT_READY */
+export interface CsvDownloadResponse {
+  url: string;
+  expiresAt: string;
+}
+
+// ---------------------------------------------------------------- 대시보드 (DashboardController)
+
+export type NotificationPriority = 'URGENT' | 'WARNING' | 'INFO';
+
+/** GET /dashboard — 최근 알림은 최신 5건 */
+export interface DashboardResponse {
+  tenants: { active: number; total: number; newThisMonth: number };
+  openEvents: { count: number; asOf: string };
+  recentNotifications: {
+    notificationId: number;
+    tenantId: string | null;
+    eventId: number | null;
+    category: string;
+    priority: NotificationPriority | string;
+    occurredAt: string;
+    content: string;
+    read: boolean;
+  }[];
+}

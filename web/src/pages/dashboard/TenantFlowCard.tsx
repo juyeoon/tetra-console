@@ -1,5 +1,6 @@
 import { Box, Card, Stack, Typography } from '@mui/material';
 import { keyframes } from '@mui/material/styles';
+import SampleDataChip from '@/components/common/SampleDataChip';
 import SectionTitle from '@/components/common/SectionTitle';
 import { mockDashboard } from '@/mocks/dashboard';
 import { color, line, radius, size, text, tones } from '@/theme/theme';
@@ -100,7 +101,10 @@ function FlowRowView({ row }: { row: FlowRow }) {
 export default function TenantFlowCard() {
   return (
     <Card sx={{ p: 3, height: '100%' }}>
-      <SectionTitle>테넌트 별 처리 현황 (상위 2개)</SectionTitle>
+      <SectionTitle>
+        테넌트 별 처리 현황 (상위 2개)
+        <SampleDataChip />
+      </SectionTitle>
       <Stack spacing={1}>
         {mockDashboard.topTenants.map((row) => (
           <FlowRowView key={row.namespace} row={row} />

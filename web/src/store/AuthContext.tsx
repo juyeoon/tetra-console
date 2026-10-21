@@ -7,7 +7,7 @@ import { fetchMe, login as loginApi, logout as logoutApi, type Operator } from '
 import { setUnauthorizedHandler } from '@/api/client';
 import { attemptLogin, loginRedirectState, resolveSession, type AuthState, type LoginResult } from './authState';
 
-/** 로그인 상태. 데이터(AppDataContext · 목)와 따로 둔다. */
+/** 로그인 상태. 화면 데이터(useApiQuery)와 따로 둔다. */
 interface AuthValue {
   state: AuthState;
   /** 로그인한 운영자. RequireAuth 안에서만 쓴다 */
