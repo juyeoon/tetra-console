@@ -13,7 +13,7 @@ import jakarta.validation.constraints.Size;
 
 /**
  * 모든 값은 환경 변수(ConfigMap·Secret)로 들어온다 (CLAUDE.md §10).
- * 비밀 값(auth.jwtSecret, passwordLink.hmacSecret)은 기본값이 없고, 비어 있으면 기동이 실패한다.
+ * 비밀 값(auth.jwtSecret, passwordLink.hmacSecret, dbMigration.password)은 기본값이 없고, 비어 있으면 기동이 실패한다.
  * toString에 비밀 값이 나오지 않도록 비밀을 담은 record는 toString을 덮어쓴다.
  */
 @Validated
@@ -27,7 +27,8 @@ public record TetraProperties(
 		@Valid @NotNull Portal portal,
 		@Valid @NotNull @DefaultValue Csv csv,
 		@Valid @NotNull Auth auth,
-		@Valid @NotNull PasswordLink passwordLink) {
+		@Valid @NotNull PasswordLink passwordLink,
+		@Valid @NotNull DbMigration dbMigration) {
 
 	public record Aws(@NotBlank String region) {
 	}
@@ -59,6 +60,18 @@ public record TetraProperties(
 		@Override
 		public String toString() {
 			return "PasswordLink[hmacSecret=****]";
+		}
+	}
+
+	/**
+	 * 테넌트 스키마 생성(Flyway)용 DDL 계정 tetra_migrator. 앱 런타임 계정(DB_USERNAME)은 DML만 있다.
+	 * URL은 spring.datasource.url을 같이 쓴다. locations는 테스트에서만 바꾼다.
+	 */
+	public record DbMigration(@NotBlank String username, @NotBlank String password,
+			@NotBlank @DefaultValue("classpath:db/migration/tenant") String locations) {
+		@Override
+		public String toString() {
+			return "DbMigration[username=" + username + ", password=****, locations=" + locations + "]";
 		}
 	}
 

@@ -69,6 +69,12 @@ public final class TestData {
 	}
 
 	public void reset() {
+		// 등록 API가 만든 테넌트 스키마는 지운다. 고정 테넌트 A · B 스키마는 남기고 행만 지운다
+		for (String schema : jdbc.queryForList("SELECT schema_name FROM information_schema.schemata"
+				+ " WHERE schema_name LIKE 't\\_%' AND schema_name NOT IN (?, ?)", String.class,
+				"t_" + MySqlTestDatabase.TENANT_A, "t_" + MySqlTestDatabase.TENANT_B)) {
+			jdbc.execute("DROP SCHEMA " + schema);
+		}
 		jdbc.execute("SET FOREIGN_KEY_CHECKS = 0");
 		try {
 			for (String tenantId : new String[] { MySqlTestDatabase.TENANT_A, MySqlTestDatabase.TENANT_B }) {

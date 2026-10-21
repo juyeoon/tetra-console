@@ -41,3 +41,7 @@ tetra:
     jwt-secret: test-jwt-secret-0123456789abcdef0123456789
   password-link:
     hmac-secret: test-hmac-secret
+  db-migration:
+    # 테스트 베이스 클래스가 Testcontainers의 마이그레이션 계정으로 넣는다
+    username: placeholder
+    password: placeholder

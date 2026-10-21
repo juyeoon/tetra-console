@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -15,10 +16,15 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.ResultSet;
+import java.sql.Statement;
 import java.time.LocalDateTime;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
 
 import javax.crypto.Mac;
@@ -27,6 +33,7 @@ import javax.crypto.spec.SecretKeySpec;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.http.MediaType;
@@ -34,6 +41,7 @@ import org.springframework.test.web.servlet.ResultActions;
 
 import com.tetra.ops.external.MailGateway;
 import com.tetra.ops.support.IntegrationTest;
+import com.tetra.ops.support.MySqlTestDatabase;
 import com.tetra.ops.support.TestData;
 
 /** OPS-06·06-1·06-2·06-3·06-M3·07 (§7.9~7.12, §12 외부 호출 실패). */
@@ -102,6 +110,47 @@ class TenantApiTest extends IntegrationTest {
 		assertThat(sent.toString()).doesNotContain("sig=");
 	}
 
+	/** 테넌트 스키마의 테이블 수 (Flyway 이력 테이블 제외). */
+	private long tenantTableCount(String schema) {
+		return data.count("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = ?"
+				+ " AND table_name <> 'flyway_schema_history'", schema);
+	}
+
+	@Test
+	void registerCreatesTenantSchemaWithFlywayBeforeStartExecutionAndMail() throws Exception {
+		// StartExecution이 불릴 때 이미 스키마가 다 만들어져 있어야 한다
+		AtomicLong tablesAtStartExecution = new AtomicLong(-1);
+		when(stepFunctions.startExecution(anyString(), anyString(), anyString())).thenAnswer(invocation -> {
+			String executionName = invocation.getArgument(1);
+			tablesAtStartExecution.set(tenantTableCount("t_" + executionName.substring("tenant-".length())));
+			return true;
+		});
+
+		String body = register(VALID).andExpect(status().isCreated())
+			.andExpect(jsonPath("$.mailSent").value(true))
+			.andReturn()
+			.getResponse()
+			.getContentAsString();
+		String schema = "t_" + body.replaceAll(".*\"tenantId\":\"([a-z0-9]{12})\".*", "$1");
+
+		assertThat(tablesAtStartExecution).hasValue(10);
+		assertThat(tenantTableCount(schema)).isEqualTo(10);
+		assertThat(data.count("SELECT COUNT(*) FROM " + schema + ".flyway_schema_history"
+				+ " WHERE version = '1' AND success = 1")).isEqualTo(1);
+		InOrder order = inOrder(stepFunctions, mail);
+		order.verify(stepFunctions).startExecution(anyString(), anyString(), anyString());
+		order.verify(mail).send(any());
+
+		// 앱 런타임 계정(DML 전용)은 t\_% 와일드카드 권한으로 새 스키마를 바로 쓸 수 있다
+		try (Connection app = DriverManager.getConnection(MySqlTestDatabase.appJdbcUrl(schema),
+				MySqlTestDatabase.APP_USER, MySqlTestDatabase.APP_PASSWORD);
+				Statement statement = app.createStatement();
+				ResultSet rows = statement.executeQuery("SELECT COUNT(*) FROM tenant_notification")) {
+			rows.next();
+			assertThat(rows.getLong(1)).isZero();
+		}
+	}
+
 	@Test
 	void startExecutionFailureMarksProvisioningFailedButKeepsTenant() throws Exception {
 		when(stepFunctions.startExecution(anyString(), anyString(), anyString())).thenReturn(false);
@@ -113,6 +162,12 @@ class TenantApiTest extends IntegrationTest {
 			.getContentAsString();
 		String tenantId = body.replaceAll(".*\"tenantId\":\"([a-z0-9]{12})\".*", "$1");
 		assertThat(data.tenantRow(tenantId)).containsEntry("provisioning_status", "FAILED");
+		// 스키마는 남기고(수동 재실행으로 복구) 메일도 보낸다. 알림 문구로 스키마 생성 실패와 구분
+		assertThat(tenantTableCount("t_" + tenantId)).isEqualTo(10);
+		verify(mail).send(any());
+		assertThat(data.count("SELECT COUNT(*) FROM tetra_platform.operator_notification WHERE tenant_id = ?"
+				+ " AND category = 'PROVISIONING' AND priority = 'URGENT' AND content LIKE '%StartExecution 실패%수동 재실행%'",
+				tenantId)).isEqualTo(1);
 	}
 
 	@Test

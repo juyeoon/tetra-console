@@ -43,6 +43,8 @@ public abstract class IntegrationTest {
 		registry.add("spring.datasource.username", () -> MySqlTestDatabase.APP_USER);
 		registry.add("spring.datasource.password", () -> MySqlTestDatabase.APP_PASSWORD);
 		registry.add("spring.datasource.hikari.maximum-pool-size", () -> "1");
+		registry.add("tetra.db-migration.username", () -> MySqlTestDatabase.MIGRATION_USER);
+		registry.add("tetra.db-migration.password", () -> MySqlTestDatabase.MIGRATION_PASSWORD);
 	}
 
 	@Autowired

@@ -30,11 +30,16 @@ public class TenantCommandService {
 
 	static final int TENANT_ID_MAX_ATTEMPTS = 5;
 
-	static final String START_EXECUTION_FAILED = "StartExecution 실패";
+	// 두 실패는 복구 방법이 달라 운영자 알림 문구로 구분한다
+	static final String SCHEMA_CREATION_FAILED = "테넌트 스키마 생성 실패. 비밀번호 설정 메일은 보내지 않았습니다";
+
+	static final String START_EXECUTION_FAILED = "StartExecution 실패. 스키마는 만들어졌으니 환경 준비(WF5)를 수동 재실행(-rN)하세요";
 
 	private final TenantRepository tenants;
 
 	private final TenantWriter writer;
+
+	private final TenantSchemaCreator schemaCreator;
 
 	private final RandomIds randomIds;
 
@@ -52,13 +57,14 @@ public class TenantCommandService {
 
 	private final JsonMapper jsonMapper;
 
-	public TenantCommandService(TenantRepository tenants, TenantWriter writer, RandomIds randomIds,
-			StepFunctionsGateway stepFunctions, MailGateway mailGateway, PasswordLinkSigner linkSigner,
-			TenantRegistrationMailComposer mailComposer, NotificationService notifications, TetraProperties properties,
-			JsonMapper jsonMapper) {
+	public TenantCommandService(TenantRepository tenants, TenantWriter writer, TenantSchemaCreator schemaCreator,
+			RandomIds randomIds, StepFunctionsGateway stepFunctions, MailGateway mailGateway,
+			PasswordLinkSigner linkSigner, TenantRegistrationMailComposer mailComposer,
+			NotificationService notifications, TetraProperties properties, JsonMapper jsonMapper) {
 		this.notifications = notifications;
 		this.tenants = tenants;
 		this.writer = writer;
+		this.schemaCreator = schemaCreator;
 		this.randomIds = randomIds;
 		this.stepFunctions = stepFunctions;
 		this.mailGateway = mailGateway;
@@ -79,7 +85,8 @@ public class TenantCommandService {
 	}
 
 	public record RegisterResponse(@Schema(example = "k7f2m9qx4b1t") String tenantId,
-			@Schema(description = "비밀번호 설정 메일 발송 요청 성공 여부. false면 \"메일 발송에 실패했습니다\" 상태 화면") boolean mailSent) {
+			@Schema(description = "비밀번호 설정 메일 발송 요청 성공 여부. false면 \"메일 발송에 실패했습니다\" 상태 화면."
+					+ " 테넌트 스키마 생성에 실패하면 메일을 보내지 않으므로 false (provisioningStatus는 FAILED)") boolean mailSent) {
 	}
 
 	@Schema(description = "name · contactName · email 중 정확히 하나만 보낸다")
@@ -111,7 +118,14 @@ public class TenantCommandService {
 		Tenant tenant = insertWithUniqueId(name, rootDomain, email, contactName);
 		String tenantId = tenant.getTenantId();
 
-		// ---- 커밋 후 ① Step Functions (테넌트 환경 준비) ----
+		// ---- 커밋 후 ① 테넌트 스키마 t_{tenant_id} (Flyway, 마이그레이션 계정). 트랜잭션 밖: DDL은 어차피 암묵 커밋 ----
+		// 실패하면 환경 준비도 메일도 하지 않는다. 스키마 없이 비밀번호를 설정해도 Portal이 쓸 수 없고, 재시도 경로는 수동이다
+		if (!schemaCreator.create(tenantId)) {
+			writer.finishProvisioning(tenantId, false, SCHEMA_CREATION_FAILED);
+			return new RegisterResponse(tenantId, false);
+		}
+
+		// ---- 커밋 후 ② Step Functions (테넌트 환경 준비) ----
 		boolean started = stepFunctions.startExecution(properties.sfn().tenantStateMachineArn(), "tenant-" + tenantId,
 				jsonMapper.writeValueAsString(
 						Map.of("tenant_id", tenantId, "root_domain", rootDomain, "env", properties.env())));
@@ -119,7 +133,7 @@ public class TenantCommandService {
 			writer.finishProvisioning(tenantId, false, START_EXECUTION_FAILED);
 		}
 
-		// ---- 커밋 후 ② SES 비밀번호 설정 메일. 실패해도 등록은 유지하고 재발송 API는 없다 ----
+		// ---- 커밋 후 ③ SES 비밀번호 설정 메일. StartExecution이 실패해도 보낸다(스키마는 있고 재실행으로 복구). 실패해도 등록은 유지하고 재발송 API는 없다 ----
 		var link = linkSigner.create(tenantId, tenant.getPassword());
 		boolean mailSent = mailGateway.send(mailComposer.compose(email, contactName, name, link.url()));
 		if (!mailSent) {

@@ -23,33 +23,48 @@ class TetraPropertiesTest {
 		.withUserConfiguration(Config.class)
 		.withPropertyValues("tetra.env=test", "tetra.aws.region=ap-northeast-2", "tetra.sfn.approve-state-machine-arn=a",
 				"tetra.sfn.tenant-state-machine-arn=b", "tetra.sqs.approve-result-queue=q1",
-				"tetra.sqs.tenant-result-queue=q2", "tetra.mail.from=x@y.z", "tetra.portal.base-url=https://p");
+				"tetra.sqs.tenant-result-queue=q2", "tetra.mail.from=x@y.z", "tetra.portal.base-url=https://p",
+				"tetra.db-migration.username=tetra_migrator");
+
+	private static final String MIGRATOR_PASSWORD = "tetra.db-migration.password=migrator-pw-value";
 
 	@Test
 	void startsWithAllValuesAndHidesSecrets() {
 		runner
 			.withPropertyValues("tetra.auth.jwt-secret=0123456789abcdef0123456789abcdef",
-					"tetra.password-link.hmac-secret=hmac-secret-value")
+					"tetra.password-link.hmac-secret=hmac-secret-value", MIGRATOR_PASSWORD)
 			.run(context -> {
 				assertThat(context).hasNotFailed();
 				TetraProperties properties = context.getBean(TetraProperties.class);
 				assertThat(properties.csv().presignTtl()).hasMinutes(5);
-				assertThat(properties.toString()).doesNotContain("0123456789abcdef").doesNotContain("hmac-secret-value");
+				assertThat(properties.dbMigration().username()).isEqualTo("tetra_migrator");
+				assertThat(properties.dbMigration().locations()).isEqualTo("classpath:db/migration/tenant");
+				assertThat(properties.toString()).doesNotContain("0123456789abcdef")
+					.doesNotContain("hmac-secret-value")
+					.doesNotContain("migrator-pw-value");
 			});
 	}
 
 	@Test
 	void failsWhenJwtSecretMissingOrBlankOrShort() {
-		runner.withPropertyValues("tetra.password-link.hmac-secret=h").run(context -> assertThat(context).hasFailed());
-		runner.withPropertyValues("tetra.auth.jwt-secret=", "tetra.password-link.hmac-secret=h")
+		runner.withPropertyValues("tetra.password-link.hmac-secret=h", MIGRATOR_PASSWORD)
 			.run(context -> assertThat(context).hasFailed());
-		runner.withPropertyValues("tetra.auth.jwt-secret=short", "tetra.password-link.hmac-secret=h")
+		runner.withPropertyValues("tetra.auth.jwt-secret=", "tetra.password-link.hmac-secret=h", MIGRATOR_PASSWORD)
+			.run(context -> assertThat(context).hasFailed());
+		runner.withPropertyValues("tetra.auth.jwt-secret=short", "tetra.password-link.hmac-secret=h", MIGRATOR_PASSWORD)
 			.run(context -> assertThat(context).hasFailed());
 	}
 
 	@Test
 	void failsWhenHmacSecretMissing() {
-		runner.withPropertyValues("tetra.auth.jwt-secret=0123456789abcdef0123456789abcdef")
+		runner.withPropertyValues("tetra.auth.jwt-secret=0123456789abcdef0123456789abcdef", MIGRATOR_PASSWORD)
+			.run(context -> assertThat(context).hasFailed());
+	}
+
+	@Test
+	void failsWhenMigratorPasswordMissing() {
+		runner.withPropertyValues("tetra.auth.jwt-secret=0123456789abcdef0123456789abcdef",
+				"tetra.password-link.hmac-secret=h")
 			.run(context -> assertThat(context).hasFailed());
 	}
 
