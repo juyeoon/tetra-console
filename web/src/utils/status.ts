@@ -46,7 +46,7 @@ export const accountLogReasonMeta: Record<AccountLogReason, StatusMeta> = {
 
 export const eventTypeLabel: Record<EventType, string> = {
   COUPON: '쿠폰',
-  TIME_SALE: '타임세일',
+  TIMESALE: '타임세일',
   LIVE_COMMERCE: '라이브커머스',
 };
 
