@@ -24,7 +24,7 @@ class TetraPropertiesTest {
 		.withPropertyValues("tetra.env=test", "tetra.aws.region=ap-northeast-2", "tetra.sfn.approve-state-machine-arn=a",
 				"tetra.sfn.tenant-state-machine-arn=b", "tetra.sqs.approve-result-queue=q1",
 				"tetra.sqs.tenant-result-queue=q2", "tetra.mail.from=x@y.z", "tetra.portal.base-url=https://p",
-				"tetra.db-migration.username=tetra_migrator");
+				"tetra.db-migration.username=tetra_migrator", "tetra.platform-domain=tetraops.cloud");
 
 	private static final String MIGRATOR_PASSWORD = "tetra.db-migration.password=migrator-pw-value";
 
@@ -65,6 +65,20 @@ class TetraPropertiesTest {
 	void failsWhenMigratorPasswordMissing() {
 		runner.withPropertyValues("tetra.auth.jwt-secret=0123456789abcdef0123456789abcdef",
 				"tetra.password-link.hmac-secret=h")
+			.run(context -> assertThat(context).hasFailed());
+	}
+
+	/** 기본값(tetraops.cloud)은 application.yml에 있다. 값을 덮어쓸 수 있고, 비우면 기동하지 않는다 */
+	@Test
+	void platformDomainCanBeOverriddenAndMustNotBeBlank() {
+		String[] secrets = { "tetra.auth.jwt-secret=0123456789abcdef0123456789abcdef", "tetra.password-link.hmac-secret=h",
+				MIGRATOR_PASSWORD };
+		runner.withPropertyValues(secrets)
+			.withPropertyValues("tetra.platform-domain=stage.tetraops.cloud")
+			.run(context -> assertThat(context.getBean(TetraProperties.class).platformDomain())
+				.isEqualTo("stage.tetraops.cloud"));
+		runner.withPropertyValues(secrets)
+			.withPropertyValues("tetra.platform-domain=")
 			.run(context -> assertThat(context).hasFailed());
 	}
 

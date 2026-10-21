@@ -59,7 +59,8 @@ class EventQueryApiTest extends IntegrationTest {
 			.andExpect(status().isOk())
 			.andExpect(jsonPath("$.status.hostingStatus").value("DEPLOYED"))
 			.andExpect(jsonPath("$.resources.domain").value("k7f2q9xa." + A))
-			.andExpect(jsonPath("$.resources.fullDomain").value("k7f2q9xa." + A + ".a사.example.com"))
+			// 이벤트 주소는 플랫폼 도메인(application.yml 기본 tetraops.cloud) 아래 — 테넌트 회사 도메인(a사.example.com)이 아님
+			.andExpect(jsonPath("$.resources.fullDomain").value("k7f2q9xa." + A + ".tetraops.cloud"))
 			.andExpect(jsonPath("$.resources.publicKey").value("PEM-2"))
 			// HOSTING 로그는 신청 상태 로그에 나오지 않는다
 			.andExpect(jsonPath("$.applicationLogs.length()").value(0));

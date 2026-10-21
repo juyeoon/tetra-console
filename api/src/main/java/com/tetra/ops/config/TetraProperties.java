@@ -28,7 +28,9 @@ public record TetraProperties(
 		@Valid @NotNull @DefaultValue Csv csv,
 		@Valid @NotNull Auth auth,
 		@Valid @NotNull PasswordLink passwordLink,
-		@Valid @NotNull DbMigration dbMigration) {
+		@Valid @NotNull DbMigration dbMigration,
+		/** 이벤트 도메인 루트. 이벤트 주소는 {slug}.{tenant_id}.{platformDomain} (ops-workflows 10-17 결정). 기본값은 application.yml */
+		@NotBlank String platformDomain) {
 
 	public record Aws(@NotBlank String region) {
 	}

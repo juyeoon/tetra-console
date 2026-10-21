@@ -30,7 +30,7 @@ public record EventDetailResponse(Basic basic, Status status, Resources resource
 	}
 
 	/**
-	 * domain = {slug}.{tenant_id}, fullDomain = domain + "." + root_domain.
+	 * domain = {slug}.{tenant_id}, fullDomain = domain + "." + 플랫폼 도메인(tetra.platform-domain, 기본 tetraops.cloud).
 	 * 승인 전 또는 event_status = EXPIRED이면 domain·fullDomain·publicKey는 null.
 	 */
 	@Schema(name = "EventDetailResources")
