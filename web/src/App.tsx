@@ -15,6 +15,7 @@ import SystemSettingsPage from '@/pages/settings/SystemSettingsPage';
 import TenantDetailPage from '@/pages/tenants/TenantDetailPage';
 import TenantListPage from '@/pages/tenants/TenantListPage';
 import TenantRegisterPage from '@/pages/tenants/TenantRegisterPage';
+import { RequireAuth } from '@/store/AuthContext';
 
 export default function App() {
   return (
@@ -24,8 +25,14 @@ export default function App() {
       <Route path="/password/setup" element={<PasswordSetupPage />} />
       <Route path="/preview/tenant-registration-email" element={<RegistrationEmailPreviewPage />} />
 
-      {/* 운영 콘솔 */}
-      <Route element={<AppLayout />}>
+      {/* 운영 콘솔 — 로그인(GET /api/ops/me) 확인 후에만 */}
+      <Route
+        element={
+          <RequireAuth>
+            <AppLayout />
+          </RequireAuth>
+        }
+      >
         <Route index element={<DashboardPage />} />
         <Route path="events">
           <Route path="applications" element={<EventApplicationListPage />} />

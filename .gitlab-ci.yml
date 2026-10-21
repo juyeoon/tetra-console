@@ -1,5 +1,5 @@
 # console CI/CD — 화면(web) + API(api) 한 이미지 (인프라 플랜 5-2 ①④ · Portal CI와 같은 모양)
-#   MR   : web(타입 검사 · 빌드) · api(단위 · 통합 테스트 — Testcontainers MySQL · ElasticMQ → Docker-in-Docker)
+#   MR   : web(단위 테스트 · 타입 검사 · 빌드) · api(단위 · 통합 테스트 — Testcontainers MySQL · ElasticMQ → Docker-in-Docker)
 #   main : 위 + jar(web/dist 포함) → 이미지(linux/amd64) → ECR tetra/console:<커밋 SHA 7자리> → ECS 서비스 갱신(dev, 수동 ▶)
 #
 # 배포가 지금 수동인 이유 (2026-10-19): Console 은 시작할 때 Step Functions ARN(SFN_*)과 SQS 결과 큐가 있어야 뜬다.
@@ -60,6 +60,7 @@ web:
   script:
     - cd web
     - npm ci --cache .npm --prefer-offline --no-audit --no-fund
+    - npm test # node --test (Node 24 타입 제거로 .test.ts를 바로 실행, 테스트 패키지 없음)
     - npm run build # tsc --noEmit && vite build
   artifacts:
     paths: [web/dist/]

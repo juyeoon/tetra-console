@@ -7,9 +7,68 @@ React 19 + TypeScript + Vite + MUI 7 (+ MUI X Charts)
 ```bash
 cd web
 npm install
-npm run dev        # http://localhost:5173
+npm run dev        # http://localhost:5173 (/api는 localhost:8080으로 프록시)
+npm test           # 단위 테스트 (node --test, 테스트 패키지 없음)
 npm run build      # 타입 체크 + 프로덕션 빌드
 ```
+
+## API와 함께 실행 (로컬)
+
+콘솔 화면은 **로그인해야 보입니다**(`GET /api/ops/me`로 확인). 화면만 따로 띄우는 우회 모드는 없으므로, 목 데이터 화면을 볼 때도 로컬 API를 같이 띄웁니다.
+
+1. `api/.env` 준비 — `api/.env.example`을 복사해 채웁니다(자세한 값은 `api/dev-docs/로컬_실행.md`).
+   - 테넌트 스키마 Flyway 생성(3-14, `feat/tenant-schema-flyway`)이 병합된 뒤에는 **`MIGRATOR_USERNAME` · `MIGRATOR_PASSWORD`도 필요**합니다(테넌트 등록 때 스키마를 만드는 DDL 계정). 비어 있으면 API가 뜨지 않습니다.
+2. 의존 서비스와 API (`api/`에서)
+   ```bash
+   docker compose up -d   # MySQL + ElasticMQ
+   ./gradlew bootRun      # :8080, .env를 읽어 local 프로필
+   ```
+   - MySQL 계정(앱 · 마이그레이션)과 seed는 **볼륨을 처음 만들 때만** 생깁니다. 3-14 이후 `MIGRATOR_*`를 처음 넣었거나 seed를 다시 넣으려면 `docker compose down -v`(로컬 데이터 삭제) 후 다시 `up -d`.
+3. 화면 (`web/`에서) `npm run dev` → http://localhost:5173 → `/login`으로 이동하면 정상
+
+### 로컬 운영자 계정
+
+- `api/dev-docs/db/local/local_seed.sql`이 있으면(볼륨 첫 생성 때 실행) 운영자 1명이 들어 있습니다. 이메일 · 비밀번호는 그 파일 머리 주석을 봅니다.
+- seed가 없거나 다른 계정 · 비밀번호가 필요하면 아래처럼 만듭니다(`api/`에서, `docker compose up -d` 상태). 같은 이메일이 이미 있으면 이름 · 비밀번호만 바꿉니다.
+  - 비밀번호는 입력창(화면에 안 보임)으로 받아 **환경 변수로만** 넘기고, 끝나면 지웁니다. 명령줄 · 파일 · 셸 기록에 남지 않습니다.
+  - 해시는 BCrypt(cost 10, `httpd` 이미지의 `htpasswd`). 컨테이너는 `--rm`이라 끝나면 지워집니다.
+
+  **Git Bash**
+  ```bash
+  OPS_EMAIL='operator@tetra-operation.local'
+  OPS_NAME='로컬 운영자'
+  read -rsp '비밀번호: ' OPS_PW; echo
+  export OPS_PW
+  # 컨테이너 안에서도 stdin으로만 htpasswd에 넘긴다(명령 인자에 비밀번호 없음)
+  OPS_HASH=$(docker run --rm -e OPS_PW httpd:2.4-alpine sh -c 'printf "%s\n" "$OPS_PW" | htpasswd -niBC 10 x' | cut -d: -f2 | tr -d '\r\n')
+  unset OPS_PW
+  printf "INSERT INTO operator (email, contact_name, password) VALUES ('%s', '%s', '%s') AS new
+  ON DUPLICATE KEY UPDATE contact_name = new.contact_name, password = new.password;\n" "$OPS_EMAIL" "$OPS_NAME" "$OPS_HASH" |
+    docker compose exec -T mysql sh -c 'MYSQL_PWD=$MYSQL_ROOT_PASSWORD mysql -uroot --default-character-set=utf8mb4 tetra_platform'
+  unset OPS_HASH
+  ```
+
+  **PowerShell**
+  ```powershell
+  $OutputEncoding = [Text.UTF8Encoding]::new($false)   # 한글 이름을 MySQL에 그대로 넘기려고
+  $email = 'operator@tetra-operation.local'; $name = '로컬 운영자'
+  $env:OPS_PW = [Net.NetworkCredential]::new('', (Read-Host '비밀번호' -AsSecureString)).Password
+  # PowerShell은 파이프(stdin)로 넘기면 BOM을 붙여 다른 값이 해시되므로 환경 변수 → 인자로 넘긴다.
+  # 큰따옴표는 PowerShell 5.1이 깨뜨려서 set -f; IFS= 로 공백 · * 를 그대로 둔다
+  $hash = ((docker run --rm -e OPS_PW httpd:2.4-alpine sh -c 'set -f; IFS=; htpasswd -nbBC 10 x $OPS_PW') -split ':')[1].Trim()
+  Remove-Item Env:OPS_PW
+  "INSERT INTO operator (email, contact_name, password) VALUES ('$email', '$name', '$hash') AS new ON DUPLICATE KEY UPDATE contact_name = new.contact_name, password = new.password;" |
+    docker compose exec -T mysql sh -c 'MYSQL_PWD=$MYSQL_ROOT_PASSWORD mysql -uroot --default-character-set=utf8mb4 tetra_platform'
+  ```
+
+  확인: `echo "SELECT email, contact_name, LEFT(password, 7) FROM operator;" | docker compose exec -T mysql sh -c 'MYSQL_PWD=$MYSQL_ROOT_PASSWORD mysql -uroot --default-character-set=utf8mb4 tetra_platform'` → `$2y$10$`로 시작하면 정상. 운영자 등록 화면 · API는 없습니다(운영자는 DB로 등록).
+
+### 확인 사항
+
+- 로그인 쿠키는 `Secure`라 **Chrome · Firefox**로 확인합니다(`http://localhost`를 예외로 받아 줌). Safari는 쿠키를 받지 않아 로그인 후에도 다시 로그인 화면으로 돌아옵니다.
+- API가 꺼져 있으면 "서버에 연결할 수 없습니다" 화면과 [다시 시도] 버튼이 뜹니다.
+- 로그인 뒤 API가 401을 주면(쿠키 만료 8시간) "로그인이 만료되었습니다" 안내와 함께 로그인 화면으로 가고, 다시 로그인하면 원래 보던 화면으로 돌아옵니다. 로그인 전에 주소로 바로 들어온 경우도 로그인 후 그 화면으로 갑니다.
+- 직접 로그아웃(사용자 메뉴 · 시스템 설정)은 안내 없이 로그인 화면으로 가고, 다시 로그인하면 대시보드(`/`)로 갑니다.
 
 ## 화면 / 라우트
 
@@ -59,7 +118,7 @@ npm run build      # 타입 체크 + 프로덕션 빌드
 
 1. **디자인** — Canva 팔레트 + Snow 타이포·간격, 글자 125%, CSS 토큰 모듈화, KPI 강조(A안 확정), 상단바 통일 반영 완료. 스타일 가이드 갱신 완료
 2. **검증** — v0.5 반영 후 승인(메일 성공·실패)·반려·테넌트 정보 수정·등록(중복 확인, 메일 성공·실패)·비밀번호 8자 규칙을 실제 조작으로 확인 완료. 모바일 폭 전 화면 확인은 남음
-3. **API 연동** — API 목록 전달 후 `AppDataContext` 액션과 `TODO:` 지점 교체
+3. **API 연동** — 로그인 · 로그아웃 · 운영자 정보는 연결 완료(`src/api`, `src/store/AuthContext.tsx`). 대시보드 · 승인 · 테넌트는 아직 목 — `AppDataContext` 액션과 `TODO:` 지점을 `src/api/client.ts`의 `apiRequest`로 교체
 4. **미확정 항목 확정 대기** — 트래픽 모니터링(OPS-05), 비밀번호 문자 조합 규칙, Portal 로그인 URL, Portal 재사용 화면 3종
 
 ## 구조
@@ -80,9 +139,12 @@ src/
 
 ## API 연동 지점
 
-현재는 `src/store/AppDataContext.tsx`가 `src/mocks/*`를 메모리에 들고 있습니다. API가 확정되면 이 Context의 액션(`approveEvent`, `rejectEvent`, `updateTenant`, `isEmailTaken`, `registerTenant`)과 조회 부분을 API 호출로 교체하면 됩니다. 그 외 `TODO:` 주석 위치:
+- 호출 모듈 `src/api/client.ts`: `apiRequest('/me')` → `/api/ops/me`. 같은 출처 쿠키, 오류 `{code, message, fields}` → `ApiError`(화면에는 `message`), 401이면 로그인 화면으로. 연결 실패 · JSON 아닌 오류는 공통 문구
+- 로그인 상태 `src/store/AuthContext.tsx`: `RequireAuth`가 `/me` 확인 전에는 콘솔 화면을 그리지 않는다. 화면에서는 `useOperator()` · `useAuth().logout()`
+- 테스트: `src/**/*.test.ts`를 `node --test`가 TypeScript 그대로 실행한다. 그래서 **테스트 대상 파일과 그 import 사슬은 상대 경로 + `.ts` 확장자로 import**한다(`@/` 별칭 · 확장자 없는 import는 Node가 못 푼다). 테스트 파일은 `tsc` 대상에서 뺀다(`@types/node` 없음). 화면(DOM) 테스트 도구는 아직 없다
 
-- 로그인 `pages/auth/LoginPage.tsx`
+현재 목 데이터는 `src/store/AppDataContext.tsx`가 `src/mocks/*`를 메모리에 들고 있습니다. API가 확정되면 이 Context의 액션(`approveEvent`, `rejectEvent`, `updateTenant`, `isEmailTaken`, `registerTenant`)과 조회 부분을 API 호출로 교체하면 됩니다. 그 외 `TODO:` 주석 위치:
+
 - 비밀번호 설정 토큰 검증/저장 `pages/auth/PasswordSetupPage.tsx`
 - 실시간 트래픽 `pages/dashboard/LiveTrafficCard.tsx`
 - 발급 이력 CSV `pages/events/EventProgressDetailPage.tsx`

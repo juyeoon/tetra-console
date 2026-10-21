@@ -4,11 +4,13 @@ import { Avatar, Box, ButtonBase, Divider, ListItemIcon, Menu, MenuItem, Typogra
 import KeyboardArrowDownRoundedIcon from '@mui/icons-material/KeyboardArrowDownRounded';
 import LogoutOutlinedIcon from '@mui/icons-material/LogoutOutlined';
 import SettingsOutlinedIcon from '@mui/icons-material/SettingsOutlined';
-import { mockOperator } from '@/mocks/dashboard';
+import { useAuth, useOperator } from '@/store/AuthContext';
 import { color, font, ink, radius, size, text, tones, type } from '@/theme/theme';
 
 export default function UserMenu() {
   const navigate = useNavigate();
+  const operator = useOperator();
+  const { logout } = useAuth();
   const [anchor, setAnchor] = useState<HTMLElement | null>(null);
 
   return (
@@ -17,9 +19,9 @@ export default function UserMenu() {
         onClick={(e) => setAnchor(e.currentTarget)}
         sx={{ gap: 1, px: 1, py: 0.5, borderRadius: radius.md, '&:hover': { bgcolor: ink[5] } }}
       >
-        <Avatar sx={{ width: size.avatarSm, height: size.avatarSm, bgcolor: color.periTint, color: color.navy, ...type.caption, fontWeight: font.weight.semibold }}>{mockOperator.name.slice(0, 1)}</Avatar>
+        <Avatar sx={{ width: size.avatarSm, height: size.avatarSm, bgcolor: color.periTint, color: color.navy, ...type.caption, fontWeight: font.weight.semibold }}>{operator.name.slice(0, 1)}</Avatar>
         <Typography variant="body1" sx={{ display: { xs: 'none', sm: 'block' }, whiteSpace: 'nowrap', fontWeight: font.weight.medium }}>
-          {mockOperator.name}님
+          {operator.name}님
         </Typography>
         <KeyboardArrowDownRoundedIcon sx={{ fontSize: size.iconSm, color: text.tertiary }} />
       </ButtonBase>
@@ -32,8 +34,8 @@ export default function UserMenu() {
         slotProps={{ paper: { sx: { mt: 0.5, minWidth: 220 } } }}
       >
         <Box sx={{ px: 2, py: 1 }}>
-          <Typography variant="subtitle1">{mockOperator.name}</Typography>
-          <Typography variant="caption">{mockOperator.email}</Typography>
+          <Typography variant="subtitle1">{operator.name}</Typography>
+          <Typography variant="caption">{operator.email}</Typography>
         </Box>
         <Divider sx={{ my: 0.5 }} />
         <MenuItem
@@ -47,7 +49,13 @@ export default function UserMenu() {
           </ListItemIcon>
           시스템 설정
         </MenuItem>
-        <MenuItem onClick={() => navigate('/login')} sx={{ color: tones.red.fg }}>
+        <MenuItem
+          onClick={() => {
+            setAnchor(null);
+            void logout();
+          }}
+          sx={{ color: tones.red.fg }}
+        >
           <ListItemIcon sx={{ color: 'inherit' }}>
             <LogoutOutlinedIcon sx={{ fontSize: size.iconMd }} />
           </ListItemIcon>

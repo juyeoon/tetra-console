@@ -1,8 +1,3 @@
-export const mockOperator = {
-  name: '홍길동',
-  email: 'operator@tetra-ops.internal',
-};
-
 export const mockDashboard = {
   asOf: '2026.09.22 14:32',
   tenants: { active: 18, total: 24, newThisMonth: 2 },
