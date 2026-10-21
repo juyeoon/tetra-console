@@ -9,9 +9,10 @@ export type HostingStatus = 'PENDING' | 'DEPLOYED' | 'DEPLOY_FAILED' | 'HOSTING'
 /** 이벤트상태 — 이벤트 자체의 진행 단계 */
 export type EventStatus = 'SCHEDULED' | 'OPEN' | 'OPEN_FAILED' | 'EXPIRED';
 export type AccountStatus = 'ACTIVE' | 'INACTIVE';
-export type Plan = 'S' | 'M' | 'L';
+/** 트래픽 플랜 (traffic_plan.plan_code). XL은 화면 노출 안 함(is_visible 0)이지만 값으로는 올 수 있다 */
+export type Plan = 'S' | 'M' | 'L' | 'XL';
 /** 1차 범위는 쿠폰만 해당 */
-export type EventType = 'COUPON' | 'TIME_SALE' | 'LIVE_COMMERCE';
+export type EventType = 'COUPON' | 'TIMESALE' | 'LIVE_COMMERCE';
 
 export interface Period {
   start: string;

@@ -62,8 +62,3 @@ export const mockTenants: Tenant[] = [
     ],
   },
 ];
-
-export const s3Buckets = (tenantId: string) => ({
-  content: `tetra-storage-prod-${tenantId}`,
-  log: `tetra-audit-logs-prod-${tenantId}`,
-});

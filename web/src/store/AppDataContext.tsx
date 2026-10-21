@@ -4,18 +4,12 @@ import { mockTenants } from '@/mocks/tenants';
 import type { AccountLog, Tenant, TetraEvent } from '@/types';
 
 /**
- * 화면 구현용 임시 데이터 저장소.
- * API가 확정되면 각 액션을 API 호출로 교체하면 된다.
+ * 화면 구현용 임시 데이터 저장소 — 이벤트 · 승인 화면만 쓴다(MR B에서 API로 바꾸고 삭제).
+ * 테넌트 화면은 API(src/api/tenants.ts)로 옮겼다. tenants는 이벤트 화면의 테넌트명 표시용으로만 남는다.
  */
 export interface ApproveResult {
   /** 승인 응답에 포함되는 개인키 메일 발송 결과 */
   keyMailSent: boolean;
-}
-
-export interface RegisterResult {
-  tenant: Tenant;
-  /** 비밀번호 설정 메일 동기 발송 결과 */
-  mailSent: boolean;
 }
 
 interface AppDataValue {
@@ -25,9 +19,6 @@ interface AppDataValue {
   getTenant: (id: string) => Tenant | undefined;
   approveEvent: (id: number) => Promise<ApproveResult>;
   rejectEvent: (id: number, reason: string) => void;
-  updateTenant: (id: string, patch: Partial<Pick<Tenant, 'name' | 'contactName' | 'email'>>) => void;
-  isEmailTaken: (email: string, exceptTenantId?: string) => boolean;
-  registerTenant: (input: { name: string; email: string; rootDomain: string; contactName: string }) => Promise<RegisterResult>;
 }
 
 const AppDataContext = createContext<AppDataValue | null>(null);
@@ -95,33 +86,9 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     [events, tenants, pushAccountLog],
   );
 
-  const updateTenant: AppDataValue['updateTenant'] = useCallback((id, patch) => {
-    setTenants((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t)));
-  }, []);
-
-  const isEmailTaken = useCallback(
-    (email: string, exceptTenantId?: string) => tenants.some((t) => t.id !== exceptTenantId && t.email.toLowerCase() === email.trim().toLowerCase()),
-    [tenants],
-  );
-
-  // 등록 + 비밀번호 설정 메일 동기 발송. Mock: 이메일에 'fail'이 들어가면 발송 실패
-  const registerTenant: AppDataValue['registerTenant'] = useCallback(async (input) => {
-    await delay(700);
-    const at = now();
-    const tenant: Tenant = {
-      id: randomId(12),
-      ...input,
-      status: 'INACTIVE',
-      joinedAt: at.slice(0, 10),
-      accountLogs: [{ at, to: 'INACTIVE' }],
-    };
-    setTenants((prev) => [...prev, tenant]);
-    return { tenant, mailSent: !input.email.includes('fail') };
-  }, []);
-
   const value = useMemo(
-    () => ({ events, tenants, getEvent, getTenant, approveEvent, rejectEvent, updateTenant, isEmailTaken, registerTenant }),
-    [events, tenants, getEvent, getTenant, approveEvent, rejectEvent, updateTenant, isEmailTaken, registerTenant],
+    () => ({ events, tenants, getEvent, getTenant, approveEvent, rejectEvent }),
+    [events, tenants, getEvent, getTenant, approveEvent, rejectEvent],
   );
 
   return <AppDataContext.Provider value={value}>{children}</AppDataContext.Provider>;

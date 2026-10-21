@@ -86,13 +86,12 @@ npm run build      # 타입 체크 + 프로덕션 빌드
 | 시스템 설정 | `/settings` |
 | 등록 안내 메일 미리보기 | `/preview/tenant-registration-email` |
 
-### 상태별 확인용 Mock 데이터
+### 상태별 확인용 Mock 데이터 (이벤트 · 승인 · 대시보드 — 테넌트 화면은 API 데이터)
 
 - 승인 대기 중(승인/반려 버튼): `1043` 추석맞이 전상품 쿠폰 발급(A사) — 승인 시 개인키 메일 발송 **성공**
 - 승인 대기 중: `1045` 가을 신상품 할인 쿠폰(C사) — 승인 시 개인키 메일 발송 **실패** 화면(OPS-03-M1 상태 화면)
 - 신청됨(처리 중) `1044` · 신청 실패 `1039` · 반려됨 `1031`
 - 이벤트 진행 결과 탭: 오픈 전 `1038` · 진행 중 `1042` · 집계 중 `1036` · 종료 처리 실패 `1021` · 집계 완료 `1012`, `890`
-- 테넌트 등록: 이메일에 `fail`이 들어가면 비밀번호 설정 메일 발송 실패 화면. 중복 확인은 기존 테넌트 이메일(예: `jane.kim@a-corp.com`)로 확인
 - 비밀번호 설정: `?token=expired` 또는 토큰 없음 → 링크 오류 화면
 
 ## 화면설계서(v0.5) 대비 차이
@@ -107,6 +106,8 @@ npm run build      # 타입 체크 + 프로덕션 빌드
 | 신청 상세 리소스의 인증키 | "인증키" 항목만 정의 | [공개키 복사] 버튼 (값 미노출) | OPS-06-3의 인증키 표시 규칙과 통일 |
 | 신청 상세 리소스 (만료 이벤트) | 정의 없음 | 할당 도메인·인증키 "-" | OPS-06-3 "만료 시 회수" 규칙과 통일 |
 | 테넌트 등록 회사 root 도메인 형식 오류 | "입력 형식만 확인" | 등록 버튼 비활성 + 입력창 아래 안내 문구 | 형식 검사 결과를 알려줄 수단이 필요 — 제거 여부 확인 필요 |
+| 테넌트 등록 결과 화면 | 등록 완료 / 메일 발송 실패 | 환경 준비 상태 × 메일 발송 결과 4가지: 완료 · 메일 발송 실패(환경 준비 진행 중) · 환경 준비 시작 실패(메일은 발송) · 환경 준비 실패(메일 안 보냄). [테넌트 상세] 버튼 추가 | 3-14 이후 등록 응답의 `provisioningStatus`로 실패 원인을 구분. 문구는 `pages/tenants/tenantView.ts` |
+| OPS-06 목록에 가입일 열 추가 · 목록 · 상세의 환경 준비 칩 | 목록은 테넌트ID · 테넌트명 · 계정ID · 계정상태만, 환경 준비 표시 정의 없음 | 목록 마지막 열 "가입일"(날짜만 `YYYY.MM.DD`, 상세 개요는 날짜+시각) · 정렬은 가입일시 내림차순. 계정상태 옆에 "환경 준비 중"(회색) · "환경 준비 실패"(빨강), 완료면 표시 안 함 | 가입일은 추가하기로 결정. 칩은 스키마 생성 · 환경 준비 실패 테넌트를 목록에서 찾을 수 있게 |
 | 승인 성공 시 피드백 | "별도 안내 없이 모달이 닫힘" | 모달은 닫히고 하단 토스트("승인했습니다") 표시 | 처리 결과 인지용 — 제거 여부 확인 필요 |
 | 계정 상태 자동 전환 (Mock) | 신청 완료 시 활성 / 반려·종료 시 비활성 | 반려 시점의 비활성 전환만 Mock으로 재현 (신청 완료·종료 전환은 서버 처리 영역) | API 연동 시 서버 값 사용 |
 | 비밀번호 저장 완료 후 이동 | Tetra Portal 로그인(URL 미확정) | `VITE_PORTAL_LOGIN_URL`(기본 `/login`) | 도메인 확정 후 환경 변수로 지정 |
@@ -118,7 +119,7 @@ npm run build      # 타입 체크 + 프로덕션 빌드
 
 1. **디자인** — Canva 팔레트 + Snow 타이포·간격, 글자 125%, CSS 토큰 모듈화, KPI 강조(A안 확정), 상단바 통일 반영 완료. 스타일 가이드 갱신 완료
 2. **검증** — v0.5 반영 후 승인(메일 성공·실패)·반려·테넌트 정보 수정·등록(중복 확인, 메일 성공·실패)·비밀번호 8자 규칙을 실제 조작으로 확인 완료. 모바일 폭 전 화면 확인은 남음
-3. **API 연동** — 로그인 · 로그아웃 · 운영자 정보는 연결 완료(`src/api`, `src/store/AuthContext.tsx`). 대시보드 · 승인 · 테넌트는 아직 목 — `AppDataContext` 액션과 `TODO:` 지점을 `src/api/client.ts`의 `apiRequest`로 교체
+3. **API 연동** — 로그인 · 로그아웃 · 운영자 정보, 테넌트 화면 전체(목록 · 상세 · 이벤트 · 리소스 · 수정 · 이메일 확인 · 등록)는 연결 완료. 이벤트 · 승인 · 대시보드는 아직 목(MR B) — `AppDataContext`를 `src/api`로 교체한 뒤 삭제. 비밀번호 설정 메일 재발송은 API가 없어 화면도 없음(OPS-07 "발송 실패 · 재발송" 상태 — 할 일)
 4. **미확정 항목 확정 대기** — 트래픽 모니터링(OPS-05), 비밀번호 문자 조합 규칙, Portal 로그인 URL, Portal 재사용 화면 3종
 
 ## 구조
@@ -131,10 +132,12 @@ src/
     layout/       # 사이드바, 페이지 헤더, 사용자 메뉴
     common/       # 상태칩, 정보목록, 통계카드, 테이블 카드 등
   pages/          # 화면별 페이지
-  store/          # AppDataContext(임시 데이터 저장소), Toast
-  mocks/          # Mock 데이터
-  types/          # 도메인 타입
-  utils/          # 상태 라벨/톤, 포맷, 검증
+  api/            # API 호출(client · auth · tenants)과 응답 타입(types.ts)
+  hooks/          # useApiQuery(불러오기 · 로딩 · 오류 · 다시 시도)
+  store/          # AuthContext(로그인 상태), AppDataContext(이벤트 화면용 임시 저장소), Toast
+  mocks/          # Mock 데이터 (이벤트 · 대시보드)
+  types/          # 화면 도메인 타입
+  utils/          # 상태 라벨/톤, 일시(datetime · KST), 포맷, 검증, API 오류 → 폼(formErrors)
 ```
 
 ## API 연동 지점
@@ -143,12 +146,15 @@ src/
 - 로그인 상태 `src/store/AuthContext.tsx`: `RequireAuth`가 `/me` 확인 전에는 콘솔 화면을 그리지 않는다. 화면에서는 `useOperator()` · `useAuth().logout()`
 - 테스트: `src/**/*.test.ts`를 `node --test`가 TypeScript 그대로 실행한다. 그래서 **테스트 대상 파일과 그 import 사슬은 상대 경로 + `.ts` 확장자로 import**한다(`@/` 별칭 · 확장자 없는 import는 Node가 못 푼다). 테스트 파일은 `tsc` 대상에서 뺀다(`@types/node` 없음). 화면(DOM) 테스트 도구는 아직 없다
 
-현재 목 데이터는 `src/store/AppDataContext.tsx`가 `src/mocks/*`를 메모리에 들고 있습니다. API가 확정되면 이 Context의 액션(`approveEvent`, `rejectEvent`, `updateTenant`, `isEmailTaken`, `registerTenant`)과 조회 부분을 API 호출로 교체하면 됩니다. 그 외 `TODO:` 주석 위치:
+- 응답 타입 `src/api/types.ts`: 서버 DTO 이름 그대로 손으로 옮긴다(새 패키지 없음). `/v3/api-docs`로 교차 확인. 일시는 ISO-8601 문자열이고 화면 표시는 `utils/datetime.ts`(KST 고정)
+- 불러오기 `src/hooks/useApiQuery.ts`: 화면에 들어올 때 부르고 `loading` · `error` · `reload` · `setData`(수정 응답 반영). 표시는 `components/common/QueryStatus.tsx`(스피너 / 서버 문구 + 다시 시도)
+- 폼 오류 `utils/formErrors.ts`: 400 `fields` → 입력란, 409 `EMAIL_DUPLICATED` → email 입력란, 그 밖 → 폼 위 Alert
+
+현재 목 데이터는 `src/store/AppDataContext.tsx`가 `src/mocks/*`를 메모리에 들고 있습니다(이벤트 · 승인 화면용, MR B에서 API로 교체 후 삭제). 그 외 `TODO:` 주석 위치:
 
 - 비밀번호 설정 토큰 검증/저장 `pages/auth/PasswordSetupPage.tsx`
 - 실시간 트래픽 `pages/dashboard/LiveTrafficCard.tsx`
 - 발급 이력 CSV `pages/events/EventProgressDetailPage.tsx`
-- 테넌트 등록(초기 비밀번호 생성·안내 메일 발송) `pages/tenants/TenantRegisterPage.tsx`
 
 ## 디자인 시스템
 

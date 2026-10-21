@@ -6,10 +6,12 @@ const planStyle: Record<Plan, { bg: string; fg: string }> = {
   S: { bg: ink[5], fg: text.primary },
   M: { bg: color.periTint, fg: color.navy },
   L: { bg: color.navy, fg: color.white },
+  XL: { bg: color.navyDeep, fg: color.peri },
 };
 
-export default function PlanBadge({ plan }: { plan: Plan }) {
-  const s = planStyle[plan];
+/** API의 trafficPlanCode는 문자열이라 모르는 값이면 S 모양으로 표시한다 */
+export default function PlanBadge({ plan }: { plan: Plan | string }) {
+  const s = planStyle[plan as Plan] ?? planStyle.S;
   return (
     <Box
       component="span"

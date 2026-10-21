@@ -2,11 +2,15 @@ import { Link as RouterLink } from 'react-router-dom';
 import { Link, TableBody, TableCell, TableHead, TableRow } from '@mui/material';
 import CopyButton from '@/components/common/CopyButton';
 import PlanBadge from '@/components/common/PlanBadge';
+import { QueryError, QueryLoading } from '@/components/common/QueryStatus';
 import StatusChip, { EmptyValue } from '@/components/common/StatusChip';
 import TableCard from '@/components/common/TableCard';
+import { fetchTenantEvents, fetchTenantResources } from '@/api/tenants';
+import type { ApplicationStatus } from '@/api/types';
+import { useApiQuery } from '@/hooks/useApiQuery';
 import { text, type } from '@/theme/theme';
-import type { TetraEvent } from '@/types';
-import { eventDetailPath, publicKeyOf, subdomainOf } from '@/utils/event';
+import { formatDateTime } from '@/utils/datetime';
+import { eventPath } from '@/utils/event';
 import { applicationStatusMeta, eventStatusMeta, eventTypeLabel, hostingStatusMeta } from '@/utils/status';
 
 function EmptyRow({ colSpan, label }: { colSpan: number; label: string }) {
@@ -20,25 +24,31 @@ function EmptyRow({ colSpan, label }: { colSpan: number; label: string }) {
 }
 
 /** 이벤트ID·이벤트명 링크 — 모니터링 영역의 이벤트 상세로 이동(사이드바도 전환) */
-function EventLinks({ e }: { e: TetraEvent }) {
+function EventLinks({ eventId, name, applicationStatus }: { eventId: number; name: string; applicationStatus: ApplicationStatus }) {
+  const to = eventPath(eventId, applicationStatus);
   return (
     <>
       <TableCell>
-        <Link component={RouterLink} to={eventDetailPath(e)}>
-          {e.id}
+        <Link component={RouterLink} to={to}>
+          {eventId}
         </Link>
       </TableCell>
       <TableCell>
-        <Link component={RouterLink} to={eventDetailPath(e)}>
-          {e.name}
+        <Link component={RouterLink} to={to}>
+          {name}
         </Link>
       </TableCell>
     </>
   );
 }
 
-/** OPS-06-2 — 신청·진행 상태를 하나의 목록으로 통합 (신청시각 최신순) */
-export function TenantEventsTable({ events }: { events: TetraEvent[] }) {
+/** OPS-06-2 — 신청·진행 상태를 하나의 목록으로 통합 (서버가 신청시각 최신순으로 준다) */
+export function TenantEventsTab({ tenantId }: { tenantId: string }) {
+  const query = useApiQuery((signal) => fetchTenantEvents(tenantId, signal), [tenantId]);
+  if (query.loading) return <QueryLoading />;
+  if (!query.data) return <QueryError error={query.error} onRetry={query.reload} />;
+  const events = query.data;
+
   return (
     <TableCard minWidth={1080}>
       <TableHead>
@@ -59,9 +69,9 @@ export function TenantEventsTable({ events }: { events: TetraEvent[] }) {
           const h = e.hostingStatus && hostingStatusMeta[e.hostingStatus];
           const s = e.eventStatus && eventStatusMeta[e.eventStatus];
           return (
-            <TableRow key={e.id}>
-              <EventLinks e={e} />
-              <TableCell>{eventTypeLabel[e.type]}</TableCell>
+            <TableRow key={e.eventId}>
+              <EventLinks eventId={e.eventId} name={e.name} applicationStatus={e.applicationStatus} />
+              <TableCell>{eventTypeLabel[e.eventType] ?? e.eventType}</TableCell>
               <TableCell>
                 <StatusChip label={a.label} tone={a.tone} />
               </TableCell>
@@ -69,9 +79,9 @@ export function TenantEventsTable({ events }: { events: TetraEvent[] }) {
               <TableCell>{h ? <StatusChip label={h.label} tone={h.tone} /> : <EmptyValue />}</TableCell>
               <TableCell>{s ? <StatusChip label={s.label} tone={s.tone} /> : <EmptyValue />}</TableCell>
               <TableCell align="center">
-                <PlanBadge plan={e.plan} />
+                <PlanBadge plan={e.trafficPlanCode} />
               </TableCell>
-              <TableCell sx={{ color: text.secondary, fontVariantNumeric: 'tabular-nums' }}>{e.appliedAt}</TableCell>
+              <TableCell sx={{ color: text.secondary, fontVariantNumeric: 'tabular-nums' }}>{formatDateTime(e.appliedAt)}</TableCell>
             </TableRow>
           );
         })}
@@ -81,9 +91,13 @@ export function TenantEventsTable({ events }: { events: TetraEvent[] }) {
   );
 }
 
-/** OPS-06-3 — 승인된 이벤트만. 서브 도메인·인증키는 승인 시 발급, 만료 시 회수 */
-export function TenantResourcesTable({ events }: { events: TetraEvent[] }) {
-  const approved = events.filter((e) => e.applicationStatus === 'APPROVED');
+/** OPS-06-3 — 승인된 이벤트만. 서브 도메인·인증키는 승인 시 발급, 만료 시 회수(서버가 null로 준다) */
+export function TenantResourcesTab({ tenantId }: { tenantId: string }) {
+  const query = useApiQuery((signal) => fetchTenantResources(tenantId, signal), [tenantId]);
+  if (query.loading) return <QueryLoading />;
+  if (!query.data) return <QueryError error={query.error} onRetry={query.reload} />;
+  const resources = query.data;
+
   return (
     <TableCard minWidth={900}>
       <TableHead>
@@ -96,21 +110,19 @@ export function TenantResourcesTable({ events }: { events: TetraEvent[] }) {
         </TableRow>
       </TableHead>
       <TableBody>
-        {approved.map((e) => {
-          const s = e.eventStatus && eventStatusMeta[e.eventStatus];
-          const domain = subdomainOf(e);
-          const key = publicKeyOf(e);
+        {resources.map((r) => {
+          const s = r.eventStatus && eventStatusMeta[r.eventStatus];
           return (
-            <TableRow key={e.id}>
-              <EventLinks e={e} />
+            <TableRow key={r.eventId}>
+              <EventLinks eventId={r.eventId} name={r.name} applicationStatus="APPROVED" />
               <TableCell>{s ? <StatusChip label={s.label} tone={s.tone} /> : <EmptyValue />}</TableCell>
-              <TableCell sx={type.mono}>{domain ?? <EmptyValue />}</TableCell>
+              <TableCell sx={type.mono}>{r.subdomain ?? <EmptyValue />}</TableCell>
               {/* RS256 공개키 — 값은 노출하지 않고 복사 버튼만 */}
-              <TableCell>{key ? <CopyButton value={key} label="공개키 복사" toast="공개키가 복사되었습니다." /> : <EmptyValue />}</TableCell>
+              <TableCell>{r.publicKey ? <CopyButton value={r.publicKey} label="공개키 복사" toast="공개키가 복사되었습니다." /> : <EmptyValue />}</TableCell>
             </TableRow>
           );
         })}
-        {approved.length === 0 && <EmptyRow colSpan={5} label="할당된 리소스가 없습니다." />}
+        {resources.length === 0 && <EmptyRow colSpan={5} label="할당된 리소스가 없습니다." />}
       </TableBody>
     </TableCard>
   );
