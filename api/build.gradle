@@ -39,6 +39,10 @@ dependencies {
 	implementation 'software.amazon.awssdk:sfn'
 	implementation 'software.amazon.awssdk:sesv2'
 	implementation 'software.amazon.awssdk:s3'
+	// 테넌트 등록 때 t_{tenant_id} 스키마를 만든다(TenantSchemaCreator). 버전은 Boot BOM이 관리.
+	// spring-boot-flyway(자동 설정)는 넣지 않는다 — 기동 때 앱 계정으로 tetra_platform에 마이그레이션하려 들기 때문
+	implementation 'org.flywaydb:flyway-core'
+	implementation 'org.flywaydb:flyway-mysql'
 	runtimeOnly 'com.mysql:mysql-connector-j'
 	annotationProcessor 'org.springframework.boot:spring-boot-configuration-processor'
 

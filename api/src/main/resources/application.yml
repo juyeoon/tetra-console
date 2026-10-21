@@ -19,6 +19,8 @@ spring:
         static: ${AWS_REGION}
   lifecycle:
     timeout-per-shutdown-phase: 30s
+  flyway:
+    enabled: false        # 기동 때 마이그레이션하지 않는다. 테넌트 스키마는 등록 때 TenantSchemaCreator가 만든다
 
 server:
   shutdown: graceful
@@ -65,3 +67,6 @@ tetra:
     jwt-secret: ${OPS_JWT_SECRET}
   password-link:
     hmac-secret: ${PASSWORD_LINK_HMAC_SECRET}
+  db-migration:           # 테넌트 스키마 생성용 DDL 계정 tetra_migrator (금고 tetra/{env}/db/migrator)
+    username: ${MIGRATOR_USERNAME}
+    password: ${MIGRATOR_PASSWORD}
