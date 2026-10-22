@@ -2,20 +2,39 @@ package com.tetra.ops;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
+import java.net.URI;
+import java.nio.charset.StandardCharsets;
+import java.util.Base64;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Collectors;
+
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 
+import com.tetra.ops.external.MailGateway;
 import com.tetra.ops.listener.StepFunctionsResultHandler;
 import com.tetra.ops.support.IntegrationTest;
 
 /** SQS 결과 리스너 처리 (§8, §12 중복 처리). 리스너 메서드는 이 핸들러를 그대로 부른다. */
+@ExtendWith(OutputCaptureExtension.class)
 class StepFunctionsResultHandlerTest extends IntegrationTest {
 
 	static final long EVENT_ID = 4001;
@@ -146,6 +165,8 @@ class StepFunctionsResultHandlerTest extends IntegrationTest {
 
 		assertThat(data.tenantRow(B)).containsEntry("provisioning_status", "READY");
 		assertThat(data.tenantStatusLogs(B)).isEmpty();
+		// 같은 메시지가 두 번 와도 READY로 실제로 바뀐 한 번만 메일
+		verify(mail, times(1)).send(any());
 	}
 
 	@ParameterizedTest
@@ -156,6 +177,7 @@ class StepFunctionsResultHandlerTest extends IntegrationTest {
 		handler.handleTenantResult(message("tenant-" + B, status, "E", "C"));
 
 		assertThat(data.tenantRow(B)).containsEntry("provisioning_status", "FAILED");
+		verify(mail, never()).send(any());
 	}
 
 	@Test
@@ -204,6 +226,8 @@ class StepFunctionsResultHandlerTest extends IntegrationTest {
 		assertThat(data.tenantRow(B)).containsEntry("provisioning_status", "READY");
 		assertThat(data.count("SELECT COUNT(*) FROM tetra_platform.operator_notification WHERE tenant_id = ?", B))
 			.isEqualTo(1);
+		// 수동 재실행으로 FAILED → READY가 되면 그때 한 번 메일. 같은 -r1이 또 오면 보내지 않는다
+		verify(mail, times(1)).send(any());
 	}
 
 	@ParameterizedTest
@@ -214,6 +238,7 @@ class StepFunctionsResultHandlerTest extends IntegrationTest {
 		handler.handleTenantResult(message("tenant-" + B + "-r2", status, "E", "C"));
 
 		assertThat(data.tenantRow(B)).containsEntry("provisioning_status", "FAILED");
+		verify(mail, never()).send(any());
 		assertThat(data.count("SELECT COUNT(*) FROM tetra_platform.operator_notification WHERE tenant_id = ?", B))
 			.isZero();
 	}
@@ -226,6 +251,109 @@ class StepFunctionsResultHandlerTest extends IntegrationTest {
 		handler.handleTenantResult(message("tenant-" + B, "SUCCEEDED", null, null));
 
 		assertThat(data.tenantRow(B)).containsEntry("provisioning_status", "READY");
+		// 이미 READY면 메일을 다시 보내지 않는다
+		verify(mail, never()).send(any());
+	}
+
+	// ---- 비밀번호 설정 메일: 환경 준비 성공(READY) 뒤 결과 리스너에서 ----
+
+	@Test
+	void readySendsSignedPasswordSetupMailAfterCommit(CapturedOutput output) throws Exception {
+		data.tenant(B, "B사", "INACTIVE", "PROVISIONING");
+		// 등록 뒤 담당자 이메일이 바뀌었으면 바뀐 주소로 보낸다(발송 때 테넌트를 다시 읽는다)
+		data.jdbc().update("UPDATE tetra_platform.tenant SET email = 'new.owner@b.example.com' WHERE tenant_id = ?", B);
+		// 메일을 보낼 때 이미 READY가 커밋돼 있어야 한다(상태 커밋 → 발송)
+		AtomicReference<Object> statusAtSend = new AtomicReference<>();
+		when(mail.send(any())).thenAnswer(invocation -> {
+			statusAtSend.set(data.tenantRow(B).get("provisioning_status"));
+			return true;
+		});
+
+		handler.handleTenantResult(message("tenant-" + B, "SUCCEEDED", null, null));
+
+		assertThat(statusAtSend).hasValue("READY");
+		ArgumentCaptor<MailGateway.Mail> captor = ArgumentCaptor.forClass(MailGateway.Mail.class);
+		verify(mail).send(captor.capture());
+		MailGateway.Mail sent = captor.getValue();
+		assertThat(sent.to()).isEqualTo("new.owner@b.example.com");
+		assertThat(sent.subject()).isEqualTo("[Tetra] 테넌트 계정이 등록되었습니다");
+		assertThat(sent.textBody()).contains("안녕하세요, B사 담당자님.", "Tetra에 B사 테넌트 계정이 등록되었습니다.", "24시간");
+
+		// 링크: {portal}/password/setup?t=&exp=&sig=, sig = base64url(HMAC-SHA256(secret, t + exp + "")). 만료는 발송 시점 + 24시간
+		String link = sent.textBody().replaceAll("(?s).*(https://portal\\.example\\.test/password/setup\\?\\S+).*", "$1");
+		Map<String, String> query = query(link);
+		assertThat(query.get("t")).isEqualTo(B);
+		long exp = Long.parseLong(query.get("exp"));
+		assertThat(exp - System.currentTimeMillis() / 1000).isBetween(24 * 3600L - 60, 24 * 3600L + 60);
+		assertThat(query.get("sig")).isEqualTo(hmac("test-hmac-secret", B + exp));
+
+		// 링크는 로그 · 알림에 남지 않는다
+		assertThat(output.getAll()).doesNotContain(query.get("sig")).doesNotContain("password/setup");
+		assertThat(sent.toString()).doesNotContain("sig=");
+		assertThat(data.count("SELECT COUNT(*) FROM tetra_platform.operator_notification WHERE tenant_id = ? AND category = 'MAIL'", B))
+			.isZero();
+	}
+
+	@Test
+	void mailFailureKeepsReadyNotifiesOperatorAndDoesNotThrow() {
+		data.tenant(B, "B사", "INACTIVE", "PROVISIONING");
+		when(mail.send(any())).thenReturn(false);
+		String body = message("tenant-" + B, "SUCCEEDED", null, null);
+
+		// 예외 없이 끝나야 리스너가 ack한다(메시지 재처리 없음). 재전달되어도 이미 READY라 다시 보내지 않는다
+		handler.handleTenantResult(body);
+		handler.handleTenantResult(body);
+
+		assertThat(data.tenantRow(B)).containsEntry("provisioning_status", "READY");
+		verify(mail, times(1)).send(any());
+		assertThat(mailFailureNotifications(B)).isEqualTo(1);
+	}
+
+	@Test
+	void unexpectedMailErrorIsCaughtAndNotified() {
+		data.tenant(B, "B사", "INACTIVE", "PROVISIONING");
+		when(mail.send(any())).thenThrow(new IllegalStateException("boom"));
+
+		handler.handleTenantResult(message("tenant-" + B, "SUCCEEDED", null, null));
+
+		assertThat(data.tenantRow(B)).containsEntry("provisioning_status", "READY");
+		assertThat(mailFailureNotifications(B)).isEqualTo(1);
+	}
+
+	private long mailFailureNotifications(String tenantId) {
+		return data.count("SELECT COUNT(*) FROM tetra_platform.operator_notification WHERE tenant_id = ?"
+				+ " AND category = 'MAIL' AND priority = 'URGENT' AND content = ?", tenantId,
+				"비밀번호 설정 메일 발송에 실패했습니다(테넌트 " + tenantId + "). 담당자 이메일 주소와 SES 상태를 확인해 주세요.");
+	}
+
+	// ---- 스키마가 없으면 READY로 바꾸지 않는다 ----
+
+	@ParameterizedTest
+	@ValueSource(strings = { "PROVISIONING", "FAILED" })
+	void successWithoutTenantSchemaIsNotMadeReady(String current) {
+		String noSchema = "cccccccccccc";
+		data.tenant(noSchema, "C사", "INACTIVE", current);
+
+		handler.handleTenantResult(message("tenant-" + noSchema + "-r1", "SUCCEEDED", null, null));
+
+		assertThat(data.tenantRow(noSchema)).containsEntry("provisioning_status", "FAILED");
+		verify(mail, never()).send(any());
+		assertThat(data.count("SELECT COUNT(*) FROM tetra_platform.operator_notification WHERE tenant_id = ?"
+				+ " AND category = 'PROVISIONING' AND priority = 'URGENT' AND content LIKE ?", noSchema,
+				"%테넌트 스키마(t_" + noSchema + ")가 없어%READY로 반영하지 않았습니다%")).isEqualTo(1);
+	}
+
+	private static Map<String, String> query(String url) {
+		return List.of(URI.create(url).getRawQuery().split("&"))
+			.stream()
+			.map(p -> p.split("=", 2))
+			.collect(Collectors.toMap(p -> p[0], p -> p[1]));
+	}
+
+	private static String hmac(String secret, String message) throws Exception {
+		Mac mac = Mac.getInstance("HmacSHA256");
+		mac.init(new SecretKeySpec(secret.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
+		return Base64.getUrlEncoder().withoutPadding().encodeToString(mac.doFinal(message.getBytes(StandardCharsets.UTF_8)));
 	}
 
 }

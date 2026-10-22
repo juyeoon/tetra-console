@@ -85,7 +85,10 @@ public class StepFunctionsResultHandler {
 		}
 	}
 
-	/** 테넌트 환경 준비 결과: provisioning_status PROVISIONING → READY / FAILED. 상태 로그 없음. */
+	/**
+	 * 테넌트 환경 준비 결과: provisioning_status PROVISIONING → READY / FAILED. 상태 로그 없음.
+	 * READY로 실제로 바뀌면 비밀번호 설정 메일을 보낸다(TenantCommandService.applyProvisioningResult). 메일 실패는 알림만 — ack.
+	 */
 	public void handleTenantResult(String body) {
 		Optional<ExecutionStatusChange> parsed = ExecutionStatusChange.parse(body, jsonMapper);
 		if (parsed.isEmpty()) {

@@ -70,7 +70,8 @@ public class TenantQueryService {
 	@Schema(name = "TenantBasic")
 	public record Basic(String tenantId, String name, String contactName, String email, AccountStatus accountStatus,
 			OffsetDateTime createdAt,
-			@Schema(description = PROVISIONING_STATUS_DESCRIPTION) ProvisioningStatus provisioningStatus) {
+			@Schema(description = PROVISIONING_STATUS_DESCRIPTION) ProvisioningStatus provisioningStatus,
+			@Schema(description = "비밀번호를 설정했는지(password IS NOT NULL). false면 아직 설정 전 — 메일은 환경 준비가 끝나면(READY) 발송") boolean passwordSet) {
 	}
 
 	static final String PROVISIONING_STATUS_DESCRIPTION = "환경 준비 상태. PROVISIONING(준비 중) · READY(완료) · "
@@ -143,7 +144,8 @@ public class TenantQueryService {
 		}).toList();
 		return new TenantOverviewResponse(
 				new Basic(tenant.getTenantId(), tenant.getName(), tenant.getContactName(), tenant.getEmail(),
-						tenant.getAccountStatus(), Kst.toOffset(tenant.getCreatedAt()), tenant.getProvisioningStatus()),
+						tenant.getAccountStatus(), Kst.toOffset(tenant.getCreatedAt()), tenant.getProvisioningStatus(),
+						tenant.getPassword() != null),
 				new Buckets(buckets.content(tenantId), buckets.auditLog(tenantId)), items);
 	}
 

@@ -143,11 +143,11 @@ public class NotificationService {
 				tenantLabel(tenantId) + " [" + eventName(eventId) + "] 개인키 메일 발송에 실패했습니다. 키 재발급이 필요합니다.");
 	}
 
-	/** 비밀번호 설정 메일 발송 실패. 수동 재발송이 필요하다. 운영자 URGENT. */
+	/** 비밀번호 설정 메일 발송 실패(환경 준비 완료 뒤 결과 리스너에서 발송). 재처리하지 않는다. 운영자 URGENT. */
 	@Transactional
 	public void passwordSetupMailFailed(String tenantId) {
 		operator(tenantId, null, Category.MAIL, Priority.URGENT,
-				tenantLabel(tenantId) + " 비밀번호 설정 메일 발송에 실패했습니다. 수동 재발송이 필요합니다.");
+				"비밀번호 설정 메일 발송에 실패했습니다(테넌트 " + tenantId + "). 담당자 이메일 주소와 SES 상태를 확인해 주세요.");
 	}
 
 	// ------------------------------------------------------------

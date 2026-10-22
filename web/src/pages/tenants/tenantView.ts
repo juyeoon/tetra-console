@@ -28,43 +28,35 @@ export const statusLogBadgeMeta: Record<StatusLogBadge, ChipMeta | null> = {
 
 export interface RegisterOutcome {
   /** 화면 분기용 */
-  kind: 'done' | 'mailFailed' | 'startFailed' | 'schemaFailed';
+  kind: 'done' | 'failed';
   tone: Tone;
   title: string;
-  /** 성공 화면은 없음 */
-  body: string | null;
+  body: string;
 }
 
 /**
- * OPS-07 등록 결과 화면 (POST /tenants의 provisioningStatus × mailSent).
- * - FAILED + 메일 안 보냄: 스키마 생성 실패 → 메일을 보내지 않았음
- * - FAILED + 메일 보냄: StartExecution 실패 → 환경 준비 수동 재실행
- * - 그 밖 + 메일 실패: 환경 준비는 진행 중, 메일만 실패
+ * OPS-07 등록 결과 화면 (POST /tenants의 provisioningStatus).
+ * 비밀번호 설정 메일은 등록 때가 아니라 환경 준비가 끝나면(READY) 서버가 보낸다.
+ * - FAILED(스키마 생성 · StartExecution 실패): 환경 준비 실패, 메일을 보내지 않음
+ * - 그 밖(PROVISIONING · READY): 등록 완료, 환경 준비가 끝나면 메일 발송
  */
-export function registerOutcome(provisioningStatus: ProvisioningStatus, mailSent: boolean, tenantName: string): RegisterOutcome {
-  if (provisioningStatus === 'FAILED' && !mailSent) {
+export function registerOutcome(provisioningStatus: ProvisioningStatus, tenantName: string, email: string): RegisterOutcome {
+  if (provisioningStatus === 'FAILED') {
     return {
-      kind: 'schemaFailed',
+      kind: 'failed',
       tone: 'red',
       title: '테넌트 환경 준비에 실패했습니다',
       body: `${tenantName} 계정은 등록되었지만 환경 준비에 실패해 비밀번호 설정 메일을 보내지 않았습니다. 운영자 알림에서 원인을 확인해 주세요.`,
     };
   }
-  if (provisioningStatus === 'FAILED') {
-    return {
-      kind: 'startFailed',
-      tone: 'amber',
-      title: '환경 준비를 시작하지 못했습니다',
-      body: '비밀번호 설정 메일은 발송되었습니다. 환경 준비(WF5)를 수동으로 다시 실행해야 합니다.',
-    };
-  }
-  if (!mailSent) {
-    return {
-      kind: 'mailFailed',
-      tone: 'amber',
-      title: '비밀번호 설정 메일 발송에 실패했습니다',
-      body: '계정은 등록되었고 환경 준비는 진행 중입니다. 메일을 받지 못한 경우 테넌트 상세에서 확인해 주세요.',
-    };
-  }
-  return { kind: 'done', tone: 'green', title: '테넌트 등록이 완료되었습니다', body: null };
+  return {
+    kind: 'done',
+    tone: 'green',
+    title: '테넌트 등록이 완료되었습니다',
+    body: `환경 준비가 끝나면 ${email}로 비밀번호 설정 메일이 발송됩니다.`,
+  };
 }
+
+/** 개요의 비밀번호 설정 여부 */
+export const passwordSetMeta = (passwordSet: boolean): ChipMeta =>
+  passwordSet ? { label: '설정 완료', tone: 'green' } : { label: '비밀번호 미설정', tone: 'grey' };
