@@ -23,7 +23,10 @@ class TetraPropertiesTest {
 		.withUserConfiguration(Config.class)
 		.withPropertyValues("tetra.env=test", "tetra.aws.region=ap-northeast-2", "tetra.sfn.approve-state-machine-arn=a",
 				"tetra.sfn.tenant-state-machine-arn=b", "tetra.sqs.approve-result-queue=q1",
-				"tetra.sqs.tenant-result-queue=q2", "tetra.mail.from=x@y.z", "tetra.portal.base-url=https://p",
+				"tetra.sqs.tenant-result-queue=q2", "tetra.sqs.event-lifecycle-result-queue=q3",
+				"tetra.sfn.lifecycle.hosting-start-name=tetra-test-hosting-start",
+				"tetra.sfn.lifecycle.event-open-name=tetra-test-event-open",
+				"tetra.sfn.lifecycle.event-end-name=tetra-test-event-end", "tetra.mail.from=x@y.z", "tetra.portal.base-url=https://p",
 				"tetra.db-migration.username=tetra_migrator", "tetra.platform-domain=tetraops.cloud");
 
 	private static final String MIGRATOR_PASSWORD = "tetra.db-migration.password=migrator-pw-value";

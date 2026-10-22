@@ -7,6 +7,7 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.tetra.ops.common.time.Kst;
+import com.tetra.ops.domain.EventStatus;
 import com.tetra.ops.domain.HostingStatus;
 import com.tetra.ops.domain.platform.EventRegistry;
 import com.tetra.ops.domain.platform.EventRegistryRepository;
@@ -30,7 +31,7 @@ public class NotificationService {
 
 	enum Category {
 
-		APPLICATION, HOSTING, ACCOUNT, PROVISIONING, MAIL
+		APPLICATION, HOSTING, EVENT, ACCOUNT, PROVISIONING, MAIL
 
 	}
 
@@ -83,8 +84,10 @@ public class NotificationService {
 	// ------------------------------------------------------------ 호스팅 (HOSTING)
 
 	/**
-	 * 승인 등록 결과. 테넌트 알림은 남기지 않는다(내부 인프라 단계).
-	 * PENDING → DEPLOYED: INFO / DEPLOY_FAILED → DEPLOYED: INFO(복구) / PENDING → DEPLOY_FAILED: URGENT
+	 * 호스팅 상태 변화(승인 등록 WF1-2 · 호스팅 시작 WF2-1 · 종료 실패 WF4). 테넌트 알림은 남기지 않는다(내부 인프라 단계).
+	 * → DEPLOYED: INFO(DEPLOY_FAILED에서면 복구) / → DEPLOY_FAILED: URGENT
+	 * → HOSTING: INFO(HOSTING_FAILED에서면 복구) / → HOSTING_FAILED: URGENT / → END_FAILED: URGENT
+	 * 종료 성공(→ ENDED)은 eventEnded 한 건으로 남긴다.
 	 */
 	@Transactional(propagation = Propagation.MANDATORY)
 	public void hostingChanged(String tenantId, Long eventId, HostingStatus from, HostingStatus to, String detail) {
@@ -100,6 +103,46 @@ public class NotificationService {
 		else if (to == HostingStatus.DEPLOYED) {
 			operator(tenantId, eventId, Category.HOSTING, Priority.INFO, label + " 이벤트 배포가 완료되었습니다.");
 		}
+		else if (to == HostingStatus.HOSTING && from == HostingStatus.HOSTING_FAILED) {
+			operator(tenantId, eventId, Category.HOSTING, Priority.INFO,
+					label + " 호스팅 시작 실패로 표시됐던 이벤트의 호스팅이 시작되었습니다.");
+		}
+		else if (to == HostingStatus.HOSTING) {
+			operator(tenantId, eventId, Category.HOSTING, Priority.INFO, label + " 호스팅을 시작했습니다(대기방 열림).");
+		}
+		else if (to == HostingStatus.HOSTING_FAILED) {
+			operator(tenantId, eventId, Category.HOSTING, Priority.URGENT,
+					label + " 호스팅 시작(대기방 열기)에 실패했습니다. 확인이 필요합니다." + (detail == null ? "" : " 원인: " + detail));
+		}
+		else if (to == HostingStatus.END_FAILED) {
+			operator(tenantId, eventId, Category.HOSTING, Priority.URGENT,
+					label + " 이벤트 종료 처리에 실패했습니다. 확인이 필요합니다." + (detail == null ? "" : " 원인: " + detail));
+		}
+	}
+
+	// ------------------------------------------------------------ 이벤트 (EVENT)
+
+	/** 이벤트 준비 결과(WF2-2). → OPEN: INFO(OPEN_FAILED에서면 복구) / → OPEN_FAILED: URGENT. 만료는 eventEnded. */
+	@Transactional(propagation = Propagation.MANDATORY)
+	public void eventStatusChanged(String tenantId, Long eventId, EventStatus from, EventStatus to, String detail) {
+		String label = tenantLabel(tenantId) + " [" + eventName(eventId) + "]";
+		if (to == EventStatus.OPEN && from == EventStatus.OPEN_FAILED) {
+			operator(tenantId, eventId, Category.EVENT, Priority.INFO, label + " 이벤트 준비 실패로 표시됐던 이벤트의 입장이 열렸습니다.");
+		}
+		else if (to == EventStatus.OPEN) {
+			operator(tenantId, eventId, Category.EVENT, Priority.INFO, label + " 입장이 열렸습니다(쿠폰 발급은 이벤트 시작 시각부터).");
+		}
+		else if (to == EventStatus.OPEN_FAILED) {
+			operator(tenantId, eventId, Category.EVENT, Priority.URGENT,
+					label + " 이벤트 준비(입장 열기)에 실패했습니다. 확인이 필요합니다." + (detail == null ? "" : " 원인: " + detail));
+		}
+	}
+
+	/** 이벤트 종료 성공(WF4: 호스팅 종료 · 발급 마감). 운영자 INFO 1건. */
+	@Transactional(propagation = Propagation.MANDATORY)
+	public void eventEnded(String tenantId, Long eventId) {
+		operator(tenantId, eventId, Category.HOSTING, Priority.INFO,
+				tenantLabel(tenantId) + " [" + eventName(eventId) + "] 이벤트가 종료되었습니다(호스팅 종료 · 발급 마감).");
 	}
 
 	// ------------------------------------------------------------ 계정 (ACCOUNT)

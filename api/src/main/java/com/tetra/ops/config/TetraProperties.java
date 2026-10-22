@@ -35,10 +35,20 @@ public record TetraProperties(
 	public record Aws(@NotBlank String region) {
 	}
 
-	public record Sfn(@NotBlank String approveStateMachineArn, @NotBlank String tenantStateMachineArn) {
+	/**
+	 * lifecycle: 수명 주기 결과(WF2-1 · WF2-2 · WF4)를 나누는 상태 머신 이름. 실행 이름은 스케줄러가 정하므로
+	 * 결과 메시지의 detail.stateMachineArn 이름으로 흐름을 고른다. 기본값은 application.yml(tetra-{env}-…).
+	 */
+	public record Sfn(@NotBlank String approveStateMachineArn, @NotBlank String tenantStateMachineArn,
+			@Valid @NotNull Lifecycle lifecycle) {
 	}
 
-	public record Sqs(@NotBlank String approveResultQueue, @NotBlank String tenantResultQueue) {
+	public record Lifecycle(@NotBlank String hostingStartName, @NotBlank String eventOpenName,
+			@NotBlank String eventEndName) {
+	}
+
+	public record Sqs(@NotBlank String approveResultQueue, @NotBlank String tenantResultQueue,
+			@NotBlank String eventLifecycleResultQueue) {
 	}
 
 	public record Mail(@NotBlank String from) {

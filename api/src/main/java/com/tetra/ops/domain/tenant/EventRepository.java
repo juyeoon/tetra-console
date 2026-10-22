@@ -9,6 +9,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import com.tetra.ops.domain.ApplicationStatus;
+import com.tetra.ops.domain.EventStatus;
 import com.tetra.ops.domain.HostingStatus;
 
 /** 테넌트 스키마의 event. 라우팅(TenantContext) 안에서만 쓴다. */
@@ -54,5 +55,13 @@ public interface EventRepository extends JpaRepository<Event, Long> {
 	int updateHostingStatus(@Param("eventId") Long eventId, @Param("tenantId") String tenantId,
 			@Param("from") HostingStatus from,
 			@Param("to") HostingStatus to);
+
+	@Modifying(flushAutomatically = true, clearAutomatically = true)
+	@Query("""
+			update Event e set e.eventStatus = :to
+			 where e.eventId = :eventId and e.tenantId = :tenantId and e.eventStatus = :from""")
+	int updateEventStatus(@Param("eventId") Long eventId, @Param("tenantId") String tenantId,
+			@Param("from") EventStatus from,
+			@Param("to") EventStatus to);
 
 }

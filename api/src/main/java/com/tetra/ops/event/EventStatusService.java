@@ -4,6 +4,8 @@ import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.List;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -33,6 +35,8 @@ import com.tetra.ops.tenancy.TenantContext;
  */
 @Service
 public class EventStatusService {
+
+	private static final Logger log = LoggerFactory.getLogger(EventStatusService.class);
 
 	static final int DETAIL_MAX = 500;
 
@@ -122,7 +126,78 @@ public class EventStatusService {
 				|| changeHostingStatus(eventId, HostingStatus.DEPLOY_FAILED, HostingStatus.DEPLOYED, detail);
 	}
 
+	// ------------------------------------------------------------ 수명 주기 결과 (WF2-1 · WF2-2 · WF4, §8)
+
+	/**
+	 * WF2-1 호스팅 시작 결과.
+	 * - 성공: DEPLOYED → HOSTING, 또는 HOSTING_FAILED → HOSTING(재실행). 배포가 실패한 이벤트(DEPLOY_FAILED)는 바꾸지 않는다(WARN)
+	 * - 실패: DEPLOYED → HOSTING_FAILED만(이미 HOSTING이면 늦게 온 옛 실패로 보고 그대로)
+	 */
+	@Transactional
+	public boolean applyHostingStart(Long eventId, boolean succeeded, String detail) {
+		if (!succeeded) {
+			return changeHostingStatus(eventId, HostingStatus.DEPLOYED, HostingStatus.HOSTING_FAILED, detail);
+		}
+		boolean changed = changeHostingStatus(eventId, HostingStatus.DEPLOYED, HostingStatus.HOSTING, null)
+				|| changeHostingStatus(eventId, HostingStatus.HOSTING_FAILED, HostingStatus.HOSTING, null);
+		if (!changed && currentHosting(eventId) == HostingStatus.DEPLOY_FAILED) {
+			log.warn("배포 실패 이벤트에 호스팅 시작 성공 결과가 왔습니다. 상태를 바꾸지 않습니다: eventId={}", eventId);
+		}
+		return changed;
+	}
+
+	/**
+	 * WF2-2 이벤트 준비(입장 열기) 결과. hosting_status는 건드리지 않는다.
+	 * - 성공: SCHEDULED → OPEN, 또는 OPEN_FAILED → OPEN(재실행)
+	 * - 실패: SCHEDULED → OPEN_FAILED만
+	 */
+	@Transactional
+	public boolean applyEventOpen(Long eventId, boolean succeeded, String detail) {
+		if (!succeeded) {
+			return changeEventStatus(eventId, EventStatus.SCHEDULED, EventStatus.OPEN_FAILED, detail, true);
+		}
+		return changeEventStatus(eventId, EventStatus.SCHEDULED, EventStatus.OPEN, null, true)
+				|| changeEventStatus(eventId, EventStatus.OPEN_FAILED, EventStatus.OPEN, null, true);
+	}
+
+	/**
+	 * WF4 이벤트 종료 결과(리소스 정리).
+	 * - 성공: hosting은 ENDED가 아니면 → ENDED(END_FAILED 재실행 포함), event는 EXPIRED가 아니면 → EXPIRED.
+	 *   바뀐 것만 로그를 남기고 알림은 "종료" 1건. event가 바뀌었으면 테넌트 자동 비활성을 판정한다.
+	 * - 실패: hosting은 ENDED · END_FAILED가 아니면 → END_FAILED. event는 그대로(진행 중으로 남아 비활성 판정 안 함)
+	 * 지금 상태를 읽고 그 값을 조건으로 UPDATE한다(동시에 바뀌었으면 0행 → 이미 처리됨).
+	 */
+	@Transactional
+	public boolean applyEventEnd(Long eventId, boolean succeeded, String detail) {
+		String tenantId = routedTenant();
+		HostingStatus hosting = currentHosting(eventId);
+		if (!succeeded) {
+			boolean endable = hosting != null && hosting != HostingStatus.ENDED && hosting != HostingStatus.END_FAILED;
+			return endable && changeHostingStatus(eventId, hosting, HostingStatus.END_FAILED, detail);
+		}
+		boolean hostingChanged = hosting != null && hosting != HostingStatus.ENDED
+				&& changeHostingStatus(eventId, hosting, HostingStatus.ENDED, null, false);
+		EventStatus status = registries.findById(eventId).map(r -> r.getEventStatus()).orElse(null);
+		boolean eventChanged = status != null && status != EventStatus.EXPIRED
+				&& changeEventStatus(eventId, status, EventStatus.EXPIRED, null, false);
+		if (hostingChanged || eventChanged) {
+			notifications.eventEnded(tenantId, eventId);
+		}
+		if (eventChanged) {
+			tenantActivity.deactivateIfIdle(tenantId, eventId);
+		}
+		return hostingChanged || eventChanged;
+	}
+
+	private HostingStatus currentHosting(Long eventId) {
+		return registries.findById(eventId).map(r -> r.getHostingStatus()).orElse(null);
+	}
+
 	private boolean changeHostingStatus(Long eventId, HostingStatus from, HostingStatus to, String detail) {
+		return changeHostingStatus(eventId, from, to, detail, true);
+	}
+
+	private boolean changeHostingStatus(Long eventId, HostingStatus from, HostingStatus to, String detail, boolean notify) {
 		String tenantId = routedTenant();
 		if (registries.updateHostingStatus(eventId, from, to) == 0) {
 			return false;
@@ -130,7 +205,23 @@ public class EventStatusService {
 		requireOneRow(events.updateHostingStatus(eventId, tenantId, from, to), eventId);
 		statusLogs.save(EventStatusLog.of(eventId, tenantId, StatusType.HOSTING, from, to, Kst.now(clock),
 				truncate(detail), null));
-		notifications.hostingChanged(tenantId, eventId, from, to, truncate(detail));
+		if (notify) {
+			notifications.hostingChanged(tenantId, eventId, from, to, truncate(detail));
+		}
+		return true;
+	}
+
+	private boolean changeEventStatus(Long eventId, EventStatus from, EventStatus to, String detail, boolean notify) {
+		String tenantId = routedTenant();
+		if (registries.updateEventStatus(eventId, from, to) == 0) {
+			return false;
+		}
+		requireOneRow(events.updateEventStatus(eventId, tenantId, from, to), eventId);
+		statusLogs.save(EventStatusLog.of(eventId, tenantId, StatusType.EVENT, from, to, Kst.now(clock),
+				truncate(detail), null));
+		if (notify) {
+			notifications.eventStatusChanged(tenantId, eventId, from, to, truncate(detail));
+		}
 		return true;
 	}
 

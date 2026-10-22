@@ -31,6 +31,7 @@ tetra:
   sqs:
     approve-result-queue: approve-result
     tenant-result-queue: tenant-result
+    event-lifecycle-result-queue: event-lifecycle-result
   mail:
     from: Tetra Operation <no-reply@tetra-operation.com>
   portal:

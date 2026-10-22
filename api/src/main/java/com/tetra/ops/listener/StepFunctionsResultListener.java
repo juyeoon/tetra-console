@@ -13,8 +13,11 @@ public class StepFunctionsResultListener {
 
 	private final StepFunctionsResultHandler handler;
 
-	public StepFunctionsResultListener(StepFunctionsResultHandler handler) {
+	private final LifecycleResultHandler lifecycleHandler;
+
+	public StepFunctionsResultListener(StepFunctionsResultHandler handler, LifecycleResultHandler lifecycleHandler) {
 		this.handler = handler;
+		this.lifecycleHandler = lifecycleHandler;
 	}
 
 	@SqsListener("${tetra.sqs.approve-result-queue}")
@@ -25,6 +28,12 @@ public class StepFunctionsResultListener {
 	@SqsListener("${tetra.sqs.tenant-result-queue}")
 	public void onTenantResult(String body) {
 		handler.handleTenantResult(body);
+	}
+
+	/** WF2-1 · WF2-2 · WF4 공용 큐 — stateMachineArn으로 흐름을 나눈다 */
+	@SqsListener("${tetra.sqs.event-lifecycle-result-queue}")
+	public void onEventLifecycleResult(String body) {
+		lifecycleHandler.handle(body);
 	}
 
 }

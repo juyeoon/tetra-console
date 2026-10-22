@@ -20,6 +20,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.utility.DockerImageName;
 
+import com.tetra.ops.listener.LifecycleResultHandler;
 import com.tetra.ops.listener.StepFunctionsResultHandler;
 import com.tetra.ops.support.IntegrationTest;
 
@@ -46,6 +47,8 @@ class SqsListenerContainerTest extends IntegrationTest {
 
 	static String tenantQueueUrl;
 
+	static String lifecycleQueueUrl;
+
 	@DynamicPropertySource
 	static void sqsEndpoint(DynamicPropertyRegistry registry) {
 		ELASTICMQ.start();
@@ -59,13 +62,18 @@ class SqsListenerContainerTest extends IntegrationTest {
 		Map<QueueAttributeName, String> attributes = Map.of(QueueAttributeName.VISIBILITY_TIMEOUT, "1");
 		approveQueueUrl = sqs.createQueue(b -> b.queueName("approve-result-it").attributes(attributes)).queueUrl();
 		tenantQueueUrl = sqs.createQueue(b -> b.queueName("tenant-result-it").attributes(attributes)).queueUrl();
+		lifecycleQueueUrl = sqs.createQueue(b -> b.queueName("event-lifecycle-result-it").attributes(attributes)).queueUrl();
 		registry.add("spring.cloud.aws.sqs.endpoint", () -> endpoint);
 		registry.add("tetra.sqs.approve-result-queue", () -> "approve-result-it");
 		registry.add("tetra.sqs.tenant-result-queue", () -> "tenant-result-it");
+		registry.add("tetra.sqs.event-lifecycle-result-queue", () -> "event-lifecycle-result-it");
 	}
 
 	@MockitoSpyBean
 	StepFunctionsResultHandler handler;
+
+	@MockitoSpyBean
+	LifecycleResultHandler lifecycleHandler;
 
 	@Test
 	void succeededMessageIsConsumedAndDeleted() {
@@ -124,6 +132,37 @@ class SqsListenerContainerTest extends IntegrationTest {
 		verify(mail, times(1)).send(any());
 		assertThat(data.count("SELECT COUNT(*) FROM tetra_platform.operator_notification WHERE tenant_id = ?"
 				+ " AND category = 'MAIL' AND priority = 'URGENT'", B)).isEqualTo(1);
+	}
+
+	/** 수명 주기 결과 큐(WF2-1 · WF2-2 · WF4 공용): 정상 처리면 삭제 */
+	@Test
+	void lifecycleResultIsConsumedAndDeleted() {
+		data.tenant(A, "A사", "ACTIVE", "READY");
+		data.event(4301, A).approved("DEPLOYED", "SCHEDULED", "sqs00003").insert();
+
+		sqs.sendMessage(b -> b.queueUrl(lifecycleQueueUrl)
+			.messageBody(LifecycleResultHandlerTest.message(LifecycleResultHandlerTest.HOSTING_START, "SUCCEEDED", 4301, A,
+					null, null)));
+
+		await(() -> "HOSTING".equals(data.registry(4301).get("hosting_status")));
+		await(() -> inFlightAndVisible(lifecycleQueueUrl) == 0);
+	}
+
+	/** 처리 중 예외(event 행 없음)면 ack하지 않아 재전달된다 */
+	@Test
+	void failingLifecycleMessageIsRedelivered() {
+		data.tenant(A, "A사", "ACTIVE", "READY");
+		// event 행이 없어(registry만) 처리 중 예외가 난다
+		data.event(4302, A).approved("HOSTING", "SCHEDULED", "sqs00004").registryOnly().insert();
+		String body = LifecycleResultHandlerTest.message(LifecycleResultHandlerTest.EVENT_OPEN, "SUCCEEDED", 4302, A, null, null);
+
+		sqs.sendMessage(b -> b.queueUrl(lifecycleQueueUrl).messageBody(body));
+
+		verify(lifecycleHandler, org.mockito.Mockito.timeout(15_000).atLeast(2)).handle(eq(body));
+		assertThat(data.registry(4302)).containsEntry("event_status", "SCHEDULED");
+		// 정리: 이미 처리된 상태로 맞춰 두면 다음 재전달에서 "이미 처리됨"으로 삭제된다
+		data.jdbc().update("UPDATE tetra_platform.event_registry SET event_status = 'OPEN' WHERE event_id = 4302");
+		await(() -> inFlightAndVisible(lifecycleQueueUrl) == 0);
 	}
 
 	private static long inFlightAndVisible() {
