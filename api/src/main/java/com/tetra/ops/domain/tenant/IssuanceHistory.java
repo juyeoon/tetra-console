@@ -14,7 +14,7 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 
-/** 발급 이력. 이 앱은 분당 집계(OPS-04-3)만 네이티브 쿼리로 읽는다. */
+/** 발급 이력. 이 앱은 분당 집계(OPS-04-3)와 발급 이력 CSV(3-12)를 네이티브 쿼리로 읽기만 한다. */
 @Entity
 @Table(name = "issuance_history")
 public class IssuanceHistory extends TenantScopedEntity {

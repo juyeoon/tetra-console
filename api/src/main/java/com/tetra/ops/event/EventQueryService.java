@@ -49,37 +49,22 @@ public class EventQueryService {
 		return router.inTenant(routed, () -> reader.result(eventId));
 	}
 
-	/** history_file_path(테넌트 로그 버킷)의 presigned GET URL을 매번 새로 만든다. READY가 아니면 409. */
+	/**
+	 * history_file_path의 presigned GET URL을 매번 새로 만든다. READY가 아니면 409.
+	 * history_file_path는 테넌트 로그 버킷(tetra-audit-logs-{env}-{tenant_id}) 안의 키만 담는다(3-12, issuance-history/{event_id}.csv).
+	 */
 	public CsvDownloadResponse historyCsv(Long eventId) {
 		RoutedEvent routed = router.findEvent(eventId);
-		String path = router.inTenant(routed, () -> reader.historyFilePathIfReady(eventId));
-		if (path == null || path.isBlank()) {
+		String key = router.inTenant(routed, () -> reader.historyFilePathIfReady(eventId));
+		if (key == null || key.isBlank()) {
 			throw new ApiException(ErrorCode.RESULT_NOT_READY);
 		}
-		S3Location location = S3Location.parse(path, buckets.auditLog(routed.tenantId()));
-		var signed = urlSigner.presignGet(location.bucket(), location.key(), properties.csv().presignTtl(),
+		if (key.startsWith("s3://") || key.startsWith("/")) {
+			throw new IllegalStateException("history_file_path 형식 오류(키만 저장): eventId=" + eventId);
+		}
+		var signed = urlSigner.presignGet(buckets.auditLog(routed.tenantId()), key, properties.csv().presignTtl(),
 				"issuance-history-" + eventId + ".csv");
 		return new CsvDownloadResponse(signed.url(), signed.expiresAt().atZone(Kst.ZONE).toOffsetDateTime());
-	}
-
-	/**
-	 * TODO(미정): history_file_path 형식. 발급 이력 저장 API 담당과 맞춤.
-	 * 임시로 "s3://bucket/key"면 그대로, 아니면 테넌트 로그 버킷 안의 key로 본다.
-	 */
-	record S3Location(String bucket, String key) {
-
-		static S3Location parse(String path, String defaultBucket) {
-			if (path.startsWith("s3://")) {
-				String rest = path.substring("s3://".length());
-				int slash = rest.indexOf('/');
-				if (slash <= 0 || slash == rest.length() - 1) {
-					throw new IllegalStateException("history_file_path 형식 오류");
-				}
-				return new S3Location(rest.substring(0, slash), rest.substring(slash + 1));
-			}
-			return new S3Location(defaultBucket, path.startsWith("/") ? path.substring(1) : path);
-		}
-
 	}
 
 }

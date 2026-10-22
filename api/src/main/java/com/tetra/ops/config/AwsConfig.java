@@ -6,6 +6,7 @@ import org.springframework.context.annotation.Configuration;
 import software.amazon.awssdk.awscore.retry.AwsRetryStrategy;
 import software.amazon.awssdk.core.client.config.ClientOverrideConfiguration;
 import software.amazon.awssdk.regions.Region;
+import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.presigner.S3Presigner;
 import software.amazon.awssdk.services.sesv2.SesV2Client;
 import software.amazon.awssdk.services.sfn.SfnClient;
@@ -32,6 +33,11 @@ public class AwsConfig {
 	@Bean(destroyMethod = "close")
 	SesV2Client sesV2Client(TetraProperties properties) {
 		return SesV2Client.builder().region(Region.of(properties.aws().region())).build();
+	}
+
+	@Bean(destroyMethod = "close")
+	S3Client s3Client(TetraProperties properties) {
+		return S3Client.builder().region(Region.of(properties.aws().region())).build();
 	}
 
 	@Bean(destroyMethod = "close")

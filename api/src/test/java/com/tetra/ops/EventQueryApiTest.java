@@ -258,7 +258,7 @@ class EventQueryApiTest extends IntegrationTest {
 			.andExpect(status().isOk())
 			.andExpect(jsonPath("$.url").value("https://signed.example/csv"))
 			.andExpect(jsonPath("$.expiresAt").value("2026-11-02T09:00:00+09:00"));
-		verify(urlSigner).presignGet(eq("tetra-audit-logs-test-" + A), eq("history/9004.csv"), eq(Duration.ofMinutes(5)),
+		verify(urlSigner).presignGet(eq("tetra-audit-logs-test-" + A), eq("issuance-history/9004.csv"), eq(Duration.ofMinutes(5)),
 				eq("issuance-history-9004.csv"));
 	}
 
@@ -341,7 +341,7 @@ class EventQueryApiTest extends IntegrationTest {
 				    history_file_path, history_generated_at)
 				VALUES (?, ?, 20, 10, 8920, '2026-11-01 10:00:30', '2026-11-01 23:00:00', ?, ?, ?, ?, ?, ?)"""
 			.formatted(A), eventId, A, withHistory ? 9000 : null, withHistory ? 3 : null, withHistory ? 1 : null,
-				withHistory ? 0.0003 : null, withHistory ? "history/" + eventId + ".csv" : null,
+				withHistory ? 0.0003 : null, withHistory ? "issuance-history/" + eventId + ".csv" : null,
 				withHistory ? "2026-11-02 00:12:00" : null);
 	}
 
