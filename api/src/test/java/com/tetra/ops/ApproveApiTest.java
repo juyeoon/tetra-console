@@ -11,6 +11,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 
@@ -119,7 +120,18 @@ class ApproveApiTest extends IntegrationTest {
 		verify(mail).send(mailCaptor.capture());
 		MailGateway.Mail sent = mailCaptor.getValue();
 		assertThat(sent.to()).isEqualTo(data.tenantRow(A).get("email"));
-		assertThat(sent.textBody()).contains("-----BEGIN PRIVATE KEY-----", "키 버전(kid): 1");
+		// 제목: 이벤트명만(ID를 "(1043)"처럼 붙이지 않는다 — 스레드 순번처럼 보임)
+		assertThat(sent.subject()).isEqualTo("[Tetra] 이벤트 발급 API 인증용 개인키 안내 — 추석맞이 쿠폰")
+			.doesNotContainPattern("\\(\\d+\\)");
+		// 본문: 라벨 5개. 이벤트 주소는 이벤트 상세와 같은 규칙(플랫폼 도메인), 만료 시각은 호스팅 종료 시각(KST)
+		Object hostingEndAt = event.get("hosting_end_at");
+		LocalDateTime hostingEnd = hostingEndAt instanceof java.sql.Timestamp ts ? ts.toLocalDateTime() : (LocalDateTime) hostingEndAt;
+		assertThat(sent.textBody()).contains("- 이벤트명: 추석맞이 쿠폰", "- 이벤트 ID: 1043",
+				"- 이벤트 주소: https://" + event.get("slug") + "." + A + ".tetraops.cloud", "- 키 버전(kid): 1",
+				"- 만료 시각: " + hostingEnd.format(java.time.format.DateTimeFormatter.ofPattern("yyyy.MM.dd HH:mm"))
+						+ " (KST, 호스팅 종료 시각)",
+				"-----BEGIN PRIVATE KEY-----", "개인키는 Tetra에 저장하지 않아 다시 보내 드릴 수 없습니다.")
+			.doesNotContain("추석맞이 쿠폰 (1043)");
 
 		// 개인키·JWT가 로그에 나오지 않는다
 		String privateKeyBody = sent.textBody()

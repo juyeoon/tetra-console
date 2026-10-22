@@ -12,7 +12,6 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.tetra.ops.common.time.Kst;
-import com.tetra.ops.config.TetraProperties;
 import com.tetra.ops.domain.ApplicationStatus;
 import com.tetra.ops.domain.AuthKeyStatus;
 import com.tetra.ops.domain.EventStatus;
@@ -55,18 +54,18 @@ class EventReader {
 
 	private final EntityManager entityManager;
 
-	private final String platformDomain;
+	private final EventDomains domains;
 
 	EventReader(EventRepository events, EventAuthKeyRepository authKeys, EventStatusLogRepository statusLogs,
 			EventResultSummaryRepository summaries, TrafficPlanRepository plans, EntityManager entityManager,
-			TetraProperties properties) {
+			EventDomains domains) {
 		this.events = events;
 		this.authKeys = authKeys;
 		this.statusLogs = statusLogs;
 		this.summaries = summaries;
 		this.plans = plans;
 		this.entityManager = entityManager;
-		this.platformDomain = properties.platformDomain();
+		this.domains = domains;
 	}
 
 	@Transactional(readOnly = true)
@@ -78,9 +77,9 @@ class EventReader {
 		String fullDomain = null;
 		String publicKey = null;
 		if (resourcesVisible) {
-			domain = event.getSlug() + "." + event.getTenantId();
+			domain = domains.domain(event.getSlug(), event.getTenantId());
 			// 이벤트 주소는 플랫폼 도메인 아래(테넌트 회사 도메인 root_domain이 아님)
-			fullDomain = domain + "." + platformDomain;
+			fullDomain = domains.fullDomain(event.getSlug(), event.getTenantId());
 			publicKey = authKeys.findFirstByEventIdAndStatusOrderByKeyVersionDesc(eventId, AuthKeyStatus.ACTIVE)
 				.map(EventAuthKey::getPublicKey)
 				.orElse(null);

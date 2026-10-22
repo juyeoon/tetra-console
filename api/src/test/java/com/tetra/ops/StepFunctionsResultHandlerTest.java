@@ -209,6 +209,43 @@ class StepFunctionsResultHandlerTest extends IntegrationTest {
 		assertThat(logs.get(0)).containsEntry("prev_status", "DEPLOY_FAILED").containsEntry("new_status", "DEPLOYED");
 	}
 
+	/** dev 2-14: approve-3이 시간 초과로 DEPLOY_FAILED → 판정 수정 후 approve-3-r1 재실행 성공이 DEPLOYED로 바로잡는다 */
+	@Test
+	void timedOutThenRerunSucceededIsDeployedWithTwoLogs() {
+		data.event(3, A).approved("PENDING", "SCHEDULED", "rerun003").insert();
+
+		handler.handleApproveResult(message("approve-3", "TIMED_OUT", "States.Timeout", "ArgoCD sync wait timed out"));
+		assertThat(data.registry(3)).containsEntry("hosting_status", "DEPLOY_FAILED");
+
+		String rerun = message("approve-3-r1", "SUCCEEDED", null, null);
+		handler.handleApproveResult(rerun);
+		handler.handleApproveResult(rerun);
+
+		assertThat(data.registry(3)).containsEntry("hosting_status", "DEPLOYED");
+		assertThat(data.eventRow(A, 3)).containsEntry("hosting_status", "DEPLOYED");
+		List<Map<String, Object>> logs = data.statusLogs(A, 3)
+			.stream()
+			.filter(l -> "HOSTING".equals(l.get("status_type")))
+			.toList();
+		assertThat(logs).extracting(l -> l.get("prev_status") + "→" + l.get("new_status"))
+			.containsExactly("PENDING→DEPLOY_FAILED", "DEPLOY_FAILED→DEPLOYED");
+	}
+
+	/** 이미 배포 완료(DEPLOYED) · 그 뒤 상태(HOSTING)면 늦게 온 옛 결과(실패 · 성공 · 재실행)는 무시 */
+	@ParameterizedTest
+	@ValueSource(strings = { "DEPLOYED", "HOSTING" })
+	void lateResultsDoNotOverwriteDeployedOrLater(String current) {
+		data.event(5, A).approved(current, "SCHEDULED", "late0005").insert();
+
+		handler.handleApproveResult(message("approve-5", "FAILED", "E", "C"));
+		handler.handleApproveResult(message("approve-5", "TIMED_OUT", "E", "C"));
+		handler.handleApproveResult(message("approve-5-r1", "SUCCEEDED", null, null));
+
+		assertThat(data.registry(5)).containsEntry("hosting_status", current);
+		assertThat(data.eventRow(A, 5)).containsEntry("hosting_status", current);
+		assertThat(data.statusLogs(A, 5).stream().filter(l -> "HOSTING".equals(l.get("status_type")))).isEmpty();
+	}
+
 	@Test
 	void approveRerunWithPendingEventMarksDeployed() {
 		handler.handleApproveResult(message("approve-" + EVENT_ID + "-r2", "SUCCEEDED", null, null));
