@@ -91,4 +91,11 @@ public interface EventRegistryRepository extends JpaRepository<EventRegistry, Lo
 	int updateHostingStatus(@Param("eventId") Long eventId, @Param("from") HostingStatus from,
 			@Param("to") HostingStatus to);
 
+	@Modifying(flushAutomatically = true, clearAutomatically = true)
+	@Query("""
+			update EventRegistry r set r.eventStatus = :to
+			 where r.eventId = :eventId and r.eventStatus = :from""")
+	int updateEventStatus(@Param("eventId") Long eventId, @Param("from") EventStatus from,
+			@Param("to") EventStatus to);
+
 }

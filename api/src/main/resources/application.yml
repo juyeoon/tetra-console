@@ -54,9 +54,16 @@ tetra:
   sfn:
     approve-state-machine-arn: ${SFN_APPROVE_STATE_MACHINE_ARN}
     tenant-state-machine-arn: ${SFN_TENANT_STATE_MACHINE_ARN}
+    # 수명 주기 결과 흐름 구분용 상태 머신 이름(ops-workflows 이름 규칙 tetra-{env}-…). 다르면 덮어쓴다
+    lifecycle:
+      hosting-start-name: tetra-${tetra.env}-hosting-start
+      event-open-name: tetra-${tetra.env}-event-open
+      event-end-name: tetra-${tetra.env}-event-end
   sqs:
     approve-result-queue: ${SQS_APPROVE_RESULT_QUEUE}
     tenant-result-queue: ${SQS_TENANT_RESULT_QUEUE}
+    # WF2-1 · WF2-2 · WF4 공용 결과 큐(stateMachineArn으로 흐름 구분)
+    event-lifecycle-result-queue: ${SQS_EVENT_LIFECYCLE_RESULT_QUEUE}
   mail:
     from: ${MAIL_FROM}
   portal:
