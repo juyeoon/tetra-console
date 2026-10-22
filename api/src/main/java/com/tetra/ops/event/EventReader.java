@@ -5,6 +5,10 @@ import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -17,6 +21,8 @@ import com.tetra.ops.domain.AuthKeyStatus;
 import com.tetra.ops.domain.EventStatus;
 import com.tetra.ops.domain.HostingStatus;
 import com.tetra.ops.domain.StatusType;
+import com.tetra.ops.domain.platform.Operator;
+import com.tetra.ops.domain.platform.OperatorRepository;
 import com.tetra.ops.domain.platform.Tenant;
 import com.tetra.ops.domain.platform.TrafficPlanRepository;
 import com.tetra.ops.domain.tenant.Event;
@@ -25,6 +31,7 @@ import com.tetra.ops.domain.tenant.EventAuthKeyRepository;
 import com.tetra.ops.domain.tenant.EventRepository;
 import com.tetra.ops.domain.tenant.EventResultSummary;
 import com.tetra.ops.domain.tenant.EventResultSummaryRepository;
+import com.tetra.ops.domain.tenant.EventStatusLog;
 import com.tetra.ops.domain.tenant.EventStatusLogRepository;
 import com.tetra.ops.event.EventResultResponse.Composition;
 import com.tetra.ops.event.EventResultResponse.Failure;
@@ -56,9 +63,11 @@ class EventReader {
 
 	private final EventDomains domains;
 
+	private final OperatorRepository operators;
+
 	EventReader(EventRepository events, EventAuthKeyRepository authKeys, EventStatusLogRepository statusLogs,
 			EventResultSummaryRepository summaries, TrafficPlanRepository plans, EntityManager entityManager,
-			EventDomains domains) {
+			EventDomains domains, OperatorRepository operators) {
 		this.events = events;
 		this.authKeys = authKeys;
 		this.statusLogs = statusLogs;
@@ -66,6 +75,35 @@ class EventReader {
 		this.plans = plans;
 		this.entityManager = entityManager;
 		this.domains = domains;
+		this.operators = operators;
+	}
+
+	private Map<Long, String> operatorNames(List<EventStatusLog> rows) {
+		Set<Long> ids = rows.stream().map(EventStatusLog::getChangedBy).filter(Objects::nonNull).collect(Collectors.toSet());
+		if (ids.isEmpty()) {
+			return Map.of();
+		}
+		return operators.findAllById(ids)
+			.stream()
+			.collect(Collectors.toMap(Operator::getOperatorId, Operator::getContactName));
+	}
+
+	/**
+	 * 처리자 판단(changed_by와 지금 데이터로 알 수 있는 범위).
+	 * - changed_by 있음: 운영자(승인 · 반려). 운영자 행이 없으면 "운영자 #{id}"
+	 * - 신청 접수(APPLICATION, prev 없음 → APPLYING): 테넌트(Portal에서 제출)
+	 * - 그 밖: 자동 처리(신청 저장 · 실패, 승인 때 함께 쓰는 호스팅 · 이벤트 시작 로그, 워크플로우 결과)
+	 */
+	static EventDetailResponse.Actor actor(EventStatusLog log, String tenantName, Map<Long, String> operatorNames) {
+		if (log.getChangedBy() != null) {
+			return new EventDetailResponse.Actor(EventDetailResponse.ActorType.OPERATOR,
+					operatorNames.getOrDefault(log.getChangedBy(), "운영자 #" + log.getChangedBy()));
+		}
+		if (log.getStatusType() == StatusType.APPLICATION && log.getPrevStatus() == null
+				&& ApplicationStatus.APPLYING.name().equals(log.getNewStatus())) {
+			return new EventDetailResponse.Actor(EventDetailResponse.ActorType.TENANT, tenantName);
+		}
+		return new EventDetailResponse.Actor(EventDetailResponse.ActorType.SYSTEM, null);
 	}
 
 	@Transactional(readOnly = true)
@@ -86,10 +124,12 @@ class EventReader {
 		}
 		// 진행 결과 탭: 결과 API와 같은 판정(resultState)으로, 이벤트가 끝나기 전(IN_PROGRESS)이면 연다/막는다를 정한다
 		boolean resultAvailable = resultState(event, summaries.findById(eventId).orElse(null)) != State.IN_PROGRESS;
-		var logs = statusLogs.findByEventIdAndStatusTypeOrderByChangedAtAscLogIdAsc(eventId, StatusType.APPLICATION)
-			.stream()
-			.map(l -> new EventDetailResponse.ApplicationLog(Kst.toOffset(l.getChangedAt()), l.getPrevStatus(),
-					l.getNewStatus(), l.getDetail()))
+		List<EventStatusLog> rows = statusLogs.findByEventIdOrderByChangedAtAscLogIdAsc(eventId);
+		// 처리 운영자 이름은 공용 스키마에서 한 번에 읽는다(operator는 catalog tetra_platform)
+		Map<Long, String> operatorNames = operatorNames(rows);
+		var logs = rows.stream()
+			.map(l -> new EventDetailResponse.StatusLog(Kst.toOffset(l.getChangedAt()), l.getStatusType(),
+					l.getPrevStatus(), l.getNewStatus(), l.getDetail(), actor(l, tenant.getName(), operatorNames)))
 			.toList();
 		return new EventDetailResponse(
 				new EventDetailResponse.Basic(event.getEventId(), event.getName(), event.getEventType(),

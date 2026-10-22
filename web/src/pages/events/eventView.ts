@@ -1,37 +1,73 @@
-import type { ApplicationStatus, EventApplicationLog, EventDetailResponse, EventResultResponse, EventStatus, EventType, HostingStatus } from '../../api/types.ts';
-import type { ApplicationLog, EventResult } from '../../types/index.ts';
+import type { ApplicationStatus, EventDetailResponse, EventResultResponse, EventStatus, EventStatusLog, EventType, HostingStatus, StatusType } from '../../api/types.ts';
+import type { EventResult } from '../../types/index.ts';
 import { formatDateTime, formatTime } from '../../utils/datetime.ts';
+import { applicationStatusMeta, eventStatusMeta, hostingStatusMeta } from '../../utils/status.ts';
 
 /**
  * 이벤트 API 응답 → 화면 모델 (화면과 분리, node --test 대상).
  * 일시는 여기서 표시 문자열(KST)로 바꾼다.
  */
 
-/** 신청 상태 로그 문구. 서버는 상태 전이만 주므로 제목 · 설명은 화면이 정한다(신청 실패 · 반려는 detail을 그대로) */
-const LOG_TEXT: Record<ApplicationStatus, { title: string; description: (detail: string | null) => string }> = {
-  APPLYING: { title: '신청 접수', description: () => '테넌트가 이벤트 신청서를 제출했습니다. 신청 정보와 배너 이미지 저장을 시작합니다.' },
-  APPLIED: { title: '신청 저장 완료', description: () => '신청 정보 저장 및 배너 업로드가 완료되어 승인 대기 상태로 전환되었습니다.' },
-  APPLY_FAILED: { title: '신청 실패', description: (detail) => detail ?? '신청을 처리하지 못했습니다.' },
-  APPROVED: { title: '운영자 승인', description: () => '운영자가 신청을 승인했습니다. 할당 도메인과 인증키가 발급되었습니다.' },
-  REJECTED: { title: '운영자 반려', description: (detail) => (detail ? `반려 사유: ${detail}` : '운영자가 신청을 반려했습니다.') },
+type Tone = 'blue' | 'amber' | 'green' | 'red' | 'grey';
+
+const TYPE_LABEL: Record<StatusType, string> = { APPLICATION: '신청', HOSTING: '호스팅', EVENT: '이벤트' };
+
+const META: Record<StatusType, Record<string, { label: string; tone: Tone }>> = {
+  APPLICATION: applicationStatusMeta,
+  HOSTING: hostingStatusMeta,
+  EVENT: eventStatusMeta,
 };
 
-export function applicationLogView(log: EventApplicationLog): ApplicationLog {
-  const text = LOG_TEXT[log.newStatus];
-  return { at: formatDateTime(log.changedAt), title: text.title, status: log.newStatus, description: text.description(log.detail) };
+/** 실패 계열 — "원인" 박스를 강조한다 */
+const FAILURE_STATUSES = new Set(['APPLY_FAILED', 'DEPLOY_FAILED', 'HOSTING_FAILED', 'END_FAILED', 'OPEN_FAILED']);
+
+/** 상태 처리 기록 한 줄 (화면) */
+export interface StatusHistoryItem {
+  /** 표시용(KST) */
+  at: string;
+  /** 신청 / 호스팅 / 이벤트 */
+  typeLabel: string;
+  status: { label: string; tone: Tone };
+  /** "운영자 홍길동" · "테넌트 A사" · "자동 처리" */
+  actor: string;
+  detail: string | null;
+  /** 신청 반려면 "반려 사유", 그 밖은 "원인" */
+  detailLabel: string;
+  /** 실패 계열이면 원인 박스를 강조 */
+  failure: boolean;
 }
 
-const lastLog = (logs: EventApplicationLog[], match: (status: ApplicationStatus) => boolean) =>
-  [...logs].reverse().find((l) => match(l.newStatus)) ?? null;
-
-/** 반려 사유 = 마지막 REJECTED 로그의 detail (상세 API에 따로 없다) */
-export function rejectReasonOf(logs: EventApplicationLog[]): string | null {
-  return lastLog(logs, (s) => s === 'REJECTED')?.detail ?? null;
+function actorText(actor: EventStatusLog['actor']): string {
+  if (actor.type === 'OPERATOR') return actor.name ? `운영자 ${actor.name}` : '운영자';
+  if (actor.type === 'TENANT') return actor.name ? `테넌트 ${actor.name}` : '테넌트';
+  return '자동 처리';
 }
 
-/** 처리 일시 = 마지막 승인 · 반려 · 신청 실패 로그의 시각(ISO) */
-export function processedAtOf(logs: EventApplicationLog[]): string | null {
-  return lastLog(logs, (s) => s === 'APPROVED' || s === 'REJECTED' || s === 'APPLY_FAILED')?.changedAt ?? null;
+export function statusHistoryView(log: EventStatusLog): StatusHistoryItem {
+  const meta = META[log.statusType]?.[log.newStatus] ?? { label: log.newStatus, tone: 'grey' as Tone };
+  return {
+    at: formatDateTime(log.changedAt),
+    typeLabel: TYPE_LABEL[log.statusType] ?? log.statusType,
+    status: meta,
+    actor: actorText(log.actor),
+    detail: log.detail,
+    detailLabel: log.statusType === 'APPLICATION' && log.newStatus === 'REJECTED' ? '반려 사유' : '원인',
+    failure: FAILURE_STATUSES.has(log.newStatus),
+  };
+}
+
+/** 신청(APPLICATION) 로그만 — 반려 사유 · 처리 일시는 신청 상태에서 꺼낸다(호스팅 · 이벤트 로그의 detail과 섞이지 않게) */
+const lastApplicationLog = (logs: EventStatusLog[], match: (status: string) => boolean) =>
+  [...logs].reverse().find((l) => l.statusType === 'APPLICATION' && match(l.newStatus)) ?? null;
+
+/** 반려 사유 = 마지막 신청 REJECTED 로그의 detail (상세 API에 따로 없다) */
+export function rejectReasonOf(logs: EventStatusLog[]): string | null {
+  return lastApplicationLog(logs, (s) => s === 'REJECTED')?.detail ?? null;
+}
+
+/** 처리 일시 = 마지막 신청 승인 · 반려 · 신청 실패 로그의 시각(ISO) */
+export function processedAtOf(logs: EventStatusLog[]): string | null {
+  return lastApplicationLog(logs, (s) => s === 'APPROVED' || s === 'REJECTED' || s === 'APPLY_FAILED')?.changedAt ?? null;
 }
 
 /** 이벤트 상세(개요 · 승인/반려 대화상자) 화면 모델 */
@@ -57,11 +93,12 @@ export interface EventView {
   /** 할당 도메인 — {slug}.{tenant_id}.{플랫폼 도메인}(fullDomain). 승인 전 · 만료면 null */
   domain: string | null;
   publicKey: string | null;
-  logs: ApplicationLog[];
+  /** 상태 처리 기록 — 신청 · 호스팅 · 이벤트 전체(오름차순) */
+  logs: StatusHistoryItem[];
 }
 
 export function toEventView(d: EventDetailResponse): EventView {
-  const processedAt = processedAtOf(d.applicationLogs);
+  const processedAt = processedAtOf(d.statusLogs);
   return {
     id: d.basic.eventId,
     name: d.basic.name,
@@ -77,12 +114,12 @@ export function toEventView(d: EventDetailResponse): EventView {
     applicationStatus: d.status.applicationStatus,
     hostingStatus: d.status.hostingStatus,
     eventStatus: d.status.eventStatus,
-    rejectReason: rejectReasonOf(d.applicationLogs),
+    rejectReason: rejectReasonOf(d.statusLogs),
     processedAt: processedAt ? formatDateTime(processedAt) : null,
     templateId: d.resources.templateId,
     domain: d.resources.fullDomain,
     publicKey: d.resources.publicKey,
-    logs: d.applicationLogs.map(applicationLogView),
+    logs: d.statusLogs.map(statusHistoryView),
   };
 }
 

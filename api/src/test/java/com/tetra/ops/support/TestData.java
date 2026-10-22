@@ -250,10 +250,17 @@ public final class TestData {
 
 	public void statusLog(String tenantId, long eventId, String type, String prev, String next,
 			LocalDateTime changedAt, String detail) {
+		statusLog(tenantId, eventId, type, prev, next, changedAt, detail, null);
+	}
+
+	/** changedBy = 처리 운영자ID(승인 · 반려), 시스템 처리면 null */
+	public void statusLog(String tenantId, long eventId, String type, String prev, String next,
+			LocalDateTime changedAt, String detail, Long changedBy) {
 		jdbc.update("""
-				INSERT INTO t_%s.event_status_log (event_id, tenant_id, status_type, prev_status, new_status, changed_at, detail)
-				VALUES (?, ?, ?, ?, ?, ?, ?)""".formatted(tenantId), eventId, tenantId, type, prev, next, changedAt,
-				detail);
+				INSERT INTO t_%s.event_status_log (event_id, tenant_id, status_type, prev_status, new_status, changed_at, detail,
+				                                   changed_by)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?)""".formatted(tenantId), eventId, tenantId, type, prev, next, changedAt,
+				detail, changedBy);
 	}
 
 	// ---------------------------------------------------------------- read
