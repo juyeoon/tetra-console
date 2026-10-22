@@ -37,6 +37,8 @@ export interface TenantBasic {
   accountStatus: AccountStatus;
   createdAt: string;
   provisioningStatus: ProvisioningStatus;
+  /** 비밀번호를 설정했는지(password IS NOT NULL) */
+  passwordSet: boolean;
 }
 
 /** 계정 상태 로그 사유 배지. REGISTERED = 최초 기록(테넌트 등록) */
@@ -88,12 +90,10 @@ export interface RegisterRequest {
   contactName: string;
 }
 
-/** POST /tenants (201) */
+/** POST /tenants (201). 비밀번호 설정 메일은 환경 준비가 끝나면(READY) 서버가 보낸다 — 등록 응답에 메일 결과는 없다 */
 export interface RegisterResponse {
   tenantId: string;
-  /** 비밀번호 설정 메일 발송 요청 성공 여부. 스키마 생성 실패면 보내지 않으므로 false */
-  mailSent: boolean;
-  /** 응답 시점의 환경 준비 상태. 실패면 FAILED */
+  /** 응답 시점의 환경 준비 상태. 스키마 생성 · StartExecution 실패면 FAILED(메일 없음) */
   provisioningStatus: ProvisioningStatus;
 }
 

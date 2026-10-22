@@ -80,6 +80,9 @@ class ApiDocsTest extends IntegrationTest {
 		assertThat(schemas.path("TenantItem").path("properties").has("provisioningStatus")).isTrue();
 		assertThat(schemas.path("TenantItem").path("properties").has("createdAt")).isTrue();
 		assertThat(schemas.path("RegisterResponse").path("properties").has("provisioningStatus")).isTrue();
+		// 비밀번호 설정 메일은 환경 준비 뒤 결과 리스너가 보내므로 등록 응답에 메일 결과가 없다
+		assertThat(schemas.path("RegisterResponse").path("properties").has("mailSent")).isFalse();
+		assertThat(schemas.path("TenantBasic").path("properties").has("passwordSet")).isTrue();
 	}
 
 	@Test

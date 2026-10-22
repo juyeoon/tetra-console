@@ -1,8 +1,11 @@
 package com.tetra.ops;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import java.net.URI;
 import java.time.Duration;
@@ -41,6 +44,8 @@ class SqsListenerContainerTest extends IntegrationTest {
 
 	static String approveQueueUrl;
 
+	static String tenantQueueUrl;
+
 	@DynamicPropertySource
 	static void sqsEndpoint(DynamicPropertyRegistry registry) {
 		ELASTICMQ.start();
@@ -53,7 +58,7 @@ class SqsListenerContainerTest extends IntegrationTest {
 		// 재전달을 빨리 보려고 가시성 제한 시간을 1초로 둔다
 		Map<QueueAttributeName, String> attributes = Map.of(QueueAttributeName.VISIBILITY_TIMEOUT, "1");
 		approveQueueUrl = sqs.createQueue(b -> b.queueName("approve-result-it").attributes(attributes)).queueUrl();
-		sqs.createQueue(b -> b.queueName("tenant-result-it").attributes(attributes));
+		tenantQueueUrl = sqs.createQueue(b -> b.queueName("tenant-result-it").attributes(attributes)).queueUrl();
 		registry.add("spring.cloud.aws.sqs.endpoint", () -> endpoint);
 		registry.add("tetra.sqs.approve-result-queue", () -> "approve-result-it");
 		registry.add("tetra.sqs.tenant-result-queue", () -> "tenant-result-it");
@@ -100,9 +105,34 @@ class SqsListenerContainerTest extends IntegrationTest {
 		await(() -> inFlightAndVisible() == 0);
 	}
 
+	/** 비밀번호 설정 메일 실패는 알림만 남기고 ack한다 — 가시성 제한 시간이 지나도 다시 처리되지 않는다 */
+	@Test
+	void tenantReadyWithMailFailureIsAcknowledgedWithoutRedelivery() throws InterruptedException {
+		data.tenant(B, "B사", "INACTIVE", "PROVISIONING");
+		when(mail.send(any())).thenReturn(false);
+		String body = StepFunctionsResultHandlerTest.message("tenant-" + B, "SUCCEEDED", null, null);
+
+		sqs.sendMessage(b -> b.queueUrl(tenantQueueUrl).messageBody(body));
+
+		await(() -> "READY".equals(data.tenantRow(B).get("provisioning_status")));
+		// ack하지 않았다면 메시지가 큐에 남아 1초마다 다시 보인다 — 큐가 비면 삭제(ack)된 것
+		await(() -> inFlightAndVisible(tenantQueueUrl) == 0);
+		Thread.sleep(2_500);
+		assertThat(inFlightAndVisible(tenantQueueUrl)).isZero();
+		// 첫 처리가 가시성 제한 시간(1초)보다 길면 한 번 더 받을 수 있지만, 이미 READY라 메일은 한 통뿐
+		verify(handler, org.mockito.Mockito.atLeastOnce()).handleTenantResult(eq(body));
+		verify(mail, times(1)).send(any());
+		assertThat(data.count("SELECT COUNT(*) FROM tetra_platform.operator_notification WHERE tenant_id = ?"
+				+ " AND category = 'MAIL' AND priority = 'URGENT'", B)).isEqualTo(1);
+	}
+
 	private static long inFlightAndVisible() {
+		return inFlightAndVisible(approveQueueUrl);
+	}
+
+	private static long inFlightAndVisible(String queueUrl) {
 		Map<QueueAttributeName, String> attrs = sqs
-			.getQueueAttributes(b -> b.queueUrl(approveQueueUrl)
+			.getQueueAttributes(b -> b.queueUrl(queueUrl)
 				.attributeNames(QueueAttributeName.APPROXIMATE_NUMBER_OF_MESSAGES,
 						QueueAttributeName.APPROXIMATE_NUMBER_OF_MESSAGES_NOT_VISIBLE))
 			.attributes();

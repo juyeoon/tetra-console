@@ -120,17 +120,19 @@ class NotificationTest extends IntegrationTest {
 			.getContentAsString();
 		String tenantId = body.replaceAll(".*\"tenantId\":\"([a-z0-9]{12})\".*", "$1");
 
-		assertThat(operatorNotifications()).extracting(NotificationTest::kind)
-			.containsExactly("ACCOUNT/INFO", "MAIL/URGENT");
-		assertThat((String) operatorNotifications().get(1).get("content")).contains("수동 재발송");
-		assertThat(operatorNotifications()).allSatisfy(n -> assertThat((String) n.get("content")).doesNotContain("password/setup"));
+		// 등록 때는 메일을 보내지 않는다 — 등록 알림만
+		assertThat(operatorNotifications()).extracting(NotificationTest::kind).containsExactly("ACCOUNT/INFO");
 
+		// 환경 준비 성공(READY) 뒤 메일 발송 — 실패하면 환경 준비 완료 다음에 메일 실패 알림. 중복 메시지는 무시
 		String ready = StepFunctionsResultHandlerTest.message("tenant-" + tenantId, "SUCCEEDED", null, null);
 		handler.handleTenantResult(ready);
 		handler.handleTenantResult(ready);
 
 		assertThat(operatorNotifications()).extracting(NotificationTest::kind)
-			.containsExactly("ACCOUNT/INFO", "MAIL/URGENT", "PROVISIONING/INFO");
+			.containsExactly("ACCOUNT/INFO", "PROVISIONING/INFO", "MAIL/URGENT");
+		assertThat((String) operatorNotifications().get(2).get("content"))
+			.isEqualTo("비밀번호 설정 메일 발송에 실패했습니다(테넌트 " + tenantId + "). 담당자 이메일 주소와 SES 상태를 확인해 주세요.");
+		assertThat(operatorNotifications()).allSatisfy(n -> assertThat((String) n.get("content")).doesNotContain("password/setup"));
 	}
 
 	@Test

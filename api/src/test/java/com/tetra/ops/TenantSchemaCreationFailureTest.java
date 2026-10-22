@@ -19,7 +19,7 @@ import com.tetra.ops.common.RandomIds;
 import com.tetra.ops.support.IntegrationTest;
 
 /**
- * 등록(WF5) 중 테넌트 스키마 생성 실패: provisioning_status FAILED, Step Functions · 비밀번호 설정 메일 없음, 201(mailSent false).
+ * 등록(WF5) 중 테넌트 스키마 생성 실패: provisioning_status FAILED, Step Functions · 비밀번호 설정 메일 없음, 201.
  * 테이블 생성 중 실패를 만들려고 Flyway 위치를 중간에 깨지는 스크립트로 바꾼다.
  */
 @TestPropertySource(properties = "tetra.db-migration.locations=classpath:db/migration/tenant-broken")
@@ -36,7 +36,7 @@ class TenantSchemaCreationFailureTest extends IntegrationTest {
 			.contentType(MediaType.APPLICATION_JSON)
 			.content(VALID))
 			.andExpect(status().isCreated())
-			.andExpect(jsonPath("$.mailSent").value(false))
+			.andExpect(jsonPath("$.mailSent").doesNotExist())
 			.andExpect(jsonPath("$.provisioningStatus").value("FAILED"));
 	}
 

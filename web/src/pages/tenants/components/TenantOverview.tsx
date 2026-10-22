@@ -16,7 +16,7 @@ import { eventPath } from '@/utils/event';
 import { toFormErrors } from '@/utils/formErrors';
 import { accountStatusMeta } from '@/utils/status';
 import { isEmail } from '@/utils/validation';
-import { provisioningStatusMeta, statusLogBadgeMeta } from '../tenantView';
+import { passwordSetMeta, provisioningStatusMeta, statusLogBadgeMeta } from '../tenantView';
 import EditFieldDialog, { type EditFieldConfig } from './EditFieldDialog';
 
 function EditButton({ onClick }: { onClick: () => void }) {
@@ -90,6 +90,7 @@ export default function TenantOverview({ overview, onUpdated }: { overview: Tena
   const { basic, buckets, statusLogs } = overview;
   const meta = accountStatusMeta[basic.accountStatus];
   const provisioning = provisioningStatusMeta[basic.provisioningStatus];
+  const password = passwordSetMeta(basic.passwordSet);
 
   /** PATCH 한 항목. 실패하면 입력란에 보여 줄 문구를 돌려준다(이메일 중복 409 포함) */
   const save = (field: 'name' | 'contactName' | 'email', label: string) => async (value: string) => {
@@ -144,6 +145,8 @@ export default function TenantOverview({ overview, onUpdated }: { overview: Tena
     // 계정상태 · 환경 준비는 시스템이 자동 전환 — 배지만 표시
     { label: '계정상태', value: <StatusChip label={meta.label} tone={meta.tone} /> },
     ...(provisioning ? [{ label: '환경 준비', value: <StatusChip label={provisioning.label} tone={provisioning.tone} /> }] : []),
+    // 메일 발송 기록은 없어서, 테넌트가 비밀번호를 설정했는지로 보여 준다(메일은 환경 준비 완료 뒤 발송, 실패는 운영자 알림)
+    { label: '비밀번호', value: <StatusChip label={password.label} tone={password.tone} /> },
     { label: '가입일', value: formatDateTime(basic.createdAt) },
   ];
 

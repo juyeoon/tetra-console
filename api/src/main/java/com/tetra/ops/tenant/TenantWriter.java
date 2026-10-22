@@ -80,6 +80,16 @@ class TenantWriter {
 		return changed;
 	}
 
+	/**
+	 * 환경 준비 성공 결과가 왔지만 테넌트 스키마가 없을 때: READY로 바꾸지 않는다.
+	 * PROVISIONING이면 FAILED로, 이미 FAILED면 그대로 두고, 어느 쪽이든 운영자 알림(PROVISIONING/URGENT)을 남긴다.
+	 */
+	@Transactional
+	public void keepNotReadyWithoutSchema(String tenantId, String detail) {
+		tenants.updateProvisioningStatus(tenantId, ProvisioningStatus.PROVISIONING, ProvisioningStatus.FAILED);
+		notifications.provisioningFinished(tenantId, false, detail);
+	}
+
 	@Transactional
 	public Tenant update(String tenantId, String name, String contactName, String email) {
 		Tenant tenant = tenants.findById(tenantId).orElseThrow(() -> new ApiException(ErrorCode.TENANT_NOT_FOUND));

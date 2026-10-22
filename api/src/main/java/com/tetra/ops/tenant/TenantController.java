@@ -57,7 +57,8 @@ public class TenantController {
 
 	@Operation(summary = "OPS-07 테넌트 등록",
 			description = "4개 필수. 앞뒤 공백은 잘라서 저장. 등록되면 계정은 INACTIVE, 환경 준비는 PROVISIONING으로 시작. "
-					+ "비밀번호 설정 메일 발송 결과는 mailSent(실패해도 201)")
+					+ "비밀번호 설정 메일은 환경 준비가 끝나면(READY) 보낸다(등록 응답에는 메일 결과가 없다). "
+					+ "스키마 생성 · StartExecution 실패면 provisioningStatus FAILED(201)")
 	@ApiErrorCodes({ ErrorCode.INVALID_INPUT, ErrorCode.EMAIL_DUPLICATED })
 	@PostMapping
 	@ResponseStatus(HttpStatus.CREATED)
@@ -83,7 +84,7 @@ public class TenantController {
 		Tenant tenant = commandService.update(tenantId, request);
 		return new TenantQueryService.Basic(tenant.getTenantId(), tenant.getName(), tenant.getContactName(),
 				tenant.getEmail(), tenant.getAccountStatus(), Kst.toOffset(tenant.getCreatedAt()),
-				tenant.getProvisioningStatus());
+				tenant.getProvisioningStatus(), tenant.getPassword() != null);
 	}
 
 	@Operation(summary = "OPS-06-2 테넌트 이벤트 목록", description = "신청시각 내림차순. 승인 전 건은 hostingStatus·eventStatus가 null")

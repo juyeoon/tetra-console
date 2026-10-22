@@ -20,9 +20,9 @@ type EmailCheck = 'idle' | 'checking' | 'ok' | 'taken' | 'invalid';
 const FORM_FIELDS = ['name', 'email', 'rootDomain', 'contactName'] as const;
 type RegisterField = (typeof FORM_FIELDS)[number];
 
-/** OPS-07 상태 화면 — 환경 준비 상태 × 메일 발송 결과 (tenantView.registerOutcome) */
+/** OPS-07 상태 화면 — 환경 준비 상태로 2가지 (tenantView.registerOutcome). 메일은 환경 준비가 끝나면 서버가 보낸다 */
 function RegisterDone({ request, response }: { request: RegisterRequest; response: RegisterResponse }) {
-  const outcome = registerOutcome(response.provisioningStatus, response.mailSent, request.name);
+  const outcome = registerOutcome(response.provisioningStatus, request.name, request.email);
   const t = tones[outcome.tone];
   return (
     <Card sx={{ maxWidth: size.contentForm, mx: 'auto', p: { xs: 3, sm: 4 } }}>
@@ -31,15 +31,9 @@ function RegisterDone({ request, response }: { request: RegisterRequest; respons
       </Box>
       <Typography variant="h3">{outcome.title}</Typography>
 
-      {outcome.kind === 'done' ? (
-        <Alert severity="success" sx={{ mt: 2 }}>
-          비밀번호 설정 메일을 보냈습니다.
-        </Alert>
-      ) : (
-        <Alert severity={outcome.tone === 'red' ? 'error' : 'warning'} sx={{ mt: 2 }}>
-          {outcome.body}
-        </Alert>
-      )}
+      <Alert severity={outcome.kind === 'done' ? 'info' : 'error'} sx={{ mt: 2 }}>
+        {outcome.body}
+      </Alert>
 
       <Box sx={{ mt: 2 }}>
         <InfoList
@@ -221,7 +215,7 @@ export default function TenantRegisterPage() {
           </Stack>
 
           <Typography variant="caption" component="p" sx={{ mt: 1.5 }}>
-            ※ 등록이 완료되면 입력한 이메일로 비밀번호 설정 메일이 발송됩니다.
+            ※ 등록 후 환경 준비가 끝나면 입력한 이메일로 비밀번호 설정 메일이 발송됩니다.
           </Typography>
 
           <Stack direction="row" justifyContent="flex-end" sx={{ mt: 3 }}>
