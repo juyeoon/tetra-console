@@ -17,6 +17,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import com.tetra.ops.auth.JwtTokenService;
 import com.tetra.ops.external.DownloadUrlSigner;
 import com.tetra.ops.external.MailGateway;
+import com.tetra.ops.external.ObjectStorage;
 import com.tetra.ops.external.StepFunctionsGateway;
 
 import jakarta.servlet.http.Cookie;
@@ -61,6 +62,9 @@ public abstract class IntegrationTest {
 
 	@MockitoBean
 	protected DownloadUrlSigner urlSigner;
+
+	@MockitoBean
+	protected ObjectStorage storage;
 
 	@BeforeEach
 	void resetData() {

@@ -10,6 +10,7 @@ import com.tetra.ops.common.error.ApiException;
 import com.tetra.ops.common.error.ErrorCode;
 import com.tetra.ops.config.TetraProperties;
 import com.tetra.ops.event.EventStatusService;
+import com.tetra.ops.event.IssuanceHistoryService;
 import com.tetra.ops.tenancy.TenantRouter;
 import com.tetra.ops.tenancy.TenantRouter.RoutedEvent;
 
@@ -23,6 +24,7 @@ import tools.jackson.databind.json.JsonMapper;
  * detail.input의 event_id로 이벤트를 고른다.
  * - 모르는 상태 머신 · 형식 오류 · 없는 이벤트 · tenant_id 불일치: WARN 후 정상 종료(ack)
  * - 조건부 UPDATE 0행: "이미 처리됨"으로 정상 종료(ack)
+ * - WF4 성공이면 상태 반영(커밋) 뒤 발급 이력을 저장한다. 상태가 이미 처리됐어도 저장은 다시 한다(재전달 대비, 덮어쓰기)
  * - 그 밖의 예외: 그대로 던져 ack하지 않는다(재전달 → 결국 DLQ)
  */
 @Component
@@ -47,13 +49,16 @@ public class LifecycleResultHandler {
 
 	private final EventStatusService eventStatusService;
 
+	private final IssuanceHistoryService issuanceHistory;
+
 	private final TetraProperties.Lifecycle names;
 
 	public LifecycleResultHandler(JsonMapper jsonMapper, TenantRouter router, EventStatusService eventStatusService,
-			TetraProperties properties) {
+			IssuanceHistoryService issuanceHistory, TetraProperties properties) {
 		this.jsonMapper = jsonMapper;
 		this.router = router;
 		this.eventStatusService = eventStatusService;
+		this.issuanceHistory = issuanceHistory;
 		this.names = properties.sfn().lifecycle();
 	}
 
@@ -106,8 +111,10 @@ public class LifecycleResultHandler {
 		else {
 			log.info("수명 주기 결과 이미 처리됨: flow={}, eventId={}, status={}", flow, eventId, change.status());
 		}
-		if (flow == Flow.EVENT_END && succeeded && changed) {
-			// TODO(3-12): 발급 이력 저장(이벤트 종료 집계 결과 · CSV 경로) 연결 지점. 상태 트랜잭션이 커밋된 뒤 여기서 부른다
+		if (flow == Flow.EVENT_END && succeeded) {
+			// changed와 무관하게 부른다: 저장이 실패해 재전달되면 상태는 0행("이미 처리됨")이고 저장만 다시 해야 한다.
+			// 실패는 그대로 던져 ack하지 않는다(재전달 → 결국 DLQ)
+			issuanceHistory.save(routed);
 		}
 	}
 

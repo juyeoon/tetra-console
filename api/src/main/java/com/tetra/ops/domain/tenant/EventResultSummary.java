@@ -10,7 +10,10 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 
-/** 이벤트 결과 요약(1:1). 집계 Job과 발급 이력 저장 API가 쓰고, 이 앱은 읽기만 한다. */
+/**
+ * 이벤트 결과 요약(1:1). 집계 Job이 지표 행을 만들고, WF4 성공 뒤 이 앱의 발급 이력 저장(IssuanceHistoryStore,
+ * 네이티브 SQL)이 결과 수 · CSV 키를 쓴다. 엔티티로는 읽기만 한다.
+ */
 @Entity
 @Table(name = "event_result_summary")
 public class EventResultSummary extends TenantScopedEntity {
