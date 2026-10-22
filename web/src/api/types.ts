@@ -140,7 +140,7 @@ export interface LiveEventItem {
 export type StatusType = 'APPLICATION' | 'HOSTING' | 'EVENT';
 
 /**
- * 상태 처리 기록 한 줄 (event_status_log 전체, changed_at 오름차순 · 같은 시각은 기록 순서).
+ * 상태 로그 한 줄 (event_status_log 전체, changed_at 오름차순 · 같은 시각은 기록 순서).
  * detail = 반려 사유(신청 REJECTED) · 실패 원인 등. actor: 운영자(이름) · 테넌트(테넌트명) · 자동 처리(name null)
  */
 export interface EventStatusLog {

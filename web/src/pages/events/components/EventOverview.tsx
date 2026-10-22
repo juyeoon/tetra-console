@@ -9,7 +9,7 @@ import { type } from '@/theme/theme';
 import { formatNumber, formatPeriod } from '@/utils/format';
 import { applicationStatusMeta, eventStatusMeta, eventTypeLabel, hostingStatusMeta } from '@/utils/status';
 import type { EventView } from '../eventView';
-import StatusHistory from './StatusHistory';
+import StatusTimeline from './StatusTimeline';
 
 interface EventOverviewProps {
   event: EventView;
@@ -19,7 +19,7 @@ interface EventOverviewProps {
 
 /**
  * 이벤트 상세 — 개요 (OPS-03-1, OPS-04-1 공용)
- * 좌측: 기본 정보 / 우측: 상태 + 리소스 / 하단: 상태 처리 기록(신청 · 호스팅 · 이벤트)
+ * 좌측: 기본 정보 / 우측: 상태 + 리소스 / 하단: 상태 로그(신청 · 호스팅 · 이벤트)
  */
 export default function EventOverview({ event, statusActions }: EventOverviewProps) {
   const appMeta = applicationStatusMeta[event.applicationStatus];
@@ -79,8 +79,8 @@ export default function EventOverview({ event, statusActions }: EventOverviewPro
       </Box>
 
       <Card sx={{ p: 3 }}>
-        <SectionTitle>상태 처리 기록</SectionTitle>
-        <StatusHistory items={event.logs} />
+        <SectionTitle>상태 로그</SectionTitle>
+        <StatusTimeline logs={event.logs} />
       </Card>
     </Stack>
   );
