@@ -110,6 +110,7 @@ npm run build      # 타입 체크 + 프로덕션 빌드
 | 테넌트 상세 개요의 비밀번호 설정 여부 | 정의 없음 | "비밀번호" 행: "설정 완료"(초록) / "비밀번호 미설정"(회색) — 서버 `passwordSet`(password IS NOT NULL) | 메일 발송 기록 컬럼이 없어, 테넌트가 비밀번호를 설정했는지로 진행 상황을 본다(발송 실패는 대시보드 최근 알림) |
 | OPS-06 목록에 가입일 열 추가 · 목록 · 상세의 환경 준비 칩 | 목록은 테넌트ID · 테넌트명 · 계정ID · 계정상태만, 환경 준비 표시 정의 없음 | 목록 마지막 열 "가입일"(날짜만 `YYYY.MM.DD`, 상세 개요는 날짜+시각) · 정렬은 가입일시 내림차순. 계정상태 옆에 "환경 준비 중"(회색) · "환경 준비 실패"(빨강), 완료면 표시 안 함 | 가입일은 추가하기로 결정. 칩은 스키마 생성 · 환경 준비 실패 테넌트를 목록에서 찾을 수 있게 |
 | 승인 성공 시 피드백 | "별도 안내 없이 모달이 닫힘" | 모달은 닫히고 하단 토스트("승인했습니다") 표시 | 처리 결과 인지용 — 제거 여부 확인 필요 |
+| 이벤트 상세의 상태 기록 | "신청 상태 로그"(신청 상태만, 가로) | "상태 처리 기록" — 신청 · 호스팅 · 이벤트 상태 변화를 시각순 세로 타임라인으로. 줄마다 구분 라벨 · 상태 배지 · 시각 · 처리자(운영자 이름 / 테넌트 / 자동 처리), 원인(반려 사유)이 있으면 박스로 표시하고 실패 계열(배포 실패 · 호스팅 준비 실패 · 종료 실패 · 이벤트 준비 실패 · 신청 실패)은 빨강으로 강조. 신청 · 진행 상세 공용 | 호스팅 배포 실패 원인(예: EventAppSyncTimedOut)을 운영자가 Console에서 봐야 함 — Portal "상태 처리 기록"과 같은 정보 |
 | 승인 · 반려 실패 | 정의 없음 | 409(이미 처리됨 · 호스팅 기간 지남 · 환경 준비 전)는 모달 안에 서버 문구, 이미 처리됨이면 상세를 다시 받아 현재 상태 표시. 반려 사유 400은 입력란 오류 | 다른 운영자가 먼저 처리한 경우 등 |
 | 대시보드 클러스터 · 실시간 트래픽 · 테넌트 별 처리 현황 | 실제 값 | 예시 데이터 + "예시 데이터" 칩 | API 없음(모니터링 연동 전) — 실제 숫자와 섞여 오해하지 않게 |
 | 비밀번호 저장 완료 후 이동 | Tetra Portal 로그인(URL 미확정) | `VITE_PORTAL_LOGIN_URL`(기본 `/login`) | 도메인 확정 후 환경 변수로 지정 |
@@ -152,7 +153,7 @@ src/
 - 불러오기 `src/hooks/useApiQuery.ts`: 화면에 들어올 때 부르고 `loading` · `error` · `reload` · `setData`(수정 응답 반영). 표시는 `components/common/QueryStatus.tsx`(스피너 / 서버 문구 + 다시 시도)
 - 폼 오류 `utils/formErrors.ts`: 400 `fields` → 입력란, 409 `EMAIL_DUPLICATED` → email 입력란, 그 밖 → 폼 위 Alert
 
-- 응답 → 화면 모델(순수 함수, node 테스트): 이벤트 `pages/events/eventView.ts`(반려 사유 · 처리 일시는 신청 상태 로그에서, 결과 state `IN_PROGRESS`는 지금 시각과 오픈 시각으로 오픈 전/진행 중), 승인 · 반려 실패 `pages/events/decision.ts`, 테넌트 `pages/tenants/tenantView.ts`, 대시보드 알림 `pages/dashboard/dashboardView.ts`
+- 응답 → 화면 모델(순수 함수, node 테스트): 이벤트 `pages/events/eventView.ts`(상태 처리 기록 `statusLogs` → 타임라인, 반려 사유 · 처리 일시는 그중 신청(APPLICATION) 로그에서, 결과 state `IN_PROGRESS`는 지금 시각과 오픈 시각으로 오픈 전/진행 중), 승인 · 반려 실패 `pages/events/decision.ts`, 테넌트 `pages/tenants/tenantView.ts`, 대시보드 알림 `pages/dashboard/dashboardView.ts`
 
 `TODO:` 주석 위치:
 

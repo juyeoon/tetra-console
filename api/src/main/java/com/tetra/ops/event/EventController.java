@@ -67,7 +67,7 @@ public class EventController {
 
 	@Operation(summary = "OPS-03-1 · 04-1 이벤트 상세(개요)",
 			description = "승인 전에는 status.hostingStatus·eventStatus가 null. 승인 전이거나 eventStatus가 EXPIRED면 "
-					+ "resources.domain·fullDomain·publicKey가 null. applicationLogs는 신청 상태 로그(오름차순)")
+					+ "resources.domain·fullDomain·publicKey가 null. statusLogs는 신청 · 호스팅 · 이벤트 상태 처리 기록(오름차순, 처리자 포함)")
 	@ApiErrorCodes({ ErrorCode.EVENT_NOT_FOUND, ErrorCode.TENANT_NOT_READY })
 	@GetMapping("/events/{eventId}")
 	public EventDetailResponse detail(@Parameter(example = "1043") @PathVariable Long eventId) {

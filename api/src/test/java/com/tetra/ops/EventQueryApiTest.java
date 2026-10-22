@@ -42,9 +42,49 @@ class EventQueryApiTest extends IntegrationTest {
 			.andExpect(jsonPath("$.resources.templateId").value(1))
 			.andExpect(jsonPath("$.resources.domain").doesNotExist())
 			.andExpect(jsonPath("$.resources.publicKey").doesNotExist())
-			.andExpect(jsonPath("$.applicationLogs.length()").value(2))
-			.andExpect(jsonPath("$.applicationLogs[0].newStatus").value("APPLYING"))
-			.andExpect(jsonPath("$.applicationLogs[1].prevStatus").value("APPLYING"));
+			.andExpect(jsonPath("$.statusLogs.length()").value(2))
+			.andExpect(jsonPath("$.statusLogs[0].statusType").value("APPLICATION"))
+			.andExpect(jsonPath("$.statusLogs[0].newStatus").value("APPLYING"))
+			.andExpect(jsonPath("$.statusLogs[0].actor.type").value("TENANT"))
+			.andExpect(jsonPath("$.statusLogs[0].actor.name").value("A사"))
+			.andExpect(jsonPath("$.statusLogs[1].prevStatus").value("APPLYING"))
+			.andExpect(jsonPath("$.statusLogs[1].actor.type").value("SYSTEM"))
+			.andExpect(jsonPath("$.statusLogs[1].actor.name").doesNotExist())
+			.andExpect(jsonPath("$.applicationLogs").doesNotExist());
+	}
+
+	/** 상태 처리 기록: 신청 · 호스팅 · 이벤트 로그 전체, changed_at 오름차순(같은 시각은 기록 순서), 원인 · 처리자 */
+	@Test
+	void detailHasAllStatusLogsInOrderWithDetailAndActor() throws Exception {
+		data.tenant(A, "A사", "ACTIVE", "READY");
+		data.event(6004, A).approved("DEPLOYED", "SCHEDULED", "hist0004").insert();
+		var t = TestData.BASE;
+		// 기록 순서와 시각 순서를 일부러 섞는다(가장 늦은 것을 먼저 넣음)
+		data.statusLog(A, 6004, "HOSTING", "DEPLOY_FAILED", "DEPLOYED", t.plusHours(3), null);
+		data.statusLog(A, 6004, "APPLICATION", null, "APPLYING", t, null);
+		data.statusLog(A, 6004, "APPLICATION", "APPLYING", "APPLIED", t.plusMinutes(1), null);
+		// 승인 한 번에 같은 시각으로 3줄(신청 승인은 운영자, 호스팅 · 이벤트 시작은 자동)
+		data.statusLog(A, 6004, "APPLICATION", "APPLIED", "APPROVED", t.plusHours(1), null, TestData.OPERATOR_ID);
+		data.statusLog(A, 6004, "HOSTING", null, "PENDING", t.plusHours(1), null);
+		data.statusLog(A, 6004, "EVENT", null, "SCHEDULED", t.plusHours(1), null);
+		data.statusLog(A, 6004, "HOSTING", "PENDING", "DEPLOY_FAILED", t.plusHours(2),
+				"TIMED_OUT: EventAppSyncTimedOut / ArgoCD 동기화 대기 시간 초과");
+
+		mvc.perform(get("/api/ops/events/{id}", 6004).cookie(operatorCookie()))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.statusLogs.length()").value(7))
+			.andExpect(jsonPath("$.statusLogs[*].statusType").value(org.hamcrest.Matchers.contains("APPLICATION",
+					"APPLICATION", "APPLICATION", "HOSTING", "EVENT", "HOSTING", "HOSTING")))
+			.andExpect(jsonPath("$.statusLogs[*].newStatus").value(org.hamcrest.Matchers.contains("APPLYING", "APPLIED",
+					"APPROVED", "PENDING", "SCHEDULED", "DEPLOY_FAILED", "DEPLOYED")))
+			.andExpect(jsonPath("$.statusLogs[*].actor.type").value(org.hamcrest.Matchers.contains("TENANT", "SYSTEM",
+					"OPERATOR", "SYSTEM", "SYSTEM", "SYSTEM", "SYSTEM")))
+			.andExpect(jsonPath("$.statusLogs[2].actor.name").value("홍길동"))
+			.andExpect(jsonPath("$.statusLogs[3].prevStatus").doesNotExist())
+			.andExpect(jsonPath("$.statusLogs[5].prevStatus").value("PENDING"))
+			.andExpect(jsonPath("$.statusLogs[5].detail").value("TIMED_OUT: EventAppSyncTimedOut / ArgoCD 동기화 대기 시간 초과"))
+			.andExpect(jsonPath("$.statusLogs[5].changedAt").value("2026-10-01T12:00:00+09:00"))
+			.andExpect(jsonPath("$.statusLogs[6].detail").doesNotExist());
 	}
 
 	@Test
@@ -62,8 +102,10 @@ class EventQueryApiTest extends IntegrationTest {
 			// 이벤트 주소는 플랫폼 도메인(application.yml 기본 tetraops.cloud) 아래 — 테넌트 회사 도메인(a사.example.com)이 아님
 			.andExpect(jsonPath("$.resources.fullDomain").value("k7f2q9xa." + A + ".tetraops.cloud"))
 			.andExpect(jsonPath("$.resources.publicKey").value("PEM-2"))
-			// HOSTING 로그는 신청 상태 로그에 나오지 않는다
-			.andExpect(jsonPath("$.applicationLogs.length()").value(0));
+			// 호스팅 로그도 상태 처리 기록에 나온다(승인 때 자동으로 쓰는 시작 로그)
+			.andExpect(jsonPath("$.statusLogs.length()").value(1))
+			.andExpect(jsonPath("$.statusLogs[0].statusType").value("HOSTING"))
+			.andExpect(jsonPath("$.statusLogs[0].actor.type").value("SYSTEM"));
 	}
 
 	@Test

@@ -71,7 +71,7 @@ class ApiDocsTest extends IntegrationTest {
 		assertThat(schemas.path("EventDetailResponse").path("properties").path("basic").path("$ref").asString())
 			.endsWith("/EventDetailBasic");
 		assertThat(schemas.path("EventDetailBasic").path("properties").has("eventId")).isTrue();
-		for (String name : new String[] { "EventDetailStatus", "EventDetailResources", "EventDetailApplicationLog" }) {
+		for (String name : new String[] { "EventDetailStatus", "EventDetailResources", "EventDetailStatusLog", "EventDetailActor" }) {
 			assertThat(schemas.has(name)).as(name).isTrue();
 		}
 		assertThat(schemas.path("TenantOverviewResponse").path("properties").path("basic").path("$ref").asString())

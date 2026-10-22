@@ -19,14 +19,6 @@ export interface Period {
   end: string;
 }
 
-/** 신청 상태 로그 — 실제 상태 전이 기록만 */
-export interface ApplicationLog {
-  at: string;
-  title: string;
-  status: ApplicationStatus;
-  description: string;
-}
-
 /** 이벤트 진행 결과 (집계) */
 export type EventResult =
   | { state: 'NONE' }
