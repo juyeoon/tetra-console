@@ -9,7 +9,7 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 
-/** OPS-09 리포트. 화면이 껍데기(501)라 매핑만 둔다. */
+/** OPS-09 리포트 메타. 이 앱은 읽기만 한다(리포트 생성은 범위 밖). file_path는 운영자 로그 버킷의 S3 경로. */
 @Entity
 @Table(name = "operator_report_meta", catalog = "tetra_platform")
 public class OperatorReportMeta {
@@ -38,6 +38,34 @@ public class OperatorReportMeta {
 	private String filePath;
 
 	protected OperatorReportMeta() {
+	}
+
+	public Long getReportId() {
+		return reportId;
+	}
+
+	public String getName() {
+		return name;
+	}
+
+	public LocalDateTime getPeriodStart() {
+		return periodStart;
+	}
+
+	public LocalDateTime getPeriodEnd() {
+		return periodEnd;
+	}
+
+	public String getCategory() {
+		return category;
+	}
+
+	public LocalDateTime getCreatedAt() {
+		return createdAt;
+	}
+
+	public String getFilePath() {
+		return filePath;
 	}
 
 }
