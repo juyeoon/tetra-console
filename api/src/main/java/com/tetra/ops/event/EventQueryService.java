@@ -44,6 +44,12 @@ public class EventQueryService {
 		return router.inTenant(routed, () -> reader.detail(eventId, routed.tenant()));
 	}
 
+	/** OPS-03-2 · 04-2 신청 내용. 상태를 바꾸지 않고 S3를 부르지 않는다. */
+	public ApplicationSummaryResponse applicationSummary(Long eventId) {
+		RoutedEvent routed = router.findEvent(eventId);
+		return router.inTenant(routed, () -> reader.applicationSummary(eventId));
+	}
+
 	public EventResultResponse result(Long eventId) {
 		RoutedEvent routed = router.findEvent(eventId);
 		return router.inTenant(routed, () -> reader.result(eventId));

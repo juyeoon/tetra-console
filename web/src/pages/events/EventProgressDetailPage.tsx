@@ -11,7 +11,7 @@ import { fetchEventResult, fetchHistoryCsvUrl } from '@/api/events';
 import { useApiQuery } from '@/hooks/useApiQuery';
 import { useToast } from '@/store/ToastContext';
 import { size, text } from '@/theme/theme';
-import ApplicationContentPlaceholder from './components/ApplicationContentPlaceholder';
+import ApplicationSummary from './components/ApplicationSummary';
 import EventOverview from './components/EventOverview';
 import EventResultPanel from './components/EventResultPanel';
 import { toResultView, type ResultView } from './eventView';
@@ -113,7 +113,7 @@ export default function EventProgressDetailPage() {
         <Tab value="result" label="이벤트 진행 결과" />
       </Tabs>
       {tab === 'overview' && <EventOverview event={event} />}
-      {tab === 'application' && <ApplicationContentPlaceholder />}
+      {tab === 'application' && <ApplicationSummary eventId={event.id} domain={event.domain} />}
       {tab === 'result' && <ResultTab eventId={event.id} onLoaded={setResult} />}
     </>
   );

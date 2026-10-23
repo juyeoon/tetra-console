@@ -11,7 +11,6 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.tetra.ops.auth.CurrentOperator;
 import com.tetra.ops.common.error.ApiErrorCodes;
-import com.tetra.ops.common.error.ApiException;
 import com.tetra.ops.common.error.ErrorCode;
 import com.tetra.ops.domain.ApplicationStatus;
 
@@ -113,12 +112,13 @@ public class EventController {
 		return queryService.historyCsv(eventId);
 	}
 
-	/** OPS-03-2, OPS-04-2 신청 내용. TODO(미정): Tetra Portal 화면설계서 최신본(UI-TP-10 신청 요약)이 나오면 채운다. */
-	@Operation(summary = "OPS-03-2 · 04-2 신청 내용 (미구현)", description = "Portal 신청 요약 화면이 확정되면 구현. 지금은 501")
-	@ApiErrorCodes(ErrorCode.NOT_IMPLEMENTED)
+	@Operation(summary = "OPS-03-2 · 04-2 신청 내용(신청 요약)",
+			description = "Tetra Portal 이벤트 신청 4단계(UI-TP-10) 「신청 요약」과 같은 항목의 원본 값. 표시 문자열은 화면이 만든다. "
+					+ "bannerFileName은 저장 경로의 파일명(원본 파일명 아님), 쿠폰 타입이 아니면 coupons는 빈 배열, layoutConfig는 객체")
+	@ApiErrorCodes({ ErrorCode.INVALID_INPUT, ErrorCode.EVENT_NOT_FOUND, ErrorCode.TENANT_NOT_READY })
 	@GetMapping("/events/{eventId}/application-summary")
-	public void applicationSummary(@PathVariable Long eventId) {
-		throw new ApiException(ErrorCode.NOT_IMPLEMENTED);
+	public ApplicationSummaryResponse applicationSummary(@Parameter(example = "1043") @PathVariable Long eventId) {
+		return queryService.applicationSummary(eventId);
 	}
 
 }

@@ -321,16 +321,16 @@ class EventQueryApiTest extends IntegrationTest {
 			.andExpect(jsonPath("$.recentNotifications[0].content").value("알림 6"));
 	}
 
-	// ------------------------------------------------------------ 껍데기
+	// ------------------------------------------------------------ 예전 껍데기(501) — 지금은 모두 구현
 
 	@Test
-	void stubsReturn501() throws Exception {
+	void formerStubsNoLongerReturn501() throws Exception {
 		data.tenant(A, "A사", "ACTIVE", "READY");
 		data.event(9201, A).applied().insert();
-		for (String path : new String[] { "/api/ops/events/9201/application-summary" }) {
-			mvc.perform(get(path).cookie(operatorCookie()))
-				.andExpect(status().isNotImplemented())
-				.andExpect(jsonPath("$.code").value("NOT_IMPLEMENTED"));
+		// OPS-03-2 · 04-2 신청 내용, OPS-08 알림센터, OPS-09 리포트
+		for (String path : new String[] { "/api/ops/events/9201/application-summary", "/api/ops/notifications",
+				"/api/ops/reports" }) {
+			mvc.perform(get(path).cookie(operatorCookie())).andExpect(status().isOk());
 		}
 	}
 

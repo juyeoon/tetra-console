@@ -9,7 +9,7 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 
-/** 쿠폰. 신청 내용 화면(OPS-03-2, 껍데기)에서 쓸 예정이라 매핑만 둔다. */
+/** 쿠폰. 신청 내용(OPS-03-2 · 04-2)에서 읽기만 한다. 쓰는 쪽은 Portal 신청. */
 @Entity
 @Table(name = "coupon")
 public class Coupon extends TenantScopedEntity {
@@ -29,6 +29,18 @@ public class Coupon extends TenantScopedEntity {
 	private String description;
 
 	protected Coupon() {
+	}
+
+	public Long getCouponId() {
+		return couponId;
+	}
+
+	public Long getEventId() {
+		return eventId;
+	}
+
+	public String getName() {
+		return name;
 	}
 
 }
