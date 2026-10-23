@@ -72,6 +72,16 @@ class ApiDocsTest extends IntegrationTest {
 		JsonNode download = docs.path("paths").path("/api/ops/reports/{reportId}/download").path("get");
 		assertThat(download.path("responses").path("404").path("description").asString()).contains("REPORT_NOT_FOUND");
 
+		// 신청 내용은 501이 아니고 404 · 409를 문서에 둔다. 이제 501을 돌려주는 API는 없다
+		JsonNode summary = docs.path("paths").path("/api/ops/events/{eventId}/application-summary").path("get");
+		assertThat(summary.path("responses").has("501")).isFalse();
+		assertThat(summary.path("responses").path("404").path("description").asString()).contains("EVENT_NOT_FOUND");
+		assertThat(summary.path("responses").path("409").path("description").asString()).contains("TENANT_NOT_READY");
+		docs.path("paths").forEach(path -> path.forEach(op -> assertThat(op.path("responses").has("501")).isFalse()));
+		// layoutConfig는 문자열이 아니라 객체 스키마
+		assertThat(docs.path("components").path("schemas").path("ApplicationSummaryResponse").path("properties")
+			.path("layoutConfig").path("$ref").asString()).endsWith("/LayoutConfig");
+
 		// 로그인은 인증 없이 호출, 401은 LOGIN_FAILED만
 		JsonNode login = docs.path("paths").path("/api/ops/auth/login").path("post");
 		assertThat(login.path("security").isArray() && login.path("security").isEmpty()).isTrue();

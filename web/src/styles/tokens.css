@@ -82,6 +82,20 @@
   --chart-3: var(--color-mist);
   --chart-neutral: var(--ink-10);
 
+  /* 이벤트 화면 미리보기 테마 (Tetra Portal tokens.css와 같은 값 — 신청 내용 [이벤트 미리보기]) */
+  --preview-white-bg: #ffffff;
+  --preview-white-fg: #1c1f3b;
+  --preview-white-accent: #ee6c2f;
+  --preview-orange-bg: #fff3ea;
+  --preview-orange-fg: #5a2c10;
+  --preview-orange-accent: #ee6c2f;
+  --preview-dark-bg: #1b2036;
+  --preview-dark-fg: #ffffff;
+  --preview-dark-accent: #f08a3c;
+  --preview-blue-bg: #eef3ff;
+  --preview-blue-fg: #17275c;
+  --preview-blue-accent: #3f6fe0;
+
   /* ------------------------------------------------------------------
      5. 타이포그래피
         Snow 스케일(12/18 · 14/20 · 18/28 · 24/36 · 48/58)에 배율을 곱한다.

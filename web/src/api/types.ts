@@ -236,6 +236,37 @@ export interface CsvDownloadResponse {
   expiresAt: string;
 }
 
+// ---------------------------------------------------------------- 신청 내용 (OPS-03-2 · 04-2)
+
+export type HAlign = 'LEFT' | 'CENTER' | 'RIGHT';
+export type VAlign = 'TOP' | 'MIDDLE' | 'BOTTOM';
+export type ScreenWidget = 'title' | 'banner' | 'couponList' | 'issueButton';
+export type ScreenTheme = 'WHITE' | 'WARM_ORANGE' | 'DARK' | 'BLUE';
+
+/** event.layout_config — 요소 위치(h · v)와 테마 */
+export type LayoutConfig = Record<ScreenWidget, { h: HAlign; v: VAlign }> & { theme: ScreenTheme };
+
+/** GET /events/{id}/application-summary — 원본 값. 표시 문자열은 화면(applicationSummaryView)이 만든다 */
+export interface ApplicationSummaryResponse {
+  eventId: number;
+  eventType: EventType;
+  name: string;
+  startAt: string;
+  endAt: string;
+  hostingStartAt: string;
+  hostingEndAt: string;
+  trafficPlan: { code: string; maxCapacity: number | null };
+  /** 배너 문구 분기용(APPLYING · APPLY_FAILED) */
+  applicationStatus: ApplicationStatus;
+  /** 저장 경로의 파일명(원본 파일명 아님). 없으면 null */
+  bannerFileName: string | null;
+  endpointUrl: string;
+  /** coupon_id 오름차순. 쿠폰 타입이 아니면 [] */
+  coupons: { couponId: number; name: string }[];
+  stockCount: number;
+  layoutConfig: LayoutConfig;
+}
+
 // ---------------------------------------------------------------- 대시보드 (DashboardController)
 
 export type NotificationPriority = 'URGENT' | 'WARNING' | 'INFO';

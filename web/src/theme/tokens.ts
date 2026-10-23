@@ -74,6 +74,16 @@ export const chartColors = {
   series: [v('chart-1'), v('chart-2'), v('chart-3')],
 };
 
+const previewTheme = (name: string) => ({ bg: v(`preview-${name}-bg`), fg: v(`preview-${name}-fg`), accent: v(`preview-${name}-accent`) });
+
+/** 이벤트 화면 미리보기 테마 (layout_config.theme) */
+export const previewThemes = {
+  WHITE: previewTheme('white'),
+  WARM_ORANGE: previewTheme('orange'),
+  DARK: previewTheme('dark'),
+  BLUE: previewTheme('blue'),
+};
+
 export const font = {
   heading: v('font-heading'),
   body: v('font-body'),

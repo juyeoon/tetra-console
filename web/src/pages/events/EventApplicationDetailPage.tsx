@@ -10,7 +10,7 @@ import { useTabParam } from '@/components/common/useTabParam';
 import { approveEvent, rejectEvent } from '@/api/events';
 import { useToast } from '@/store/ToastContext';
 import { size } from '@/theme/theme';
-import ApplicationContentPlaceholder from './components/ApplicationContentPlaceholder';
+import ApplicationSummary from './components/ApplicationSummary';
 import { ApproveDialog, RejectDialog } from './components/DecisionDialogs';
 import EventOverview from './components/EventOverview';
 import { decisionFailure } from './decision';
@@ -59,7 +59,7 @@ export default function EventApplicationDetailPage() {
         <Tab value="overview" label="개요" />
         <Tab value="application" label="신청 내용" />
       </Tabs>
-      {tab === 'overview' ? <EventOverview event={event} statusActions={statusActions} /> : <ApplicationContentPlaceholder />}
+      {tab === 'overview' ? <EventOverview event={event} statusActions={statusActions} /> : <ApplicationSummary eventId={event.id} domain={event.domain} />}
 
       {/* 처리 후 페이지 이동 없이 상세를 다시 받아 상태 · 로그 · 리소스를 갱신한다 */}
       <ApproveDialog

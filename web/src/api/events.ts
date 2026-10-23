@@ -1,6 +1,7 @@
 import { apiRequest } from './client.ts';
 import type {
   ApplicationListResponse,
+  ApplicationSummaryResponse,
   ApproveResponse,
   CsvDownloadResponse,
   EventDetailResponse,
@@ -27,6 +28,10 @@ export const approveEvent = (eventId: number) => apiRequest<ApproveResponse>(`${
 /** OPS-03-M2 반려 */
 export const rejectEvent = (eventId: number, reason: string) =>
   apiRequest<RejectResponse>(`${eventPath(eventId)}/reject`, { method: 'POST', body: { reason } });
+
+/** OPS-03-2 · 04-2 신청 내용(신청 요약). 404 EVENT_NOT_FOUND, 409 TENANT_NOT_READY */
+export const fetchApplicationSummary = (eventId: number, signal?: AbortSignal) =>
+  apiRequest<ApplicationSummaryResponse>(`${eventPath(eventId)}/application-summary`, { signal });
 
 /** OPS-04-3 진행 결과 */
 export const fetchEventResult = (eventId: number, signal?: AbortSignal) =>

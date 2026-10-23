@@ -19,12 +19,14 @@ import com.tetra.ops.common.time.Kst;
 import com.tetra.ops.domain.ApplicationStatus;
 import com.tetra.ops.domain.AuthKeyStatus;
 import com.tetra.ops.domain.EventStatus;
+import com.tetra.ops.domain.EventType;
 import com.tetra.ops.domain.HostingStatus;
 import com.tetra.ops.domain.StatusType;
 import com.tetra.ops.domain.platform.Operator;
 import com.tetra.ops.domain.platform.OperatorRepository;
 import com.tetra.ops.domain.platform.Tenant;
 import com.tetra.ops.domain.platform.TrafficPlanRepository;
+import com.tetra.ops.domain.tenant.CouponRepository;
 import com.tetra.ops.domain.tenant.Event;
 import com.tetra.ops.domain.tenant.EventAuthKey;
 import com.tetra.ops.domain.tenant.EventAuthKeyRepository;
@@ -42,6 +44,7 @@ import com.tetra.ops.tenancy.TenantContext;
 import com.tetra.ops.tenancy.TenantMismatchException;
 
 import jakarta.persistence.EntityManager;
+import tools.jackson.databind.json.JsonMapper;
 
 /** 테넌트 스키마 읽기. TenantRouter.inTenant 안에서만 부른다. */
 @Component
@@ -65,9 +68,13 @@ class EventReader {
 
 	private final OperatorRepository operators;
 
+	private final CouponRepository coupons;
+
+	private final JsonMapper jsonMapper;
+
 	EventReader(EventRepository events, EventAuthKeyRepository authKeys, EventStatusLogRepository statusLogs,
 			EventResultSummaryRepository summaries, TrafficPlanRepository plans, EntityManager entityManager,
-			EventDomains domains, OperatorRepository operators) {
+			EventDomains domains, OperatorRepository operators, CouponRepository coupons, JsonMapper jsonMapper) {
 		this.events = events;
 		this.authKeys = authKeys;
 		this.statusLogs = statusLogs;
@@ -76,6 +83,8 @@ class EventReader {
 		this.entityManager = entityManager;
 		this.domains = domains;
 		this.operators = operators;
+		this.coupons = coupons;
+		this.jsonMapper = jsonMapper;
 	}
 
 	private Map<Long, String> operatorNames(List<EventStatusLog> rows) {
@@ -242,6 +251,38 @@ class EventReader {
 			buckets.add(new MinuteBucket(Kst.toOffset(minute), toLong(row[1]), toLong(row[2])));
 		}
 		return buckets;
+	}
+
+	/**
+	 * OPS-03-2 · 04-2 신청 내용. event · coupon(테넌트 스키마)과 traffic_plan(공용)을 한 읽기 트랜잭션에서 읽는다.
+	 * event · coupon 행의 tenant_id는 TenantGuardListener가 라우팅한 값과 비교한다(다르면 ERROR 로그 + 예외).
+	 */
+	@Transactional(readOnly = true)
+	public ApplicationSummaryResponse applicationSummary(Long eventId) {
+		Event event = requireEvent(eventId);
+		Long maxCapacity = plans.findById(event.getTrafficPlanCode()).map(p -> p.getMaxCapacity()).orElse(null);
+		List<ApplicationSummaryResponse.Coupon> couponRows = event.getEventType() == EventType.COUPON
+				? coupons.findByEventIdOrderByCouponIdAsc(eventId)
+					.stream()
+					.map(c -> new ApplicationSummaryResponse.Coupon(c.getCouponId(), c.getName()))
+					.toList()
+				: List.of();
+		return new ApplicationSummaryResponse(event.getEventId(), event.getEventType(), event.getName(),
+				Kst.toOffset(event.getStartAt()), Kst.toOffset(event.getEndAt()), Kst.toOffset(event.getHostingStartAt()),
+				Kst.toOffset(event.getHostingEndAt()),
+				new ApplicationSummaryResponse.TrafficPlan(event.getTrafficPlanCode(), maxCapacity),
+				event.getApplicationStatus(), fileName(event.getBannerImagePath()), event.getEndpointUrl(), couponRows,
+				event.getStockCount(),
+				jsonMapper.readValue(event.getLayoutConfig(), ApplicationSummaryResponse.LayoutConfig.class));
+	}
+
+	/** 'assets/banners/1043/banner.png' → 'banner.png'. NULL · 빈 값이면 null. TODO(미정): 원본 파일명 저장 여부(ERD 변경 필요) */
+	static String fileName(String path) {
+		if (path == null || path.isBlank()) {
+			return null;
+		}
+		String name = path.substring(path.lastIndexOf('/') + 1);
+		return name.isBlank() ? null : name;
 	}
 
 	private Event requireEvent(Long eventId) {
