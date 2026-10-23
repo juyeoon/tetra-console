@@ -25,6 +25,7 @@ public record TetraProperties(
 		@Valid @NotNull Sqs sqs,
 		@Valid @NotNull Mail mail,
 		@Valid @NotNull Portal portal,
+		@Valid @NotNull @DefaultValue Console console,
 		@Valid @NotNull @DefaultValue Csv csv,
 		@Valid @NotNull Auth auth,
 		@Valid @NotNull PasswordLink passwordLink,
@@ -55,6 +56,10 @@ public record TetraProperties(
 	}
 
 	public record Portal(@NotBlank String baseUrl) {
+	}
+
+	/** 운영 콘솔 주소(선택, 예: https://console.example.com). 리포트 메일의 화면 링크에 쓴다. 비우면 링크 대신 메뉴 경로 */
+	public record Console(@DefaultValue("") String baseUrl) {
 	}
 
 	// TODO(미정): CSV presigned URL 만료. 임시 5분

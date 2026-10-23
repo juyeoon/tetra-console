@@ -68,6 +68,9 @@ tetra:
     from: ${MAIL_FROM}
   portal:
     base-url: ${PORTAL_BASE_URL}
+  # 선택. 리포트 메일에 넣는 콘솔 화면 링크({base-url}/logs/reports). 비우면 링크 대신 메뉴 경로만
+  console:
+    base-url: ${CONSOLE_BASE_URL:}
   # 이벤트 도메인 루트: {slug}.{tenant_id}.{platform-domain}. 환경별로 다르면 PLATFORM_DOMAIN으로 덮어쓴다
   platform-domain: ${PLATFORM_DOMAIN:tetraops.cloud}
   csv:

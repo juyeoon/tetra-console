@@ -36,7 +36,8 @@ class ApiDocsTest extends IntegrationTest {
 				"/api/ops/tenants/{tenantId}", "/api/ops/tenants/{tenantId}/events",
 				"/api/ops/tenants/{tenantId}/resources", "/api/ops/tenants/email-availability",
 				"/api/ops/notifications", "/api/ops/notifications/{notificationId}/read",
-				"/api/ops/notifications/read-all", "/api/ops/reports" }) {
+				"/api/ops/notifications/read-all", "/api/ops/reports", "/api/ops/reports/{reportId}/download",
+				"/api/ops/reports/{reportId}/email" }) {
 			assertThat(paths.has(path)).as(path).isTrue();
 		}
 		paths.propertyNames().forEach(p -> assertThat(p).startsWith("/api/"));
@@ -61,6 +62,15 @@ class ApiDocsTest extends IntegrationTest {
 		JsonNode markRead = docs.path("paths").path("/api/ops/notifications/{notificationId}/read").path("patch");
 		assertThat(markRead.path("responses").path("404").path("description").asString()).contains("NOTIFICATION_NOT_FOUND");
 		assertThat(markRead.path("responses").has("204")).isTrue();
+
+		// 리포트는 501이 아니고, 이메일 전송은 404 · 503을 문서에 둔다
+		assertThat(docs.path("paths").path("/api/ops/reports").path("get").path("responses").has("501")).isFalse();
+		JsonNode email = docs.path("paths").path("/api/ops/reports/{reportId}/email").path("post");
+		assertThat(email.path("responses").path("404").path("description").asString()).contains("REPORT_NOT_FOUND");
+		assertThat(email.path("responses").path("503").path("description").asString()).contains("MAIL_SEND_FAILED");
+		assertThat(email.path("responses").has("204")).isTrue();
+		JsonNode download = docs.path("paths").path("/api/ops/reports/{reportId}/download").path("get");
+		assertThat(download.path("responses").path("404").path("description").asString()).contains("REPORT_NOT_FOUND");
 
 		// 로그인은 인증 없이 호출, 401은 LOGIN_FAILED만
 		JsonNode login = docs.path("paths").path("/api/ops/auth/login").path("post");

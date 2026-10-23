@@ -275,3 +275,26 @@ export interface NotificationItem {
 export interface NotificationListResponse {
   items: NotificationItem[];
 }
+
+// ---------------------------------------------------------------- 리포트 (ReportController)
+
+/** GET /reports 항목. 기간 · 생성일은 ISO-8601(+09:00) */
+export interface ReportItem {
+  reportId: number;
+  name: string;
+  category: string;
+  periodStart: string;
+  periodEnd: string;
+  createdAt: string;
+}
+
+/** GET /reports — 최근 생성순(페이지네이션 없음) */
+export interface ReportListResponse {
+  items: ReportItem[];
+}
+
+/** GET /reports/{id}/download — presigned URL(만료 있음) */
+export interface ReportDownloadResponse {
+  url: string;
+  expiresAt: string;
+}
