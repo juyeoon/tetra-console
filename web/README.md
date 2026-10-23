@@ -114,7 +114,8 @@ npm run build      # 타입 체크 + 프로덕션 빌드
 | 승인 · 반려 실패 | 정의 없음 | 409(이미 처리됨 · 호스팅 기간 지남 · 환경 준비 전)는 모달 안에 서버 문구, 이미 처리됨이면 상세를 다시 받아 현재 상태 표시. 반려 사유 400은 입력란 오류 | 다른 운영자가 먼저 처리한 경우 등 |
 | 대시보드 클러스터 · 실시간 트래픽 · 테넌트 별 처리 현황 | 실제 값 | 예시 데이터 + "예시 데이터" 칩 | API 없음(모니터링 연동 전) — 실제 숫자와 섞여 오해하지 않게 |
 | 비밀번호 저장 완료 후 이동 | Tetra Portal 로그인(URL 미확정) | `VITE_PORTAL_LOGIN_URL`(기본 `/login`) | 도메인 확정 후 환경 변수로 지정 |
-| 신청 내용(OPS-03-2·04-2), 알림센터, 리포트 | Tetra Portal 화면 재사용 | 안내 문구 placeholder | Portal 컴포넌트 미전달 |
+| 신청 내용(OPS-03-2·04-2), 리포트 | Tetra Portal 화면 재사용 | 안내 문구 placeholder | Portal 컴포넌트 미전달 |
+| 알림센터(OPS-08) | Tetra Portal 알림센터(UI-TP-13) 재사용 | Portal 구조(탭 5종 · 건수 · 내용 검색 · 최신순 리스트 · 안읽음 점 · 클릭 시 읽음)를 Console 컴포넌트로 다시 만듦. 추가: 항목마다 테넌트명(없으면 -), [모두 읽음] 버튼(안읽음 0이면 비활성). Slack 영역은 "연동 예정" 칩만(채널 상자 없음). 읽음은 화면을 먼저 바꾸고 실패하면 되돌린 뒤 토스트. 탭 건수는 검색어와 무관하게 전체 기준. 우선순위 색은 대시보드 최근 알림 아이콘과 같은 `utils/status.ts`의 `priorityMeta` | 운영 콘솔은 모든 알림을 종류 무관하게 보이고 테넌트 구분이 필요. 읽음은 운영자 공통(한 명이 읽으면 모두에게 읽음) |
 | 대시보드 KPI·실시간 트래픽 숫자 | 일반 숫자 | 네이비 띠 강조(A안 확정, `tokens.css`의 `--kpi-*`) | 디자인 결정 |
 | 상단바 | 경로(브레드크럼) + 페이지 제목 | 연한 톤 상단바 하나에 상위 경로 + 제목(h2) 1회 표시 | 제목 중복 제거 (디자인 결정) |
 
@@ -122,8 +123,8 @@ npm run build      # 타입 체크 + 프로덕션 빌드
 
 1. **디자인** — Canva 팔레트 + Snow 타이포·간격, 글자 125%, CSS 토큰 모듈화, KPI 강조(A안 확정), 상단바 통일 반영 완료. 스타일 가이드 갱신 완료
 2. **검증** — v0.5 반영 후 승인(메일 성공·실패)·반려·테넌트 정보 수정·등록(중복 확인, 메일 성공·실패)·비밀번호 8자 규칙을 실제 조작으로 확인 완료. 모바일 폭 전 화면 확인은 남음
-3. **API 연동** — 로그인 · 테넌트 · 이벤트 신청/진행 · 승인/반려 · 진행 결과 · 발급 이력 CSV · 대시보드(테넌트 수 · 진행 중 이벤트 · 최근 알림) 연결 완료, 목 저장소(AppDataContext) 삭제. 남은 것: 대시보드 클러스터 · 트래픽 · 테넌트 별 처리 현황(API 없음, 예시 데이터), 신청 내용 · 알림센터 · 리포트(placeholder), 비밀번호 설정 화면(3-19), 비밀번호 설정 메일 재발송(OPS-07, API 없음)
-4. **미확정 항목 확정 대기** — 트래픽 모니터링(OPS-05), 비밀번호 문자 조합 규칙, Portal 로그인 URL, Portal 재사용 화면 3종
+3. **API 연동** — 로그인 · 테넌트 · 이벤트 신청/진행 · 승인/반려 · 진행 결과 · 발급 이력 CSV · 대시보드(테넌트 수 · 진행 중 이벤트 · 최근 알림) 연결 완료, 목 저장소(AppDataContext) 삭제. 알림센터(목록 · 읽음 · 모두 읽음) 연결 완료. 남은 것: 대시보드 클러스터 · 트래픽 · 테넌트 별 처리 현황(API 없음, 예시 데이터), 신청 내용 · 리포트(placeholder), 비밀번호 설정 화면(3-19), 비밀번호 설정 메일 재발송(OPS-07, API 없음)
+4. **미확정 항목 확정 대기** — 트래픽 모니터링(OPS-05), 비밀번호 문자 조합 규칙, Portal 로그인 URL, Portal 재사용 화면 2종(신청 내용 · 리포트)
 
 ## 구조
 
@@ -135,7 +136,7 @@ src/
     layout/       # 사이드바, 페이지 헤더, 사용자 메뉴
     common/       # 상태칩, 정보목록, 통계카드, 테이블 카드 등
   pages/          # 화면별 페이지
-  api/            # API 호출(client · auth · tenants · events · dashboard)과 응답 타입(types.ts)
+  api/            # API 호출(client · auth · tenants · events · dashboard · notifications)과 응답 타입(types.ts)
   hooks/          # useApiQuery(불러오기 · 로딩 · 오류 · 다시 시도)
   store/          # AuthContext(로그인 상태), Toast
   mocks/          # 대시보드 예시 데이터(API 없는 카드만)
@@ -153,7 +154,7 @@ src/
 - 불러오기 `src/hooks/useApiQuery.ts`: 화면에 들어올 때 부르고 `loading` · `error` · `reload` · `setData`(수정 응답 반영). 표시는 `components/common/QueryStatus.tsx`(스피너 / 서버 문구 + 다시 시도)
 - 폼 오류 `utils/formErrors.ts`: 400 `fields` → 입력란, 409 `EMAIL_DUPLICATED` → email 입력란, 그 밖 → 폼 위 Alert
 
-- 응답 → 화면 모델(순수 함수, node 테스트): 이벤트 `pages/events/eventView.ts`(상태 로그 `statusLogs` → 가로 타임라인 `StatusTimeline`, 반려 사유 · 처리 일시는 그중 신청(APPLICATION) 로그에서, 결과 state `IN_PROGRESS`는 지금 시각과 오픈 시각으로 오픈 전/진행 중), 승인 · 반려 실패 `pages/events/decision.ts`, 테넌트 `pages/tenants/tenantView.ts`, 대시보드 알림 `pages/dashboard/dashboardView.ts`
+- 응답 → 화면 모델(순수 함수, node 테스트): 이벤트 `pages/events/eventView.ts`(상태 로그 `statusLogs` → 가로 타임라인 `StatusTimeline`, 반려 사유 · 처리 일시는 그중 신청(APPLICATION) 로그에서, 결과 state `IN_PROGRESS`는 지금 시각과 오픈 시각으로 오픈 전/진행 중), 승인 · 반려 실패 `pages/events/decision.ts`, 테넌트 `pages/tenants/tenantView.ts`, 대시보드 알림 `pages/dashboard/dashboardView.ts`, 알림센터 필터 · 건수 · 검색 · 읽음 `pages/logs/notificationView.ts`
 
 `TODO:` 주석 위치:
 

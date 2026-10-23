@@ -255,3 +255,23 @@ export interface DashboardResponse {
     read: boolean;
   }[];
 }
+
+// ---------------------------------------------------------------- 알림센터 (NotificationController)
+
+/** GET /notifications 항목. 테넌트 · 이벤트와 무관한 알림이면 tenantId · tenantName · eventId가 null */
+export interface NotificationItem {
+  notificationId: number;
+  tenantId: string | null;
+  tenantName: string | null;
+  eventId: number | null;
+  category: string;
+  priority: NotificationPriority | string;
+  occurredAt: string;
+  content: string;
+  read: boolean;
+}
+
+/** GET /notifications — 전체, 최신순(페이지네이션 없음). 필터 · 검색 · 건수는 화면이 계산 */
+export interface NotificationListResponse {
+  items: NotificationItem[];
+}
