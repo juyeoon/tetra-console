@@ -76,6 +76,12 @@ class LifecycleResultHandlerTest extends IntegrationTest {
 					+ " WHERE event_id = ? ORDER BY notification_id", String.class, EVENT_ID);
 	}
 
+	private List<String> tenantNotifications() {
+		return data.jdbc()
+			.queryForList("SELECT CONCAT(category, '/', priority, ' ', content) FROM t_" + A + ".tenant_notification"
+					+ " WHERE event_id = ? ORDER BY notification_id", String.class, EVENT_ID);
+	}
+
 	// ---- WF2-1 호스팅 시작 ----
 
 	@Test
@@ -171,6 +177,8 @@ class LifecycleResultHandlerTest extends IntegrationTest {
 		assertThat(logs("EVENT")).containsExactly("OPEN→EXPIRED");
 		assertThat(notifications()).containsExactly(
 				"HOSTING/INFO [A사] [이벤트 4201] 이벤트가 종료되었습니다(호스팅 종료 · 발급 마감).", "ACCOUNT/INFO [A사] 진행 중인 이벤트가 없어 계정이 비활성으로 전환되었습니다.");
+		// 종료(HOSTING → ENDED)는 테넌트 알림도 1건 (§7.13)
+		assertThat(tenantNotifications()).containsExactly("HOSTING/INFO [이벤트 4201] 이벤트가 종료되었습니다.");
 		// 남은 이벤트가 없으면 계정 비활성(사유 배지 [종료])
 		assertThat(data.tenantRow(A)).containsEntry("account_status", "INACTIVE");
 		List<Map<String, Object>> tenantLogs = data.tenantStatusLogs(A);

@@ -20,14 +20,6 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 @RequestMapping("/api/ops")
 public class NotImplementedController {
 
-	/** OPS-08 알림센터. TODO(미정): Tetra Portal 알림센터와 같은 레이아웃. 필드·필터 확정 후 구현 */
-	@Operation(summary = "OPS-08 알림센터 (미구현)")
-	@ApiErrorCodes(ErrorCode.NOT_IMPLEMENTED)
-	@GetMapping("/notifications")
-	public void notifications() {
-		throw new ApiException(ErrorCode.NOT_IMPLEMENTED);
-	}
-
 	/** OPS-09 리포트. TODO(미정): Tetra Portal 리포트와 같은 레이아웃. 확정 후 구현 */
 	@Operation(summary = "OPS-09 리포트 (미구현)")
 	@ApiErrorCodes(ErrorCode.NOT_IMPLEMENTED)

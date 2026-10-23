@@ -35,7 +35,8 @@ class ApiDocsTest extends IntegrationTest {
 				"/api/ops/events/{eventId}/result", "/api/ops/events/{eventId}/result/history-csv", "/api/ops/tenants",
 				"/api/ops/tenants/{tenantId}", "/api/ops/tenants/{tenantId}/events",
 				"/api/ops/tenants/{tenantId}/resources", "/api/ops/tenants/email-availability",
-				"/api/ops/notifications", "/api/ops/reports" }) {
+				"/api/ops/notifications", "/api/ops/notifications/{notificationId}/read",
+				"/api/ops/notifications/read-all", "/api/ops/reports" }) {
 			assertThat(paths.has(path)).as(path).isTrue();
 		}
 		paths.propertyNames().forEach(p -> assertThat(p).startsWith("/api/"));
@@ -54,6 +55,12 @@ class ApiDocsTest extends IntegrationTest {
 		assertThat(approve.path("responses").path("404").path("description").asString()).contains("EVENT_NOT_FOUND");
 		assertThat(approve.path("responses").path("401").path("description").asString()).contains("UNAUTHENTICATED");
 		assertThat(approve.path("responses").has("500")).isTrue();
+
+		// 알림센터는 501이 아니고, 읽음은 없는 id면 404
+		assertThat(docs.path("paths").path("/api/ops/notifications").path("get").path("responses").has("501")).isFalse();
+		JsonNode markRead = docs.path("paths").path("/api/ops/notifications/{notificationId}/read").path("patch");
+		assertThat(markRead.path("responses").path("404").path("description").asString()).contains("NOTIFICATION_NOT_FOUND");
+		assertThat(markRead.path("responses").has("204")).isTrue();
 
 		// 로그인은 인증 없이 호출, 401은 LOGIN_FAILED만
 		JsonNode login = docs.path("paths").path("/api/ops/auth/login").path("post");
