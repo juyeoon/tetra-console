@@ -17,16 +17,16 @@ const notification = (priority: string, occurredAt: string) => ({
 });
 
 describe('대시보드 최근 알림', () => {
-  test('priority → 아이콘 수준, content → 제목, occurredAt → 경과', () => {
+  test('priority → 우선순위(모르는 값은 INFO), content → 제목, occurredAt → 경과', () => {
     assert.deepEqual(alertView(notification('URGENT', '2026-10-21T17:58:00+09:00'), NOW), {
       id: 7,
       title: 'A사 이벤트 신청이 접수되었습니다.',
       ago: '2분 전',
-      level: 'urgent',
+      priority: 'URGENT',
     });
-    assert.equal(alertView(notification('WARNING', '2026-10-21T15:00:00+09:00'), NOW).level, 'warning');
-    assert.equal(alertView(notification('INFO', '2026-10-21T15:00:00+09:00'), NOW).level, 'info');
-    assert.equal(alertView(notification('UNKNOWN', '2026-10-21T15:00:00+09:00'), NOW).level, 'info');
+    assert.equal(alertView(notification('WARNING', '2026-10-21T15:00:00+09:00'), NOW).priority, 'WARNING');
+    assert.equal(alertView(notification('INFO', '2026-10-21T15:00:00+09:00'), NOW).priority, 'INFO');
+    assert.equal(alertView(notification('UNKNOWN', '2026-10-21T15:00:00+09:00'), NOW).priority, 'INFO');
   });
 });
 

@@ -1,4 +1,5 @@
 import type { Tone } from '@/theme/theme';
+import type { NotificationPriority } from '@/api/types';
 import type { AccountStatus, ApplicationStatus, EventStatus, EventType, HostingStatus } from '@/types';
 
 interface StatusMeta {
@@ -36,6 +37,18 @@ export const accountStatusMeta: Record<AccountStatus, StatusMeta> = {
   ACTIVE: { label: '활성', tone: 'green' },
   INACTIVE: { label: '비활성', tone: 'grey' },
 };
+
+/** 알림 우선순위 — 긴급(빨강) / 경고(주황) / 정보(파랑). 알림센터 태그와 대시보드 최근 알림 아이콘이 같이 쓴다 */
+export const priorityMeta: Record<NotificationPriority, StatusMeta & { en: string }> = {
+  URGENT: { label: '긴급', tone: 'red', en: 'Urgent' },
+  WARNING: { label: '경고', tone: 'amber', en: 'Warning' },
+  INFO: { label: '정보', tone: 'blue', en: 'Info' },
+};
+
+/** 서버 priority 문자열 → 우선순위. 모르는 값은 정보로 본다 */
+export function priorityOf(priority: string): NotificationPriority {
+  return priority === 'URGENT' || priority === 'WARNING' ? priority : 'INFO';
+}
 
 export const eventTypeLabel: Record<EventType, string> = {
   COUPON: '쿠폰',
