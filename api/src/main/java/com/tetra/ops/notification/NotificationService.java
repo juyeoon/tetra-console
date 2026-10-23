@@ -138,11 +138,13 @@ public class NotificationService {
 		}
 	}
 
-	/** 이벤트 종료 성공(WF4: 호스팅 종료 · 발급 마감). 운영자 INFO 1건. */
+	/** 이벤트 종료 성공(WF4: 호스팅 종료 · 발급 마감, HOSTING → ENDED). 운영자·테넌트 INFO. 테넌트 스키마 라우팅 안에서 부른다. */
 	@Transactional(propagation = Propagation.MANDATORY)
 	public void eventEnded(String tenantId, Long eventId) {
+		String eventName = eventName(eventId);
 		operator(tenantId, eventId, Category.HOSTING, Priority.INFO,
-				tenantLabel(tenantId) + " [" + eventName(eventId) + "] 이벤트가 종료되었습니다(호스팅 종료 · 발급 마감).");
+				tenantLabel(tenantId) + " [" + eventName + "] 이벤트가 종료되었습니다(호스팅 종료 · 발급 마감).");
+		tenant(tenantId, eventId, Category.HOSTING, Priority.INFO, "[" + eventName + "] 이벤트가 종료되었습니다.");
 	}
 
 	// ------------------------------------------------------------ 계정 (ACCOUNT)

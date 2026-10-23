@@ -326,8 +326,7 @@ class EventQueryApiTest extends IntegrationTest {
 	void stubsReturn501() throws Exception {
 		data.tenant(A, "A사", "ACTIVE", "READY");
 		data.event(9201, A).applied().insert();
-		for (String path : new String[] { "/api/ops/notifications", "/api/ops/reports",
-				"/api/ops/events/9201/application-summary" }) {
+		for (String path : new String[] { "/api/ops/reports", "/api/ops/events/9201/application-summary" }) {
 			mvc.perform(get(path).cookie(operatorCookie()))
 				.andExpect(status().isNotImplemented())
 				.andExpect(jsonPath("$.code").value("NOT_IMPLEMENTED"));
