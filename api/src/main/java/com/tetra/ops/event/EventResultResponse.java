@@ -7,6 +7,8 @@ import java.util.List;
 import com.tetra.ops.domain.EventStatus;
 import com.tetra.ops.domain.HostingStatus;
 
+import io.swagger.v3.oas.annotations.media.Schema;
+
 /**
  * OPS-04-3 이벤트 진행 결과. state로 화면이 상태 화면을 고른다.
  * state별로 쓰지 않는 값은 null이다.
@@ -35,8 +37,12 @@ public record EventResultResponse(Long eventId, State state, OffsetDateTime even
 			Long peakConcurrent, Long maxCapacity, BigDecimal capacityUsageRate, OffsetDateTime peakAt) {
 	}
 
-	/** 발급 결과 구성. TODO(미정): 이탈 산출 기준. 임시로 ticket_count − success_count − soldout_count (0 미만이면 0). */
-	public record Composition(Long successCount, Long soldoutCount, Long abandonedCount) {
+	/**
+	 * 발급 결과 구성. 이탈 = session_count − success_count − soldout_count (0 미만이면 0) —
+	 * 이벤트 페이지에 들어왔다가 결과 없이 나간 사람(번호표를 받기 전에 나간 사람 포함).
+	 */
+	public record Composition(Long successCount, Long soldoutCount,
+			@Schema(description = "이탈 = session_count − successCount − soldoutCount (0 미만이면 0). 페이지에 들어왔다가 결과 없이 나간 사람") Long abandonedCount) {
 	}
 
 	/** queue_entered_at을 분 단위로 묶은 SUCCESS·FAILED_SOLDOUT 건수. */

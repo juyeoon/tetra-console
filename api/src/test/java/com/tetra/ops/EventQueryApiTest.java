@@ -245,7 +245,8 @@ class EventQueryApiTest extends IntegrationTest {
 			.andExpect(jsonPath("$.result.metrics.peakConcurrent").value(8920))
 			.andExpect(jsonPath("$.result.metrics.maxCapacity").value(30000))
 			.andExpect(jsonPath("$.result.metrics.capacityUsageRate").value(0.2973))
-			.andExpect(jsonPath("$.result.composition.abandonedCount").value(6))
+			// 이탈 = 세션 20 − 발급 3 − 품절 1 (번호표 10이 아니라 세션 기준)
+			.andExpect(jsonPath("$.result.composition.abandonedCount").value(16))
 			.andExpect(jsonPath("$.result.perMinute.length()").value(2))
 			.andExpect(jsonPath("$.result.perMinute[0].minute").value("2026-11-01T10:00:00+09:00"))
 			.andExpect(jsonPath("$.result.perMinute[0].successCount").value(2))
@@ -331,6 +332,31 @@ class EventQueryApiTest extends IntegrationTest {
 				.andExpect(status().isNotImplemented())
 				.andExpect(jsonPath("$.code").value("NOT_IMPLEMENTED"));
 		}
+	}
+
+	/**
+	 * 이탈은 세션 기준: 페이지에 들어왔다가 결과 없이 나간 사람(번호표를 받기 전에 나간 사람 포함).
+	 * 세션 11 · 번호표 9 · 발급 5 · 품절 4 → 번호표 기준이면 0이지만 세션 기준 2. 결과보다 세션이 적으면 0.
+	 */
+	@Test
+	void abandonedCountIsSessionsWithoutResult() throws Exception {
+		data.tenant(A, "A사", "ACTIVE", "READY");
+		data.event(9006, A).approved("ENDED", "EXPIRED", "aaaa0006").insert();
+		insertSummary(9006, true);
+		data.jdbc().update("UPDATE t_%s.event_result_summary SET session_count = 11, ticket_count = 9, peak_concurrent = 11,"
+				.formatted(A) + " success_count = 5, soldout_count = 4 WHERE event_id = 9006");
+		mvc.perform(get("/api/ops/events/{id}/result", 9006).cookie(operatorCookie()))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.result.composition.successCount").value(5))
+			.andExpect(jsonPath("$.result.composition.soldoutCount").value(4))
+			.andExpect(jsonPath("$.result.composition.abandonedCount").value(2));
+
+		// 집계 Job을 건너뛰어 세션이 0인데 결과가 있으면 음수 대신 0
+		data.jdbc().update("UPDATE t_%s.event_result_summary SET session_count = 0, ticket_count = 0 WHERE event_id = 9006"
+			.formatted(A));
+		mvc.perform(get("/api/ops/events/{id}/result", 9006).cookie(operatorCookie()))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.result.composition.abandonedCount").value(0));
 	}
 
 	private void insertSummary(long eventId, boolean withHistory) {

@@ -205,7 +205,8 @@ class EventReader {
 					.divide(BigDecimal.valueOf(maxCapacity), 4, RoundingMode.HALF_UP);
 		long success = nz(summary.getSuccessCount());
 		long soldout = nz(summary.getSoldoutCount());
-		long abandoned = Math.max(0, nz(summary.getTicketCount()) - success - soldout);
+		// 이탈 = 이벤트 페이지에 들어왔다가(세션) 발급 · 품절 결과 없이 나간 사람. 대기열 진입 전 이탈도 포함
+		long abandoned = Math.max(0, nz(summary.getSessionCount()) - success - soldout);
 		return new EventResultResponse.Result(
 				new Metrics(summary.getSuccessCount(), totalStock, summary.getSelloutRate(), summary.getSoldoutCount(),
 						summary.getPeakConcurrent(), maxCapacity, usage, Kst.toOffset(summary.getPeakAt())),
