@@ -33,7 +33,8 @@ export type EventResult =
       soldOut: number;
       dropped: number;
       peakConcurrent: number;
-      peakAt: string;
+      /** '사용률 N% · 시각' */
+      peakSub: string;
       planCapacity: number;
       perMinute: { minute: string; issued: number; soldOut: number }[];
     };

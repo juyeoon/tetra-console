@@ -34,7 +34,7 @@ function Detail({ detail }: { detail: NonNullable<StatusLogItem["detail"]> }) {
 }
 
 /**
- * 상태 로그 — 신청 · 호스팅 · 이벤트 상태 전이를 시각순으로 (개수 제한 없음, OPS-03-1 · 04-1 공용).
+ * 상태 로그 — 신청 · 호스팅 · 이벤트 상태 전이와 이벤트 시작(화면이 만드는 항목)을 시각순으로 (개수 제한 없음, OPS-03-1 · 04-1 공용).
  * 넓은 화면은 가로 한 줄 + 가로 스크롤(칸 최소 260px), 좁은 화면은 세로. 현재 상태는 상단 상태 영역의 배지로 확인한다.
  */
 export default function StatusTimeline({ logs }: { logs: StatusLogItem[] }) {
@@ -86,7 +86,8 @@ export default function StatusTimeline({ logs }: { logs: StatusLogItem[] }) {
                     height: 8,
                     borderRadius: "50%",
                     flexShrink: 0,
-                    bgcolor: last ? tones[meta.tone].dot : color.navy,
+                    // 아직 오지 않은 일정(이벤트 시작 예정)은 회색
+                    bgcolor: item.planned ? tones.grey.dot : last ? tones[meta.tone].dot : color.navy,
                   }}
                 />
                 {!last && (

@@ -12,7 +12,8 @@ export function useEventDetail(rawEventId: string | undefined) {
     (signal) => (valid ? fetchEventDetail(eventId, signal) : Promise.reject(new ApiError(404, 'EVENT_NOT_FOUND', '이벤트를 찾을 수 없습니다.'))),
     [eventId, valid],
   );
-  const event = useMemo(() => (query.data ? toEventView(query.data) : undefined), [query.data]);
+  // 이벤트 시작 예정 / 진행 중은 응답을 받은 시점 기준(다시 불러오면 바뀜)
+  const event = useMemo(() => (query.data ? toEventView(query.data, new Date()) : undefined), [query.data]);
   const notFound = query.error instanceof ApiError && query.error.status === 404;
   return { eventId, event, notFound, loading: query.loading, error: query.error, reload: query.reload };
 }

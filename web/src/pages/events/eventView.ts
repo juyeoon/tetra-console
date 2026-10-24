@@ -1,6 +1,7 @@
 import type { ApplicationStatus, EventDetailResponse, EventResultResponse, EventStatus, EventStatusLog, EventType, HostingStatus, StatusType } from '../../api/types.ts';
 import type { EventResult } from '../../types/index.ts';
-import { formatDateTime, formatTime } from '../../utils/datetime.ts';
+import { formatDateTime, formatMonthDayTime, formatTime } from '../../utils/datetime.ts';
+import { formatPercent } from '../../utils/format.ts';
 import { applicationStatusMeta, eventStatusMeta, hostingStatusMeta } from '../../utils/status.ts';
 
 /**
@@ -9,6 +10,27 @@ import { applicationStatusMeta, eventStatusMeta, hostingStatusMeta } from '../..
  */
 
 type Tone = 'blue' | 'amber' | 'green' | 'red' | 'grey';
+
+/**
+ * 입장(대기열) 열림 = 이벤트 시작 − 이 값(분). 상세 API에 입장 시각이 없어 화면이 계산한다.
+ * ops-workflows wf1-2/EventRegister.asl.json Init의 entryOpenAt(start_at − 60분),
+ * issuance-api tetra.session.entry-open-before(values-*.yml 60m)와 같은 값이어야 한다.
+ */
+export const ENTRY_OPEN_LEAD_MINUTES = 60;
+
+/**
+ * 최대 동시 세션 계산에 쓰는 세션 유효 시간(시간). Console API에 없어 화면 상수로 둔다.
+ * 출처: issuance-api values/values-dev.yml session.ttl (2h) — 바뀌면 같이 바꾼다.
+ */
+export const SESSION_TTL_HOURS = 2;
+
+/** 결과 탭 "최대 동시 접속자" 제목 옆 ⓘ 툴팁 — 세션 기준 값이라는 설명 */
+export const PEAK_CONCURRENT_HELP = `입장 후 ${SESSION_TTL_HOURS}시간 동안 유효한 세션 수의 최댓값입니다. 창을 닫아도 세션이 끝날 때까지 포함됩니다.`;
+
+/** 입장 시각(ISO) = 이벤트 시작 − ENTRY_OPEN_LEAD_MINUTES */
+export function entryOpenAtOf(startAt: string): string {
+  return new Date(new Date(startAt).getTime() - ENTRY_OPEN_LEAD_MINUTES * 60_000).toISOString();
+}
 
 const TYPE_LABEL: Record<StatusType, string> = { APPLICATION: '신청', HOSTING: '호스팅', EVENT: '이벤트' };
 
@@ -34,14 +56,15 @@ export const STATUS_LOG_TEXT: Record<StatusType, Record<string, { title: string;
     PENDING: { title: '배포 시작', description: '승인과 함께 이벤트 페이지 배포를 시작했습니다.' },
     DEPLOYED: { title: '배포 완료', description: '이벤트 페이지와 리소스 배포가 끝났습니다.' },
     DEPLOY_FAILED: { title: '배포 실패', description: '배포에 실패했습니다.' },
-    HOSTING: { title: '호스팅 시작', description: '호스팅 시작 시각이 되어 이벤트 페이지(대기방)를 열었습니다. 입장은 오픈 60분 전에 열립니다.' },
+    // 입장 시각("입장은 MM.DD HH:mm에 열립니다.")은 statusLogView가 이벤트 시작 시각으로 붙인다
+    HOSTING: { title: '호스팅 시작', description: '호스팅 시작 시각이 되어 이벤트 페이지(대기방)를 열었습니다.' },
     HOSTING_FAILED: { title: '호스팅 준비 실패', description: '호스팅을 시작하지 못했습니다.' },
     ENDED: { title: '호스팅 종료', description: '호스팅 기간이 끝나 이벤트 페이지를 내렸습니다.' },
     END_FAILED: { title: '종료 실패', description: '이벤트 종료 처리에 실패했습니다.' },
   },
   EVENT: {
     SCHEDULED: { title: '오픈 예약', description: '승인되어 이벤트 일정에 맞춰 오픈이 예약되었습니다.' },
-    // OPEN은 WF2-2가 끝나는 T-60(이벤트 시작 60분 전)에 된다 — 입장(대기열)만 열리고 발급은 시작 시각부터
+    // OPEN은 WF2-2가 끝나는 입장 시각(시작 − ENTRY_OPEN_LEAD_MINUTES)에 된다 — 입장(대기열)만 열리고 발급은 시작 시각부터
     OPEN: { title: '입장 시작', description: '입장이 열려 대기열을 받고 있습니다. 쿠폰 발급은 이벤트 시작 시각부터입니다.' },
     OPEN_FAILED: { title: '이벤트 준비 실패', description: '이벤트 준비(입장 열기)에 실패했습니다.' },
     EXPIRED: { title: '이벤트 만료', description: '이벤트가 종료되어 발급이 마감되었습니다.' },
@@ -69,6 +92,8 @@ export interface StatusLogItem {
   description: string;
   /** 원인 · 반려 사유. 없으면 null */
   detail: { label: string; text: string; preview: string; clipped: boolean; failure: boolean } | null;
+  /** 아직 오지 않은 일정(이벤트 시작 전) — 회색 점 */
+  planned: boolean;
 }
 
 function actorText(actor: EventStatusLog['actor']): string {
@@ -83,21 +108,58 @@ export function clipDetail(text: string, max = DETAIL_PREVIEW_LENGTH): { preview
   return chars.length <= max ? { preview: text, clipped: false } : { preview: `${chars.slice(0, max).join('')}…`, clipped: true };
 }
 
-export function statusLogView(log: EventStatusLog): StatusLogItem {
+/** @param startAt 이벤트 시작 시각(ISO). 있으면 호스팅 시작 설명에 입장 시각을 붙인다 */
+export function statusLogView(log: EventStatusLog, startAt?: string): StatusLogItem {
   const meta = META[log.statusType]?.[log.newStatus] ?? { label: log.newStatus, tone: 'grey' as Tone };
   const text = STATUS_LOG_TEXT[log.statusType]?.[log.newStatus] ?? { title: meta.label, description: '' };
   const rejected = log.statusType === 'APPLICATION' && log.newStatus === 'REJECTED';
+  const hostingStarted = log.statusType === 'HOSTING' && log.newStatus === 'HOSTING';
   return {
     at: formatDateTime(log.changedAt),
     actor: actorText(log.actor),
     typeLabel: TYPE_LABEL[log.statusType] ?? log.statusType,
     title: text.title,
     status: meta,
-    description: text.description,
+    description:
+      hostingStarted && startAt
+        ? `${text.description} 입장은 ${formatMonthDayTime(entryOpenAtOf(startAt))}에 열립니다.`
+        : text.description,
     detail: log.detail
       ? { label: rejected ? '반려 사유' : '원인', text: log.detail, ...clipDetail(log.detail), failure: FAILURE_STATUSES.has(log.newStatus) }
       : null,
+    planned: false,
   };
+}
+
+/**
+ * "이벤트 시작" — 상태 전이가 아니라 이벤트 시작 시각(start_at)으로 화면이 만드는 항목.
+ * 시작 전이면 예정(회색 점 · "예정" 칩 · 예정 시각), 지나면 진행 중 + 발급 시작 문구.
+ */
+export function eventStartView(startAt: string, now: Date): StatusLogItem {
+  const planned = now.getTime() < new Date(startAt).getTime();
+  return {
+    at: formatDateTime(startAt),
+    actor: planned ? '예정' : '자동 처리',
+    typeLabel: TYPE_LABEL.EVENT,
+    title: '이벤트 시작',
+    status: planned ? { label: '예정', tone: 'grey' } : eventStatusMeta.OPEN,
+    description: planned ? '이벤트 시작 시각에 쿠폰 발급이 시작됩니다.' : '쿠폰 발급이 시작되었습니다.',
+    detail: null,
+    planned,
+  };
+}
+
+/**
+ * 상태 로그 + "이벤트 시작"을 시각순으로. 입장이 열린 적(EVENT OPEN 기록)이 있을 때만 이벤트 시작을 넣는다 —
+ * 반려 · 배포 실패 · 호스팅 준비 실패 · 입장 열기 실패 · 입장 전 취소는 OPEN 기록이 없어 빠진다.
+ * 같은 시각이면 로그 뒤에 둔다(안정 정렬).
+ */
+export function timelineOf(logs: EventStatusLog[], startAt: string, now: Date): StatusLogItem[] {
+  const entries = logs.map((log) => ({ at: new Date(log.changedAt).getTime(), item: statusLogView(log, startAt) }));
+  if (logs.some((l) => l.statusType === 'EVENT' && l.newStatus === 'OPEN')) {
+    entries.push({ at: new Date(startAt).getTime(), item: eventStartView(startAt, now) });
+  }
+  return entries.sort((a, b) => a.at - b.at).map((e) => e.item);
 }
 
 /** 신청(APPLICATION) 로그만 — 반려 사유 · 처리 일시는 신청 상태에서 꺼낸다(호스팅 · 이벤트 로그의 detail과 섞이지 않게) */
@@ -137,11 +199,12 @@ export interface EventView {
   /** 할당 도메인 — {slug}.{tenant_id}.{플랫폼 도메인}(fullDomain). 승인 전 · 만료면 null */
   domain: string | null;
   publicKey: string | null;
-  /** 상태 로그 — 신청 · 호스팅 · 이벤트 전체(오름차순) */
+  /** 상태 로그 — 신청 · 호스팅 · 이벤트 전체 + 이벤트 시작(입장이 열린 경우), 시각순 */
   logs: StatusLogItem[];
 }
 
-export function toEventView(d: EventDetailResponse): EventView {
+/** @param now 이벤트 시작 항목의 예정 / 진행 중 판단 기준 */
+export function toEventView(d: EventDetailResponse, now: Date): EventView {
   const processedAt = processedAtOf(d.statusLogs);
   return {
     id: d.basic.eventId,
@@ -163,7 +226,7 @@ export function toEventView(d: EventDetailResponse): EventView {
     templateId: d.resources.templateId,
     domain: d.resources.fullDomain,
     publicKey: d.resources.publicKey,
-    logs: d.statusLogs.map(statusLogView),
+    logs: timelineOf(d.statusLogs, d.basic.startAt, now),
   };
 }
 
@@ -220,7 +283,7 @@ export function toResultView(r: EventResultResponse, now: Date): ResultView {
           soldOut: metrics.soldoutCount,
           dropped: composition.abandonedCount,
           peakConcurrent: metrics.peakConcurrent,
-          peakAt: formatDateTime(metrics.peakAt),
+          peakSub: `사용률 ${formatPercent(metrics.peakConcurrent, metrics.maxCapacity)} · ${formatDateTime(metrics.peakAt)}`,
           planCapacity: metrics.maxCapacity,
           perMinute: perMinute.map((m) => ({ minute: formatTime(m.minute), issued: m.successCount, soldOut: m.soldoutCount })),
         },

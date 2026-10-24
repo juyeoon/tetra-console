@@ -1,9 +1,10 @@
 import type { ReactNode } from 'react';
 import { Link as RouterLink } from 'react-router-dom';
-import { Box, Card, Link, Stack, Typography } from '@mui/material';
+import { Box, Card, IconButton, Link, Stack, Tooltip, Typography } from '@mui/material';
 import { BarChart } from '@mui/x-charts/BarChart';
 import EventAvailableOutlinedIcon from '@mui/icons-material/EventAvailableOutlined';
 import HourglassEmptyRoundedIcon from '@mui/icons-material/HourglassEmptyRounded';
+import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import InsightsOutlinedIcon from '@mui/icons-material/InsightsOutlined';
 import MonitorHeartOutlinedIcon from '@mui/icons-material/MonitorHeartOutlined';
 import WarningAmberRoundedIcon from '@mui/icons-material/WarningAmberRounded';
@@ -14,7 +15,7 @@ import { chartColors, color, font, line, radius, size, text, tones, type } from 
 import type { EventResult } from '@/types';
 import { formatNumber, formatPercent } from '@/utils/format';
 import { eventStatusMeta, hostingStatusMeta } from '@/utils/status';
-import type { ResultView } from '../eventView';
+import { PEAK_CONCURRENT_HELP, type ResultView } from '../eventView';
 
 type DoneResult = Extract<EventResult, { state: 'DONE' }>;
 
@@ -61,9 +62,19 @@ function DoneView({ r }: { r: DoneResult }) {
         <StatCard fill="blue" label="품절로 못 받은 수" value={`${formatNumber(r.soldOut)}명`} sub="재고 소진 후 발급 시도" />
         <StatCard
           fill="peri"
-          label="최대 동시 접속자 / 플랜 수용 인원"
+          label={
+            <>
+              최대 동시 접속자 / 플랜 수용 인원
+              {/* 버튼이라 Tab 포커스로도 툴팁이 열린다. 터치는 탭하면 바로 */}
+              <Tooltip title={PEAK_CONCURRENT_HELP} enterTouchDelay={0}>
+                <IconButton size="small" aria-label="최대 동시 접속자 설명" sx={{ ml: 0.5, p: 0.25, verticalAlign: 'text-bottom', color: 'inherit' }}>
+                  <InfoOutlinedIcon sx={{ fontSize: size.iconSm }} />
+                </IconButton>
+              </Tooltip>
+            </>
+          }
           value={`${formatNumber(r.peakConcurrent)} / ${formatNumber(r.planCapacity)}`}
-          sub={`사용률 ${formatPercent(r.peakConcurrent, r.planCapacity)} · ${r.peakAt}`}
+          sub={r.peakSub}
         />
       </Box>
 
