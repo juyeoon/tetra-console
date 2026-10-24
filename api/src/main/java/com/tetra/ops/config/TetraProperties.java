@@ -7,6 +7,7 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
 import org.springframework.validation.annotation.Validated;
 
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
@@ -27,6 +28,7 @@ public record TetraProperties(
 		@Valid @NotNull Portal portal,
 		@Valid @NotNull @DefaultValue Console console,
 		@Valid @NotNull @DefaultValue Csv csv,
+		@Valid @NotNull @DefaultValue Approve approve,
 		@Valid @NotNull Auth auth,
 		@Valid @NotNull PasswordLink passwordLink,
 		@Valid @NotNull DbMigration dbMigration,
@@ -60,6 +62,14 @@ public record TetraProperties(
 
 	/** 운영 콘솔 주소(선택, 예: https://console.example.com). 리포트 메일의 화면 링크에 쓴다. 비우면 링크 대신 메뉴 경로 */
 	public record Console(@DefaultValue("") String baseUrl) {
+	}
+
+	/**
+	 * 승인 전 검사(3-13). maxConcurrentEvents = Redis 노드 최대 수(인프라 10-17 결정, dev 3).
+	 * lockTimeoutSeconds = 동시 승인 전역 잠금(GET_LOCK) 대기 시간
+	 */
+	public record Approve(@Min(1) @DefaultValue("3") int maxConcurrentEvents,
+			@Min(1) @DefaultValue("5") int lockTimeoutSeconds) {
 	}
 
 	// TODO(미정): CSV presigned URL 만료. 임시 5분

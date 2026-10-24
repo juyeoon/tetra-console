@@ -65,7 +65,9 @@ public class EventCommandService {
 
 	private final JsonMapper jsonMapper;
 
-	public EventCommandService(TenantRouter router, EventStatusService statusService,
+	private final ApproveChecks approveChecks;
+
+	public EventCommandService(TenantRouter router, EventStatusService statusService, ApproveChecks approveChecks,
 			EventRegistryRepository registries, TemplateRepository templates, EventKeyPairs keyPairs,
 			RandomIds randomIds, StepFunctionsGateway stepFunctions, MailGateway mailGateway,
 			PrivateKeyMailComposer privateKeyMail, NotificationService notifications, TetraProperties properties,
@@ -82,6 +84,7 @@ public class EventCommandService {
 		this.privateKeyMail = privateKeyMail;
 		this.properties = properties;
 		this.jsonMapper = jsonMapper;
+		this.approveChecks = approveChecks;
 	}
 
 	public record ApproveResponse(@Schema(example = "1043") Long eventId, ApplicationStatus applicationStatus,
@@ -96,6 +99,8 @@ public class EventCommandService {
 		if (routed.registry().getApplicationStatus() != ApplicationStatus.APPLIED) {
 			throw new ApiException(ErrorCode.APPLICATION_NOT_APPLIED);
 		}
+		// 승인 전 검사(3-13): 테넌트 READY(inTenant) → 신청 데이터 · 동시 이벤트 수. 실패하면 키 · DB · StartExecution 모두 하지 않는다
+		router.inTenant(routed, () -> approveChecks.verify(eventId));
 		EventKeyPairs.KeyMaterial keys = keyPairs.generate();
 		Event approved = router.inTenant(routed, () -> commitApproval(eventId, operatorId, keys.publicKeyPem()));
 

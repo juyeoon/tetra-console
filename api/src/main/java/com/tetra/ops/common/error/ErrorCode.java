@@ -31,6 +31,10 @@ public enum ErrorCode {
 	EMAIL_DUPLICATED(HttpStatus.CONFLICT, "이미 등록된 이메일입니다."),
 	RESULT_NOT_READY(HttpStatus.CONFLICT, "이벤트 결과가 아직 없습니다."),
 	HOSTING_PERIOD_ENDED(HttpStatus.CONFLICT, "호스팅 기간이 지나 승인할 수 없습니다."),
+	/** 승인 전 검사(3-13) 위반. fields = 사유 코드 → 문구 */
+	APPLICATION_DATA_INVALID(HttpStatus.CONFLICT, "신청 내용이 승인 조건에 맞지 않아 승인할 수 없습니다."),
+	/** 동시 이벤트 상한 검사용 전역 잠금을 기다리다 시간 초과 */
+	APPROVE_BUSY(HttpStatus.CONFLICT, "다른 승인을 처리하고 있습니다. 잠시 후 다시 시도해 주세요."),
 
 	// 501
 	NOT_IMPLEMENTED(HttpStatus.NOT_IMPLEMENTED, "아직 제공하지 않는 기능입니다."),
