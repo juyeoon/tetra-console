@@ -1,93 +1,56 @@
-# console
+# Tetra Operations Console
 
+Tetra 운영자용 콘솔. 화면(`web/`, React · Vite)과 API(`api/`, Spring Boot)를 **한 이미지**로 배포한다.
+API가 `web/dist`를 `classpath:/static/`에 넣어 화면 파일도 함께 내보낸다.
 
+| 폴더 | 내용 | 안내 |
+| --- | --- | --- |
+| `web/` | 운영 콘솔 화면 | [web/README.md](web/README.md) — API와 함께 로컬 실행 · 화면 / 라우트 · 화면설계서 대비 차이 |
+| `api/` | 운영 콘솔 API, SQS 결과 리스너 | `api/docs/WORKLOG.md` — 작업 기록 |
+| `.gitlab-ci.yml` | CI/CD | 아래 "배포(dev)" |
 
-## Getting started
+## 로컬 실행
 
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
+[web/README.md](web/README.md)의 "API와 함께 실행 (로컬)"을 따른다(API: `api/`에서 `docker compose up -d` → `./gradlew bootRun`, 화면: `web/`에서 `npm run dev`).
 
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
+## 배포(dev)
 
-## Add your files
+### 흐름
 
-* [Create](https://docs.gitlab.com/user/project/repository/web_editor/#create-a-file) or [upload](https://docs.gitlab.com/user/project/repository/web_editor/#upload-a-file) files
-* [Add files using the command line](https://docs.gitlab.com/topics/git/add_files/#add-files-to-a-git-repository) or push an existing Git repository with the following command:
+- **MR**: web(단위 테스트 · 타입 검사 · 빌드), api(단위 · 통합 테스트). 배포하지 않는다.
+- **main 머지**: 위 테스트 → `jar`(web/dist 포함) → `build-image`(ECR `tetra/console:<커밋 SHA 7자리>`) → **`deploy-dev` 자동**.
+  - `deploy-dev`는 태스크 정의 family의 최신 리비전을 복사해 이미지만 바꾸고 ECS 서비스(`tetra-dev` / `console`)를 갱신한 뒤,
+    서비스가 안정될 때까지 기다리고(`aws ecs wait services-stable`, 최대 약 10분) **새 리비전으로 떴는지** 확인한다.
+  - 새 태스크가 헬스체크(ALB `/actuator/health/liveness`)를 통과하지 못하면 ECS circuit breaker가 이전 리비전으로 되돌리고, 잡은 실패로 끝난다.
+- MR 파이프라인 · 다른 브랜치에서는 `deploy-dev`가 돌지 않는다.
 
-```
-cd existing_repo
-git remote add origin http://gitlab.tetra/tetra/app/console.git
-git branch -M main
-git push -uf origin main
-```
+### 밤에 dev를 꺼 둔 경우
 
-## Integrate with your tools
+밤에는 GitLab EC2 · Runner 2대(general · protected) · SSM 중계 · RDS를 꺼 둔다(ECS · NAT · EKS · ALB는 켜 둠). 아침에 켤 때 RDS는 선택이다.
 
-* [Set up project integrations](http://gitlab.tetra/tetra/app/console/-/settings/integrations)
+**GitLab · Runner는 켰는데 RDS는 켜지 않은 채 main에 머지하면** `deploy-dev`가 실패한다.
 
-## Collaborate with your team
+- 앱은 기동 중 DB에 연결하지 못하면 뜨지 않는다. Hibernate가 시작할 때 DB 메타데이터로 Dialect를 정하는데(`hibernate.dialect` 설정 없음)
+  연결에 실패하면 `Unable to determine Dialect without JDBC metadata`로 컨텍스트 생성이 실패하고 프로세스가 끝난다(로컬에서 DB를 끄고 확인).
+  RDS가 멈춰 있으면 연결 시도가 응답 없이 끝날 때까지(Hikari 연결 대기 기본 30초) 기다린 뒤 같은 오류로 실패한다(시간은 추정).
+- 새 태스크는 헬스체크를 한 번도 통과하지 못하고 계속 다시 시작된다 → circuit breaker가 실패를 세어 이전 리비전으로 되돌린다.
+  이때 이전 리비전 태스크는 그대로 떠 있다(최소 정상 100%).
+- 잡 로그는 둘 중 하나로 끝난다(빨강).
+  - 10분 안에 되돌리기까지 끝나면: `배포 실패 — 헬스체크를 통과하지 못해 이전 리비전(...)으로 되돌아갔다`
+  - 아니면 `wait services-stable`이 `Max attempts exceeded`로 끝난다. 이 경우에도 ECS는 혼자 이전 리비전으로 되돌린다.
+- 확인: ECS 서비스 이벤트(태스크 시작 · 중지 이유), CloudWatch 로그 `/ecs/tetra-dev/console`의 `Unable to determine Dialect` / `Communications link failure`.
 
-* [Invite team members and collaborators](https://docs.gitlab.com/user/project/members/)
-* [Create a new merge request](https://docs.gitlab.com/user/project/merge_requests/creating_merge_requests/)
-* [Automatically close issues from merge requests](https://docs.gitlab.com/user/project/issues/managing_issues/#closing-issues-automatically)
-* [Enable merge request approvals](https://docs.gitlab.com/user/project/merge_requests/approvals/)
-* [Set auto-merge](https://docs.gitlab.com/user/project/merge_requests/auto_merge/)
+### 다시 돌리는 방법
 
-## Test and Deploy
+1. RDS를 켜고 `available`이 될 때까지 기다린다.
+2. **가장 최근** main 파이프라인의 `deploy-dev` 잡에서 **Retry**, 또는 main에서 **Run pipeline**.
+   - 이미지는 이미 ECR에 있어 `build-image`는 건너뛴다(같은 태그면 빌드하지 않음).
+   - 더 오래된 파이프라인의 `deploy-dev`를 Retry하면 그 커밋의 이미지로 되돌아가니 하지 않는다.
+   - `resource_group`이 배포를 한 번에 하나만 돌게 한다.
+3. 잡 로그 끝이 `배포 완료 — <이미지>`인지 확인한다.
 
-Use the built-in continuous integration in GitLab.
+## 브라우저 캐시
 
-* [Get started with GitLab CI/CD](https://docs.gitlab.com/ci/quick_start/)
-* [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/user/application_security/sast/)
-* [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/topics/autodevops/requirements/)
-* [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/user/clusters/agent/)
-* [Set up protected environments](https://docs.gitlab.com/ci/environments/protected_environments/)
-
-***
-
-# Editing this README
-
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
-
-## Suggestions for a good README
-
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
-
-## Name
-Choose a self-explaining name for your project.
-
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
-
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
-
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
-
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
-
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
-
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
-
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
-
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
-
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
-
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
-
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
-
-## License
-For open source projects, say how it is licensed.
-
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+- `index.html`(SPA 라우트로 내려가는 것 포함) · favicon 등 해시 없는 파일: `Cache-Control: no-cache` — 배포 뒤 새로고침만으로 새 화면.
+- `assets/`(Vite 해시 이름 JS · CSS · 이미지): `max-age=31536000, public, immutable`.
+- 설정: `api/src/main/java/com/tetra/ops/config/SpaWebConfig.java`
