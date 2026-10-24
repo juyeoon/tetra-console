@@ -5,6 +5,7 @@ import static org.hamcrest.Matchers.not;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.forwardedUrl;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -39,6 +40,43 @@ class SpaRoutingTest extends IntegrationTest {
 				"/applications" }) {
 			mvc.perform(get(path)).andExpect(status().isOk()).andExpect(content().string(containsString(INDEX_MARK)));
 		}
+	}
+
+	/**
+	 * 브라우저 캐시(3-23): 해시 없는 index.html(SPA 라우트로 내려가는 것 포함)은 매번 재검증, 해시 붙은 assets는 1년 + immutable.
+	 * "/"는 환영 페이지가 index.html로 forward하는데 MockMvc는 forward를 따라가지 않아 /index.html로 확인한다(같은 핸들러).
+	 */
+	@Test
+	void indexIsRevalidatedAndHashedAssetsAreCachedForAYear() throws Exception {
+		for (String path : new String[] { "/index.html", "/login", "/events/1043" }) {
+			mvc.perform(get(path))
+				.andExpect(status().isOk())
+				.andExpect(content().string(containsString(INDEX_MARK)))
+				.andExpect(header().string("Cache-Control", "no-cache"))
+				.andExpect(header().exists("Last-Modified"));
+		}
+		mvc.perform(get("/assets/app.js"))
+			.andExpect(status().isOk())
+			.andExpect(header().string("Cache-Control", "max-age=31536000, public, immutable"));
+	}
+
+	@Test
+	void unchangedIndexAnswers304AndKeepsNoCache() throws Exception {
+		String lastModified = mvc.perform(get("/index.html")).andReturn().getResponse().getHeader("Last-Modified");
+
+		mvc.perform(get("/index.html").header("If-Modified-Since", lastModified))
+			.andExpect(status().isNotModified())
+			.andExpect(header().string("Cache-Control", "no-cache"));
+	}
+
+	@Test
+	void missingAssetAndApiGetNoLongTermCache() throws Exception {
+		mvc.perform(get("/assets/missing.js"))
+			.andExpect(status().isNotFound())
+			.andExpect(header().string("Cache-Control", not(containsString("immutable"))));
+		mvc.perform(get("/api/ops/me"))
+			.andExpect(status().isUnauthorized())
+			.andExpect(header().string("Cache-Control", not(containsString("max-age=31536000"))));
 	}
 
 	@Test

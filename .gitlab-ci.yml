@@ -1,10 +1,9 @@
 # console CI/CD — 화면(web) + API(api) 한 이미지 (인프라 플랜 5-2 ①④ · Portal CI와 같은 모양)
 #   MR   : web(단위 테스트 · 타입 검사 · 빌드) · api(단위 · 통합 테스트 — Testcontainers MySQL · ElasticMQ → Docker-in-Docker)
-#   main : 위 + jar(web/dist 포함) → 이미지(linux/amd64) → ECR tetra/console:<커밋 SHA 7자리> → ECS 서비스 갱신(dev, 수동 ▶)
+#   main : 위 + jar(web/dist 포함) → 이미지(linux/amd64) → ECR tetra/console:<커밋 SHA 7자리> → ECS 서비스 갱신(dev, 자동)
 #
-# 배포가 지금 수동인 이유 (2026-10-19): Console 은 시작할 때 Step Functions ARN(SFN_*)과 SQS 결과 큐가 있어야 뜬다.
-#   둘 다 JYP ops-workflows 가 만든다 — 생기기 전에 배포하면 ECS 가 이전 리비전으로 되돌린다.
-#   생기고 35-web 에 SFN_* 값을 넣은 뒤에는 deploy-dev 의 `when: manual` 줄을 지워 자동으로 바꾼다.
+# 배포는 main 머지 뒤 build-image 가 성공하면 자동으로 돈다(3-8, 2026-10-24). MR 파이프라인 · 다른 브랜치에서는 돌지 않는다.
+#   밤에 RDS 를 꺼 둔 채 머지되면 새 태스크가 기동 중 DB 연결에 실패해 deploy-dev 가 실패한다 → README "배포(dev)"의 다시 돌리는 방법
 #
 # Runner (인프라 런북 3-4 · GitLab 컨벤션 9절)
 #   general   : 일반 Runner — 화면 빌드 · jar (Docker 불필요)
@@ -137,8 +136,7 @@ deploy-dev:
   image: alpine:3.20
   needs: [build-image]
   rules:
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-      when: manual # SFN · SQS(JYP ops-workflows)가 생길 때까지 — 위 머리말 참고
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH # main 만, build-image 성공 뒤 자동(MR 파이프라인은 CI_COMMIT_BRANCH 가 없음)
   resource_group: ecs-console-dev # 배포가 동시에 두 개 돌지 않게
   environment:
     name: dev
