@@ -26,6 +26,12 @@ export function formatDateTime(iso: string | null | undefined): string {
   return t ? `${t.y}.${t.mo}.${t.d} ${t.h}:${t.mi}` : '-';
 }
 
+/** '2026-10-20T18:09:11+09:00' → '10.20 18:09' (연도 생략). 값이 없으면 '-' */
+export function formatMonthDayTime(iso: string | null | undefined): string {
+  const t = iso ? kst(iso) : null;
+  return t ? `${t.mo}.${t.d} ${t.h}:${t.mi}` : '-';
+}
+
 /** '2026-10-20T18:09:11+09:00' → '18:09' (차트 축). 값이 없으면 '-' */
 export function formatTime(iso: string | null | undefined): string {
   const t = iso ? kst(iso) : null;
