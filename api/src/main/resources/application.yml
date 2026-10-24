@@ -75,6 +75,10 @@ tetra:
   platform-domain: ${PLATFORM_DOMAIN:tetraops.cloud}
   csv:
     presign-ttl: ${CSV_PRESIGN_TTL:PT5M}
+  # 승인 전 검사: 기간이 겹치는 승인 이벤트 상한(Redis 노드 최대 수), 동시 승인 잠금 대기(초)
+  approve:
+    max-concurrent-events: ${MAX_CONCURRENT_EVENTS:3}
+    lock-timeout-seconds: 5
   auth:
     jwt-secret: ${OPS_JWT_SECRET}
   password-link:

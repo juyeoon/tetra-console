@@ -68,16 +68,17 @@ interface DialogProps {
 }
 
 /** 승인 · 반려 요청 결과. 실패면 대화상자에 보여 줄 서버 문구 */
-export type DecisionOutcome<T> = { ok: true; value: T } | { ok: false; message: string };
+export type DecisionOutcome<T> = { ok: true; value: T } | { ok: false; message: string; reasons?: string[] };
 
 /**
  * OPS-03-M1 승인 확인 모달.
  * - 개인키 메일 발송 실패(privateKeyMailSent=false)면 "개인키 메일 발송 실패" 상태 화면으로 바뀐다(확인을 눌러야 닫힘)
- * - 409(이미 처리됨 · 호스팅 기간 지남 · 환경 준비 전)는 서버 문구를 모달 안에 보여 준다
+ * - 409(이미 처리됨 · 호스팅 기간 지남 · 환경 준비 전 · 다른 승인 처리 중)는 서버 문구를 모달 안에 보여 준다
+ * - 409 승인 전 검사 위반이면 서버 문구 아래 사유 목록 — 승인되지 않았으므로 그대로 닫거나 반려할 수 있다
  */
 export function ApproveDialog({ open, event, onClose, onApprove }: DialogProps & { onApprove: () => Promise<DecisionOutcome<ApproveResponse>> }) {
   const [phase, setPhase] = useState<'confirm' | 'loading' | 'keyMailFailed'>('confirm');
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<{ message: string; reasons?: string[] } | null>(null);
   // 실패 화면에서는 승인 전 이벤트 정보와 승인 응답을 그대로 보여 주기 위해 보관
   const [snapshot, setSnapshot] = useState<{ event: EventView; result: ApproveResponse } | null>(null);
 
@@ -95,7 +96,7 @@ export function ApproveDialog({ open, event, onClose, onApprove }: DialogProps &
     const outcome = await onApprove();
     if (!outcome.ok) {
       setPhase('confirm');
-      setError(outcome.message);
+      setError({ message: outcome.message, reasons: outcome.reasons });
       return;
     }
     if (outcome.value.privateKeyMailSent) {
@@ -132,7 +133,14 @@ export function ApproveDialog({ open, event, onClose, onApprove }: DialogProps &
       <DialogContent>
         {error && (
           <Alert severity="error" sx={{ mb: 2 }}>
-            {error}
+            {error.message}
+            {error.reasons && (
+              <Box component="ul" sx={{ m: 0, mt: 0.5, pl: 2.5 }}>
+                {error.reasons.map((reason) => (
+                  <li key={reason}>{reason}</li>
+                ))}
+              </Box>
+            )}
           </Alert>
         )}
         <Typography variant="body1" sx={{ mb: 2 }}>

@@ -75,6 +75,13 @@ public interface EventRegistryRepository extends JpaRepository<EventRegistry, Lo
 			   and r.applicationStatus = com.tetra.ops.domain.ApplicationStatus.APPLIED""")
 	int approve(@Param("eventId") Long eventId, @Param("processedAt") LocalDateTime processedAt);
 
+	/** 동시 이벤트 상한 계산 대상(3-13): 모든 테넌트의 승인된 이벤트 중 아직 끝나지 않은 것(실패 상태 포함) */
+	@Query("""
+			select r from EventRegistry r
+			 where r.applicationStatus = com.tetra.ops.domain.ApplicationStatus.APPROVED
+			   and (r.eventStatus is null or r.eventStatus <> com.tetra.ops.domain.EventStatus.EXPIRED)""")
+	List<EventRegistry> findApprovedNotExpired();
+
 	@Modifying(flushAutomatically = true, clearAutomatically = true)
 	@Query("""
 			update EventRegistry r

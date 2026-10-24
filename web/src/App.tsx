@@ -1,7 +1,6 @@
 import { Navigate, Route, Routes } from 'react-router-dom';
 import AppLayout from '@/components/layout/AppLayout';
 import LoginPage from '@/pages/auth/LoginPage';
-import PasswordSetupPage from '@/pages/auth/PasswordSetupPage';
 import DashboardPage from '@/pages/dashboard/DashboardPage';
 import RegistrationEmailPreviewPage from '@/pages/email/RegistrationEmailPreviewPage';
 import EventApplicationDetailPage from '@/pages/events/EventApplicationDetailPage';
@@ -22,7 +21,6 @@ export default function App() {
     <Routes>
       {/* 레이아웃 없는 화면 */}
       <Route path="/login" element={<LoginPage />} />
-      <Route path="/password/setup" element={<PasswordSetupPage />} />
       <Route path="/preview/tenant-registration-email" element={<RegistrationEmailPreviewPage />} />
 
       {/* 운영 콘솔 — 로그인(GET /api/ops/me) 확인 후에만 */}

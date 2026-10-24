@@ -1,5 +1,5 @@
 import { useSearchParams } from 'react-router-dom';
-import { Avatar, Box, Button, Divider, Stack, Typography } from '@mui/material';
+import { Avatar, Box, Divider, Stack, Typography } from '@mui/material';
 import { color, font, line, radius, size, text, type } from '@/theme/theme';
 
 /**
@@ -47,9 +47,10 @@ export default function RegistrationEmailPreviewPage() {
               <br />
               아래 버튼을 눌러 비밀번호를 설정해 주세요.
             </Typography>
-            <Button variant="contained" size="large" href={`/password/setup?token=preview&email=${encodeURIComponent(email)}`} sx={{ mt: 3 }}>
-              비밀번호 설정하기
-            </Button>
+            {/* 실제 메일의 버튼 링크는 Portal 비밀번호 설정 화면(서명 링크). 이 미리보기에서는 열지 않는다 */}
+            <Typography variant="body1" sx={{ mt: 3, color: text.secondary }}>
+              (Portal 비밀번호 설정 링크)
+            </Typography>
             <Typography variant="body2" sx={{ mt: 1.5, color: text.secondary }}>
               이 링크는 발송 후 24시간 동안 유효하며, 비밀번호를 설정하면 다시 사용할 수 없습니다.
             </Typography>

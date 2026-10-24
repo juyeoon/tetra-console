@@ -38,6 +38,9 @@ tetra:
     base-url: https://portal.example.test
   csv:
     presign-ttl: PT5M
+  approve:
+    max-concurrent-events: 3
+    lock-timeout-seconds: 1
   auth:
     jwt-secret: test-jwt-secret-0123456789abcdef0123456789
   password-link:

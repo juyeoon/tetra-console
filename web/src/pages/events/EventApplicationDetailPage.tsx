@@ -75,7 +75,7 @@ export default function EventApplicationDetailPage() {
           } catch (e) {
             const failure = decisionFailure(e);
             if (failure.reloadDetail) detail.reload();
-            return { ok: false, message: failure.message };
+            return { ok: false, message: failure.message, reasons: failure.reasons };
           }
         }}
       />

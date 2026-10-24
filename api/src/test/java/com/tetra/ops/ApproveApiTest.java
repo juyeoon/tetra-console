@@ -200,12 +200,14 @@ class ApproveApiTest extends IntegrationTest {
 
 	@Test
 	void hostingPeriodEndedIs409AndChangesNothing() throws Exception {
-		// 호스팅 종료가 이미 지난 신청 (start = 어제, hosting_end = start + 5시간)
+		// 호스팅 종료가 이미 지난 신청 (start = 어제, hosting_end = start + 5시간).
+		// 승인 전 검사(3-13)에서 호스팅 시작이 지났다는 사유로 먼저 걸린다(HOSTING_PERIOD_ENDED는 트랜잭션 안의 안전장치로 남음)
 		data.event(2100, A).applied().startAt(java.time.LocalDateTime.now().minusDays(1).withNano(0)).insert();
 
 		mvc.perform(post("/api/ops/events/{id}/approve", 2100).cookie(operatorCookie()))
 			.andExpect(status().isConflict())
-			.andExpect(jsonPath("$.code").value("HOSTING_PERIOD_ENDED"));
+			.andExpect(jsonPath("$.code").value("APPLICATION_DATA_INVALID"))
+			.andExpect(jsonPath("$.fields.HOSTING_START_TOO_SOON").exists());
 
 		assertThat(data.registry(2100)).containsEntry("application_status", "APPLIED");
 		assertThat(data.eventRow(A, 2100)).containsEntry("application_status", "APPLIED");

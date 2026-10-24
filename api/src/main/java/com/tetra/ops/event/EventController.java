@@ -76,9 +76,12 @@ public class EventController {
 	@Operation(summary = "OPS-03-M1 승인",
 			description = "본문 없음. 승인 대기 중(APPLIED)일 때만 가능. 승인은 항상 유지되고, "
 					+ "privateKeyMailSent=false면 개인키 메일 발송 실패 상태 화면을 띄운다. "
-					+ "배포 시작에 실패하면 hostingStatus가 DEPLOY_FAILED로 온다")
+					+ "배포 시작에 실패하면 hostingStatus가 DEPLOY_FAILED로 온다. "
+					+ "승인 전 검사(호스팅 시작 ≤ 이벤트 시작 − 100분, 호스팅 시작 ≥ 지금 + 30분, 이름, 결과 주소 http(s), "
+					+ "기간이 겹치는 승인 이벤트 ≤ 상한)에 걸리면 409 APPLICATION_DATA_INVALID(fields = 사유 코드별 문구), "
+					+ "동시 승인 잠금을 못 잡으면 409 APPROVE_BUSY. 이때는 아무것도 바뀌지 않는다")
 	@ApiErrorCodes({ ErrorCode.EVENT_NOT_FOUND, ErrorCode.APPLICATION_NOT_APPLIED, ErrorCode.HOSTING_PERIOD_ENDED,
-			ErrorCode.TENANT_NOT_READY })
+			ErrorCode.TENANT_NOT_READY, ErrorCode.APPLICATION_DATA_INVALID, ErrorCode.APPROVE_BUSY })
 	@PostMapping("/events/{eventId}/approve")
 	public EventCommandService.ApproveResponse approve(@Parameter(example = "1043") @PathVariable Long eventId,
 			@Parameter(hidden = true) @AuthenticationPrincipal Jwt jwt) {

@@ -54,8 +54,13 @@ public class EventStatusService {
 
 	private final Clock clock;
 
+	private final ApproveCapacityLock approveLock;
+
+	private final ApproveChecks approveChecks;
+
 	public EventStatusService(EventRegistryRepository registries, EventRepository events,
-			EventAuthKeyRepository authKeys, EventStatusLogRepository statusLogs,
+			EventAuthKeyRepository authKeys, EventStatusLogRepository statusLogs, ApproveCapacityLock approveLock,
+			ApproveChecks approveChecks,
 			NotificationService notifications, TenantActivityService tenantActivity, Clock clock) {
 		this.registries = registries;
 		this.events = events;
@@ -64,16 +69,21 @@ public class EventStatusService {
 		this.notifications = notifications;
 		this.tenantActivity = tenantActivity;
 		this.clock = clock;
+		this.approveLock = approveLock;
+		this.approveChecks = approveChecks;
 	}
 
 	/**
 	 * WF1-2 [3] 승인. APPLIED가 아니면 409, 호스팅 종료 시각이 지났으면 409(HOSTING_PERIOD_ENDED, 롤백).
+	 * 먼저 전역 잠금(동시 승인 경합)을 잡고 동시 이벤트 수를 다시 센다(넘으면 409 APPLICATION_DATA_INVALID, 잠금은 트랜잭션 끝에 해제).
 	 * 같은 트랜잭션에서 운영자·테넌트 알림을 남긴다.
 	 * slug 중복(uk_event_slug)이면 DataIntegrityViolationException이 나고 트랜잭션 전체가 롤백된다. 호출 쪽에서 새 slug로 다시 부른다.
 	 */
 	@Transactional
 	public Event approve(Long eventId, Long operatorId, String slug, String publicKeyPem) {
 		String tenantId = routedTenant();
+		approveLock.acquire();
+		events.findById(eventId).ifPresent(approveChecks::verifyCapacity);
 		LocalDateTime now = Kst.now(clock);
 		if (registries.approve(eventId, now) == 0) {
 			throw new ApiException(ErrorCode.APPLICATION_NOT_APPLIED);
