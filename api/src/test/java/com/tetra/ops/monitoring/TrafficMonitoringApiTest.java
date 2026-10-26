@@ -44,7 +44,7 @@ import com.tetra.ops.support.IntegrationTest;
 /**
  * OPS-05 API 3개 — Prometheus는 HTTP 목, AWS는 게이트웨이 목, 이벤트 · 로그 · 알림은 Testcontainers DB 시드. 캐시 TTL 0(요청마다 조회).
  * 시드(지금 = now, 분 단위):
- * - 7101 A 진행 중(OPEN), 시작 now−10분 — 5xx 0.8% → 주의
+ * - 7101 A 진행 중(OPEN), 시작 now−10분 — 5xx 1.2% → 주의(1% 이상)
  * - 7102 B 진행 중(OPEN), 시작 now−5분 — 정상
  * - 7104 A 종료(EXPIRED · ENDED), 시작 2일 전 — 결과 요약 있음
  * - 7105 B 준비 실패(OPEN_FAILED), 시작 1일 전 — URGENT 알림 + OPEN_FAILED 로그
@@ -202,7 +202,7 @@ class TrafficMonitoringApiTest extends IntegrationTest {
 					"[{\"metric\":{\"namespace\":\"argocd\",\"statefulset\":\"argocd-application-controller\"},\"value\":[1,\"1\"]}]")
 			.respond(TrafficQueries.RPS_BY_EVENT, """
 					[{"metric":{"event_id":"7101"},"value":[1,"1000"]},{"metric":{"event_id":"7102"},"value":[1,"500"]}]""")
-			.respond(TrafficQueries.ERROR_RPS_BY_EVENT, "[{\"metric\":{\"event_id\":\"7101\"},\"value\":[1,\"8\"]}]")
+			.respond(TrafficQueries.ERROR_RPS_BY_EVENT, "[{\"metric\":{\"event_id\":\"7101\"},\"value\":[1,\"12\"]}]")
 			.respond(TrafficQueries.P95_BY_EVENT, """
 					[{"metric":{"event_id":"7101"},"value":[1,"0.18"]},{"metric":{"event_id":"7102"},"value":[1,"0.1"]}]""")
 			.respond(TrafficQueries.API_READY_BY_EVENT,
@@ -241,7 +241,7 @@ class TrafficMonitoringApiTest extends IntegrationTest {
 			.andExpect(jsonPath("$.summary[0].level").value("DANGER"))
 			.andExpect(jsonPath("$.summary[0].reason").value("KEDA 가용 0"))
 			.andExpect(jsonPath("$.summary[1].level").value("WARN"))
-			.andExpect(jsonPath("$.summary[1].reason").value("7101번 5xx 0.8%"))
+			.andExpect(jsonPath("$.summary[1].reason").value("7101번 5xx 1.2%"))
 			.andExpect(jsonPath("$.summary[1].openCount").value(2))
 			.andExpect(jsonPath("$.summary[1].eventId").value(7101))
 			// 24시간 안 실패 없음(준비 실패는 1일 전 − 59분), DLQ 하나에 2건
@@ -409,7 +409,7 @@ class TrafficMonitoringApiTest extends IntegrationTest {
 		TrafficQueries.EventQueries q = TrafficQueries.forEvent(A, 7101);
 		both(TrafficQueries.KUBE_STATE_METRICS_UP, "3");
 		both(q.rps(), "1131.24");
-		both(q.errorRps(), "9.05");
+		both(q.errorRps(), "13.57");
 		prometheus.respond(q.p95ByUri(), r -> isRange(r)
 				? matrix(r, "{\"uri\":\"/api/issuance/events/{eventId}/coupons/claim\"}", i -> "0.18")
 				: """
@@ -456,10 +456,10 @@ class TrafficMonitoringApiTest extends IntegrationTest {
 			.andExpect(jsonPath("$.steps[4].actualAt").value(iso(now.minusMinutes(10))))
 			// KPI
 			.andExpect(jsonPath("$.kpi.level").value("WARN"))
-			.andExpect(jsonPath("$.kpi.reason").value("5xx 0.8%"))
+			.andExpect(jsonPath("$.kpi.reason").value("5xx 1.2%"))
 			.andExpect(jsonPath("$.kpi.warn").value(contains("errorRatio")))
 			.andExpect(jsonPath("$.kpi.live.rps").value(1131.2))
-			.andExpect(jsonPath("$.kpi.live.errorRatio").value(0.008))
+			.andExpect(jsonPath("$.kpi.live.errorRatio").value(0.012))
 			.andExpect(jsonPath("$.kpi.live.p95Ms").value(180))
 			.andExpect(jsonPath("$.kpi.live.p95TicketMs").value(120))
 			.andExpect(jsonPath("$.kpi.live.podsReady").value(8))
@@ -476,7 +476,7 @@ class TrafficMonitoringApiTest extends IntegrationTest {
 			.andExpect(jsonPath("$.range.options").value(contains("entry", "15m", "1h")))
 			.andExpect(jsonPath("$.range.stepSeconds").value(30))
 			.andExpect(jsonPath("$.charts.traffic.rps[0]").value(1131.24))
-			.andExpect(jsonPath("$.charts.errors.app[0]").value(0.008))
+			.andExpect(jsonPath("$.charts.errors.app[0]").value(0.012))
 			.andExpect(jsonPath("$.charts.latency.issuance[0]").value(180.0))
 			.andExpect(jsonPath("$.charts.latency.ticket").value(everyItem(nullValue())))
 			.andExpect(jsonPath("$.charts.pods.pending").value(everyItem(is(0.0))))

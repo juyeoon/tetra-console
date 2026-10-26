@@ -21,7 +21,8 @@ final class TrafficRules {
 
 	static final double ERROR_RATIO_DANGER = 0.02;
 
-	static final double ERROR_RATIO_WARN = 0.005;
+	/** 설계 D-2 확정(2026-10-26): 주의 1% · 위험 2%. 화면 KPI 문구 · 에러 그래프 기준선(web trafficMonitoringView ERROR_RATIO_*)도 같은 값 */
+	static final double ERROR_RATIO_WARN = 0.01;
 
 	static final double P95_DANGER_SECONDS = 2.0;
 
@@ -96,7 +97,7 @@ final class TrafficRules {
 	/**
 	 * 진행 중(OPEN) 이벤트 하나.
 	 * 위험: 5xx 2% 이상 · p95 2초 이상 · 커서 1분 정지(시작 뒤, 대기 · 재고 있을 때) · Redis 연결 끊김(redis_up = 0 또는 exporter up = 0).
-	 * 주의: 5xx 0.5% 이상 · p95 500ms 이상 · Pod = KEDA 최대.
+	 * 주의: 5xx 1% 이상 · p95 500ms 이상 · Pod = KEDA 최대.
 	 * 순서: 보이는 위험 → 재료 일부가 비었으면 UNKNOWN(위험을 배제할 수 없음) → 주의 → 정상.
 	 * @param started 지금 ≥ 시작 시각(그전에는 커서가 움직이지 않는 게 정상)
 	 */

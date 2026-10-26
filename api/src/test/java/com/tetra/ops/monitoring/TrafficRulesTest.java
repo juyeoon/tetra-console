@@ -31,9 +31,10 @@ class TrafficRulesTest {
 	@Test
 	void eventThresholds() {
 		assertThat(event(signals(1000.0, 0.0, 0.18))).isEqualTo(new Judgment(MonitoringLevel.OK, "정상"));
-		// 5xx: 0.5% 주의, 2% 위험(경계 포함)
-		assertThat(event(signals(1000.0, 4.9, 0.18)).level()).isEqualTo(MonitoringLevel.OK);
-		assertThat(event(signals(1000.0, 5.0, 0.18))).isEqualTo(new Judgment(MonitoringLevel.WARN, "5xx 0.5%"));
+		// 5xx: 1% 주의, 2% 위험(경계 포함, 설계 D-2)
+		assertThat(event(signals(1000.0, 9.9, 0.18)).level()).isEqualTo(MonitoringLevel.OK);
+		assertThat(event(signals(1000.0, 10.0, 0.18))).isEqualTo(new Judgment(MonitoringLevel.WARN, "5xx 1.0%"));
+		assertThat(event(signals(1000.0, 19.9, 0.18)).level()).isEqualTo(MonitoringLevel.WARN);
 		assertThat(event(signals(1000.0, 20.0, 0.18))).isEqualTo(new Judgment(MonitoringLevel.DANGER, "5xx 2.0%"));
 		// p95: 500ms 주의, 2초 위험
 		assertThat(event(signals(1000.0, 0.0, 0.5))).isEqualTo(new Judgment(MonitoringLevel.WARN, "p95 500ms"));
@@ -151,7 +152,8 @@ class TrafficRulesTest {
 
 	@Test
 	void kpiWarnings() {
-		assertThat(TrafficRules.kpiWarnings(0.008, 0.18, 8, 12, 0.38, 0.0, true)).containsExactly("errorRatio");
+		assertThat(TrafficRules.kpiWarnings(0.012, 0.18, 8, 12, 0.38, 0.0, true)).containsExactly("errorRatio");
+		assertThat(TrafficRules.kpiWarnings(0.009, 0.18, 8, 12, 0.38, 0.0, true)).isEmpty();
 		assertThat(TrafficRules.kpiWarnings(0.0, 0.6, 12, 12, 0.85, 1.0, false))
 			.containsExactly("p95", "pods", "redisMemory", "redisRestarts", "redisUp");
 		assertThat(TrafficRules.kpiWarnings(null, null, null, null, null, null, null)).isEmpty();
