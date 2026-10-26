@@ -87,7 +87,7 @@ npm run build      # 타입 체크 + 프로덕션 빌드
 
 ### 상태별 확인 (로컬 seed 기준)
 
-화면 데이터는 모두 API에서 옵니다(대시보드의 클러스터 · 실시간 트래픽 · 테넌트 별 처리 현황만 예시 데이터, 카드에 "예시 데이터" 칩). 로컬 seed(`api/dev-docs/db/local/local_seed.sql`) 기준:
+화면 데이터는 모두 API에서 옵니다. 대시보드의 클러스터 · 실시간 트래픽 · 테넌트 별 처리 현황은 `GET /api/ops/monitoring/overview`(Prometheus, 15초 폴링)라서 로컬에서 값을 보려면 Prometheus가 필요합니다 — 포트 포워드 `pf-prometheus`(localhost:19090)가 열린 상태에서 `api/.env`에 `PROMETHEUS_URL=http://localhost:19090`. 비워 두면 카드는 "–"와 회색 "지연"으로 보입니다. 로컬 seed(`api/dev-docs/db/local/local_seed.sql`) 기준:
 
 - 승인 대기 중(승인/반려 버튼): `1043`(A사). 진행 중: `1044`(진행 결과 탭은 "진행 중"). 반려됨: `1045`
 - 개인키 메일 발송 실패(OPS-03-M1), 집계 완료 · 종료 처리 실패 결과는 seed에 없다 — 필요하면 DB에 직접 상태를 넣어 확인
@@ -110,7 +110,7 @@ npm run build      # 타입 체크 + 프로덕션 빌드
 | 승인 성공 시 피드백 | "별도 안내 없이 모달이 닫힘" | 모달은 닫히고 하단 토스트("승인했습니다") 표시 | 처리 결과 인지용 — 제거 여부 확인 필요 |
 | 이벤트 상세의 상태 로그 | "신청 상태 로그"(신청 상태만) | 섹션 "상태 로그" — 기존 가로 타임라인(점 · 선, 날짜, 단계 이름 + 상태 배지, 설명) 그대로 신청 · 호스팅 · 이벤트 항목을 시각순으로. 단계 이름 앞에 작은 구분 라벨(신청/호스팅/이벤트), 시각 옆에 처리자(운영자 이름 / 테넌트 / 자동 처리). 원인(반려 사유)은 설명 아래 짧게(60자 넘으면 말줄임 + [펼치기]), 실패 계열은 빨강. 항목이 많으면 가로 스크롤(칸 최소 200px, 좁은 화면은 세로). 신청 · 진행 상세 공용. 단계 이름 · 설명 문구는 `pages/events/eventView.ts`의 `STATUS_LOG_TEXT` | 호스팅 배포 실패 원인(예: EventAppSyncTimedOut)을 운영자가 Console에서 봐야 함 |
 | 승인 · 반려 실패 | 정의 없음 | 409(이미 처리됨 · 호스팅 기간 지남 · 환경 준비 전 · 다른 승인 처리 중)는 모달 안에 서버 문구, 이미 처리됨이면 상세를 다시 받아 현재 상태 표시. 승인 전 검사 위반(409 APPLICATION_DATA_INVALID)은 서버 문구 아래 사유 목록(호스팅 시작 시각 · 이름 · 결과 주소 · 동시 이벤트 상한). 반려 사유 400은 입력란 오류 | 다른 운영자가 먼저 처리한 경우, WF1-2가 승인 뒤 입력 검사로 실패하지 않게 미리 막음(3-13) |
-| 대시보드 클러스터 · 실시간 트래픽 · 테넌트 별 처리 현황 | 실제 값 | 예시 데이터 + "예시 데이터" 칩 | API 없음(모니터링 연동 전) — 실제 숫자와 섞여 오해하지 않게 |
+| 대시보드 클러스터 · 실시간 트래픽 · 테넌트 별 처리 현황 | 실제 값 | Prometheus 실데이터(`GET /monitoring/overview`, 15초 폴링 — 탭이 숨겨지면 멈추고 돌아오면 즉시 1회). 카드 제목 옆 "자동 갱신 · 15초 · HH:mm:ss"(마지막 갱신), 지난 값이면 회색 "지연". 클러스터: CPU · 메모리 %, 풀별 노드 수(OPEN 이벤트 0건이면 "(진행 중 이벤트 없음)" — 노드 수가 아니라 응답 tenants[].events로 판단), api · redis Pod "Ready / 전체". 실시간 트래픽: 왼쪽 "서버 처리 요청 수(초당)" 합계 + 테넌트별 현재 값, 오른쪽 최근 30분 선(범례 = 테넌트 · 이벤트, 이벤트 시작 세로 점선), 시리즈가 없으면 OPEN 0건은 "진행 중 이벤트 없음", OPEN이 있으면 "아직 요청이 없는 진행 중 이벤트" + "테넌트명 · 이벤트명" 목록. 테넌트 별 처리 현황: "상위 2개" 대신 OPEN 이벤트 테넌트 전부, 네임스페이스 원 안에 api Pod "ready/max"(max를 모르면 ready만) + "Pod", 네임스페이스 이름은 원 툴팁, 오른쪽 "처리 완료" · "실패"(입장 열림부터 누적, ⓘ 툴팁), "대기" 없음. 점 개수는 rps 로그 비례(상한 8), 완료 · 실패 레인은 실시간 5xx 비율로 나눔(5xx가 있으면 실패 점 최소 1). 값이 없으면 "–" | 10-24 · 10-26 회의 결정. 화면 문구 · 계산은 `pages/dashboard/monitoringView.ts` |
 | 신청 내용(OPS-03-2·04-2) | Tetra Portal 이벤트 신청 4단계(UI-TP-10) 「신청 요약」 재사용 | 같은 순서 · 라벨 · 표기의 항목 10개(쿠폰 타입이 아니면 발급 쿠폰 행 없음) + [이벤트 미리보기](Portal `ScreenPreview`를 옮김, 위치 · 테마만). 공지 · 이전/신청 버튼 · 서버 오류 Alert는 뺌. 대표 배너는 원본 파일명 대신 Portal 상세(UI-TP-06)처럼 "업로드 확인 중" / "등록되지 않음" / "등록 완료 (banner.png)"(저장 경로 파일명). 미리보기 주소창은 승인 후 할당 도메인, 승인 전 `event.tetra-shop.com`. 신청 · 진행 상세가 같은 `ApplicationSummary` | DB에 원본 파일명이 없음(`TODO(미정)`, ERD 변경 필요). 운영자가 테넌트가 제출 직전에 본 요약을 그대로 봐야 함 |
 | 리포트(OPS-09) | Tetra Portal 리포트(UI-TP-12) 재사용 | Portal 구조("최근 생성된 리포트" 표 — 리포트명 · 기간 · 생성일 · [다운로드] · [이메일 전송])를 Console `TableCard`로. 다운로드는 presigned URL로 바로 이동(진행 결과 CSV와 같은 방식) + 토스트, 이메일은 로그인한 운영자에게 · 성공/실패 토스트(503 `MAIL_SEND_FAILED`는 서버 문구). 빈 목록 "생성된 리포트가 없습니다". Portal의 "매월 자동 생성" 안내는 뺌 | 리포트 생성 기능이 없음(범위 밖) — 행은 다른 곳에서 넣는다 |
 | 알림센터(OPS-08) | Tetra Portal 알림센터(UI-TP-13) 재사용 | Portal 구조(탭 5종 · 건수 · 내용 검색 · 최신순 리스트 · 안읽음 점 · 클릭 시 읽음)를 Console 컴포넌트로 다시 만듦. 추가: 항목마다 테넌트명(없으면 -), [모두 읽음] 버튼(안읽음 0이면 비활성). Slack 영역은 "연동 예정" 칩만(채널 상자 없음). 읽음은 화면을 먼저 바꾸고 실패하면 되돌린 뒤 토스트. 탭 건수는 검색어와 무관하게 전체 기준. 우선순위 색은 대시보드 최근 알림 아이콘과 같은 `utils/status.ts`의 `priorityMeta` | 운영 콘솔은 모든 알림을 종류 무관하게 보이고 테넌트 구분이 필요. 읽음은 운영자 공통(한 명이 읽으면 모두에게 읽음) |
@@ -121,7 +121,7 @@ npm run build      # 타입 체크 + 프로덕션 빌드
 
 1. **디자인** — Canva 팔레트 + Snow 타이포·간격, 글자 125%, CSS 토큰 모듈화, KPI 강조(A안 확정), 상단바 통일 반영 완료. 스타일 가이드 갱신 완료
 2. **검증** — v0.5 반영 후 승인(메일 성공·실패)·반려·테넌트 정보 수정·등록(중복 확인, 메일 성공·실패)·비밀번호 8자 규칙을 실제 조작으로 확인 완료. 모바일 폭 전 화면 확인은 남음
-3. **API 연동** — 로그인 · 테넌트 · 이벤트 신청/진행 · 승인/반려 · 진행 결과 · 발급 이력 CSV · 대시보드(테넌트 수 · 진행 중 이벤트 · 최근 알림) 연결 완료, 목 저장소(AppDataContext) 삭제. 알림센터(목록 · 읽음 · 모두 읽음) · 리포트(목록 · 다운로드 · 이메일 전송) · 신청 내용(신청 요약 · 미리보기) 연결 완료. 남은 것: 대시보드 클러스터 · 트래픽 · 테넌트 별 처리 현황(API 없음, 예시 데이터), 비밀번호 설정 메일 재발송(OPS-07, API 없음). 테넌트 비밀번호 설정 화면(OPS-07-2)은 Portal이 맡아 Console에서 삭제(3-19, 메일 링크도 Portal 도메인)
+3. **API 연동** — 로그인 · 테넌트 · 이벤트 신청/진행 · 승인/반려 · 진행 결과 · 발급 이력 CSV · 대시보드(테넌트 수 · 진행 중 이벤트 · 최근 알림) 연결 완료, 목 저장소(AppDataContext) 삭제. 알림센터(목록 · 읽음 · 모두 읽음) · 리포트(목록 · 다운로드 · 이메일 전송) · 신청 내용(신청 요약 · 미리보기) 연결 완료. 대시보드 클러스터 · 실시간 트래픽 · 테넌트 별 처리 현황(Prometheus, `GET /monitoring/overview`) 연결 완료. 남은 것: 비밀번호 설정 메일 재발송(OPS-07, API 없음). 테넌트 비밀번호 설정 화면(OPS-07-2)은 Portal이 맡아 Console에서 삭제(3-19, 메일 링크도 Portal 도메인)
 4. **미확정 항목 확정 대기** — 트래픽 모니터링(OPS-05), 비밀번호 문자 조합 규칙, Portal 로그인 URL, 리포트 생성 주체 · 형식, 배너 원본 파일명 저장 여부
 
 ## 구조
@@ -134,10 +134,9 @@ src/
     layout/       # 사이드바, 페이지 헤더, 사용자 메뉴
     common/       # 상태칩, 정보목록, 통계카드, 테이블 카드 등
   pages/          # 화면별 페이지
-  api/            # API 호출(client · auth · tenants · events · dashboard · notifications · reports)과 응답 타입(types.ts)
-  hooks/          # useApiQuery(불러오기 · 로딩 · 오류 · 다시 시도)
+  api/            # API 호출(client · auth · tenants · events · dashboard · monitoring · notifications · reports)과 응답 타입(types.ts)
+  hooks/          # useApiQuery(불러오기 · 로딩 · 오류 · 다시 시도), usePolling(대시보드 모니터링 15초 폴링)
   store/          # AuthContext(로그인 상태), Toast
-  mocks/          # 대시보드 예시 데이터(API 없는 카드만)
   types/          # 화면 도메인 타입
   utils/          # 상태 라벨/톤, 일시(datetime · KST), 포맷, 검증, API 오류 → 폼(formErrors)
 ```
@@ -152,11 +151,9 @@ src/
 - 불러오기 `src/hooks/useApiQuery.ts`: 화면에 들어올 때 부르고 `loading` · `error` · `reload` · `setData`(수정 응답 반영). 표시는 `components/common/QueryStatus.tsx`(스피너 / 서버 문구 + 다시 시도)
 - 폼 오류 `utils/formErrors.ts`: 400 `fields` → 입력란, 409 `EMAIL_DUPLICATED` → email 입력란, 그 밖 → 폼 위 Alert
 
-- 응답 → 화면 모델(순수 함수, node 테스트): 이벤트 `pages/events/eventView.ts`(상태 로그 `statusLogs` → 가로 타임라인 `StatusTimeline`, 반려 사유 · 처리 일시는 그중 신청(APPLICATION) 로그에서, 결과 state `IN_PROGRESS`는 지금 시각과 오픈 시각으로 오픈 전/진행 중), 승인 · 반려 실패 `pages/events/decision.ts`, 테넌트 `pages/tenants/tenantView.ts`, 대시보드 알림 `pages/dashboard/dashboardView.ts`, 알림센터 필터 · 건수 · 검색 · 읽음 `pages/logs/notificationView.ts`, 리포트 표 · 토스트 문구 `pages/logs/reportView.ts`, 신청 요약 항목 · 화면 설정 요약 `pages/events/applicationSummaryView.ts`
+- 응답 → 화면 모델(순수 함수, node 테스트): 이벤트 `pages/events/eventView.ts`(상태 로그 `statusLogs` → 가로 타임라인 `StatusTimeline`, 반려 사유 · 처리 일시는 그중 신청(APPLICATION) 로그에서, 결과 state `IN_PROGRESS`는 지금 시각과 오픈 시각으로 오픈 전/진행 중), 승인 · 반려 실패 `pages/events/decision.ts`, 테넌트 `pages/tenants/tenantView.ts`, 대시보드 알림 `pages/dashboard/dashboardView.ts`, 대시보드 모니터링 카드(클러스터 · 트래픽 · 테넌트 흐름 점 개수) `pages/dashboard/monitoringView.ts`, 알림센터 필터 · 건수 · 검색 · 읽음 `pages/logs/notificationView.ts`, 리포트 표 · 토스트 문구 `pages/logs/reportView.ts`, 신청 요약 항목 · 화면 설정 요약 `pages/events/applicationSummaryView.ts`
 
-`TODO:` 주석 위치:
-
-- 실시간 트래픽 `pages/dashboard/LiveTrafficCard.tsx` (예시 데이터)
+`TODO:` 주석 위치: 현재 없음
 
 ## 디자인 시스템
 

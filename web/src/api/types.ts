@@ -287,6 +287,59 @@ export interface DashboardResponse {
   }[];
 }
 
+// ---------------------------------------------------------------- 홈 모니터링 (MonitoringController)
+
+export interface MonitoringEventRef {
+  eventId: number;
+  name: string;
+  startAt: string;
+}
+
+export interface MonitoringPodCount {
+  ready: number | null;
+  total: number | null;
+}
+
+/**
+ * GET /monitoring/overview — 값은 Prometheus(15초 캐시). 시리즈가 없는 수치는 null.
+ * stale이면 지난 값(Prometheus 실패)이거나 값 없음(asOf null, 미설정).
+ */
+export interface MonitoringOverviewResponse {
+  asOf: string | null;
+  stale: boolean;
+  cluster: {
+    /** 0~1 */
+    cpuUsage: number | null;
+    memoryUsage: number | null;
+    /** 풀별 Ready 노드 수 */
+    nodes: { app: number | null; redis: number | null; system: number | null };
+    pods: { api: MonitoringPodCount; redis: MonitoringPodCount };
+  };
+  traffic: {
+    rangeMinutes: number;
+    stepSeconds: number;
+    /** 시리즈가 없으면 0, Prometheus를 못 읽었으면 null */
+    totalRps: number | null;
+    /** points = [epoch 밀리초, 초당 요청 수 | null], 모든 시리즈가 같은 시각 격자 */
+    series: { tenantId: string; tenantName: string | null; events: MonitoringEventRef[]; points: [number, number | null][] }[];
+  };
+  /** OPEN 이벤트가 있는 테넌트 전부 */
+  tenants: {
+    tenantId: string;
+    tenantName: string | null;
+    namespace: string;
+    events: MonitoringEventRef[];
+    rps: number | null;
+    /** 지금 5xx 초당 요청 수 — 완료 · 실패 점 분배용 */
+    errorRps: number | null;
+    pods: { ready: number | null; max: number | null };
+    /** since(입장 열림)부터 누적 */
+    completed: number | null;
+    failed: number | null;
+    since: string;
+  }[];
+}
+
 // ---------------------------------------------------------------- 알림센터 (NotificationController)
 
 /** GET /notifications 항목. 테넌트 · 이벤트와 무관한 알림이면 tenantId · tenantName · eventId가 null */

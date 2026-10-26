@@ -31,6 +31,14 @@ public interface EventRegistryRepository extends JpaRepository<EventRegistry, Lo
 			 order by r.startAt desc, r.eventId desc""")
 	List<WithTenantName> findApprovedWithTenantName();
 
+	/** 홈 모니터링: 진행 중(OPEN) 이벤트와 테넌트명. 홈 "현재 진행 중인 이벤트"와 같은 기준. */
+	@Query("""
+			select new com.tetra.ops.domain.platform.EventRegistryRepository$WithTenantName(r, t.name)
+			  from EventRegistry r join Tenant t on t.tenantId = r.tenantId
+			 where r.eventStatus = com.tetra.ops.domain.EventStatus.OPEN
+			 order by r.startAt, r.eventId""")
+	List<WithTenantName> findOpenWithTenantName();
+
 	/** OPS-06-2: 테넌트별, 신청시각 내림차순 (idx_registry_tenant_applied). */
 	List<EventRegistry> findByTenantIdOrderByAppliedAtDescEventIdDesc(String tenantId);
 

@@ -6,18 +6,20 @@ import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import WarningAmberRoundedIcon from '@mui/icons-material/WarningAmberRounded';
 import PageHeader from '@/components/layout/PageHeader';
 import { QueryError, QueryLoading } from '@/components/common/QueryStatus';
-import SampleDataChip from '@/components/common/SampleDataChip';
 import SectionTitle from '@/components/common/SectionTitle';
 import StatCard from '@/components/common/StatCard';
 import { fetchDashboard } from '@/api/dashboard';
+import { fetchMonitoringOverview } from '@/api/monitoring';
 import type { NotificationPriority } from '@/api/types';
 import { useApiQuery } from '@/hooks/useApiQuery';
-import { mockDashboard } from '@/mocks/dashboard';
+import { usePolling } from '@/hooks/usePolling';
 import { ink, layout, radius, size, text, tones } from '@/theme/theme';
 import { formatDateTime } from '@/utils/datetime';
 import { priorityMeta } from '@/utils/status';
 import { alertView } from './dashboardView';
+import ClusterCard from './ClusterCard';
 import LiveTrafficCard from './LiveTrafficCard';
+import { clusterView, POLL_MS, tenantFlowViews, trafficView, updatedView } from './monitoringView';
 import TenantFlowCard from './TenantFlowCard';
 
 const BREADCRUMBS = ['대시보드 (홈)'];
@@ -29,10 +31,18 @@ const alertIcon: Record<NotificationPriority, ReactNode> = {
   INFO: <InfoOutlinedIcon />,
 };
 
-/** OPS-02 대시보드 — 테넌트 수 · 진행 중 이벤트 · 최근 알림은 API, 클러스터 · 트래픽 · 상위 테넌트는 예시 데이터(API 없음) */
+/**
+ * OPS-02 대시보드 — 테넌트 수 · 진행 중 이벤트 · 최근 알림은 GET /dashboard(들어올 때 한 번),
+ * 클러스터 · 실시간 트래픽 · 테넌트 별 처리 현황은 GET /monitoring/overview(15초 폴링, 탭이 숨겨지면 멈춤)
+ */
 export default function DashboardPage() {
   const query = useApiQuery((signal) => fetchDashboard(signal), []);
+  const monitoring = usePolling((signal) => fetchMonitoringOverview(signal), POLL_MS);
   const alerts = useMemo(() => (query.data ? query.data.recentNotifications.map((n) => alertView(n, new Date())) : []), [query.data]);
+  const updated = updatedView(monitoring.data, monitoring.failed);
+  const cluster = useMemo(() => clusterView(monitoring.data), [monitoring.data]);
+  const traffic = useMemo(() => trafficView(monitoring.data), [monitoring.data]);
+  const flows = useMemo(() => tenantFlowViews(monitoring.data), [monitoring.data]);
 
   if (!query.data) {
     return (
@@ -44,7 +54,6 @@ export default function DashboardPage() {
   }
 
   const { tenants, openEvents } = query.data;
-  const cluster = mockDashboard.cluster;
   return (
     <>
       <PageHeader breadcrumbs={BREADCRUMBS} />
@@ -64,21 +73,11 @@ export default function DashboardPage() {
           }
           value={`${openEvents.count}건`}
         />
-        <StatCard
-          fill="peri"
-          label={
-            <>
-              클러스터 사용량 (전체)
-              <SampleDataChip />
-            </>
-          }
-          value={`CPU ${cluster.cpu}% · Mem ${cluster.mem}%`}
-          sub={`노드 ${cluster.nodes}/${cluster.maxNodes} · ${cluster.autoscale}`}
-        />
+        <ClusterCard view={cluster} delayed={updated.delayed} />
       </Box>
 
       <Box sx={{ mb: layout.cardGap }}>
-        <LiveTrafficCard />
+        <LiveTrafficCard view={traffic} updated={updated} />
       </Box>
 
       <Box sx={{ display: 'grid', gap: layout.cardGap, gridTemplateColumns: { xs: '1fr', lg: 'minmax(320px, 28%) 1fr' } }}>
@@ -122,7 +121,7 @@ export default function DashboardPage() {
             )}
           </Stack>
         </Card>
-        <TenantFlowCard />
+        <TenantFlowCard rows={flows} updated={updated} />
       </Box>
     </>
   );
