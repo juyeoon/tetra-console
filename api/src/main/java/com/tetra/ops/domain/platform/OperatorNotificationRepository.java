@@ -1,5 +1,6 @@
 package com.tetra.ops.domain.platform;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -22,6 +23,14 @@ public interface OperatorNotificationRepository extends JpaRepository<OperatorNo
 			  from OperatorNotification n left join Tenant t on t.tenantId = n.tenantId
 			 order by n.occurredAt desc, n.notificationId desc""")
 	List<WithTenantName> findAllWithTenantName();
+
+	/** OPS-05 최근 자동화 실패 · 긴급 알림: since 이후 URGENT, 최신순 (idx_operator_notif_priority) */
+	@Query("""
+			select new com.tetra.ops.domain.platform.OperatorNotificationRepository$WithTenantName(n, t.name)
+			  from OperatorNotification n left join Tenant t on t.tenantId = n.tenantId
+			 where n.priority = 'URGENT' and n.occurredAt >= :since
+			 order by n.occurredAt desc, n.notificationId desc""")
+	List<WithTenantName> findUrgentSince(@Param("since") LocalDateTime since);
 
 	/** 읽음은 운영자 공통(is_read). 이미 읽은 알림이면 0행. */
 	@Modifying(flushAutomatically = true, clearAutomatically = true)

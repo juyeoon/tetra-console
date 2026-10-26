@@ -1,6 +1,8 @@
 package com.tetra.ops.monitoring;
 
 import java.net.http.HttpClient;
+import java.net.http.HttpConnectTimeoutException;
+import java.net.http.HttpTimeoutException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -39,11 +41,26 @@ public class PrometheusClient {
 	public record Point(long epochMillis, Double value) {
 	}
 
-	/** 응답 실패 · 형식 오류 · 미설정. 메시지는 로그에 그대로 써도 되는 짧은 원인만 */
+	/**
+	 * 응답 실패 · 형식 오류 · 미설정. 메시지는 로그에 그대로 써도 되는 짧은 원인만.
+	 * serverFailure: Prometheus 자체 문제(연결 거부 · 연결 시간 초과 · 5xx · 미설정 · 갱신 상한 초과)면 true,
+	 * 그 쿼리만의 문제(4xx · 읽기 시간 초과 · 형식 오류)면 false. 홈은 구분하지 않고 둘 다 갱신 실패로 본다(OPS-05 PromBatch만 구분).
+	 */
 	public static class PrometheusException extends RuntimeException {
 
+		private final boolean serverFailure;
+
 		public PrometheusException(String message) {
+			this(message, true);
+		}
+
+		public PrometheusException(String message, boolean serverFailure) {
 			super(message);
+			this.serverFailure = serverFailure;
+		}
+
+		public boolean serverFailure() {
+			return serverFailure;
 		}
 
 	}
@@ -111,24 +128,26 @@ public class PrometheusClient {
 			body = restClient.get().uri(uri, variables).retrieve().body(String.class);
 		}
 		catch (RestClientResponseException ex) {
-			// 응답 본문(오류 문구에 쿼리가 들어 있음)은 쓰지 않는다
-			throw new PrometheusException("HTTP " + ex.getStatusCode().value());
+			// 응답 본문(오류 문구에 쿼리가 들어 있음)은 쓰지 않는다. 4xx(잘못된 쿼리 · 실행 오류)는 그 쿼리만의 문제
+			throw new PrometheusException("HTTP " + ex.getStatusCode().value(), ex.getStatusCode().is5xxServerError());
 		}
 		catch (RestClientException ex) {
 			Throwable cause = ex.getMostSpecificCause();
-			throw new PrometheusException(cause.getClass().getSimpleName());
+			// 읽기 시간 초과는 그 쿼리만(무거운 쿼리), 연결 실패 · 연결 시간 초과는 서버 문제
+			boolean readTimeout = cause instanceof HttpTimeoutException && !(cause instanceof HttpConnectTimeoutException);
+			throw new PrometheusException(cause.getClass().getSimpleName(), !readTimeout);
 		}
 		JsonNode root;
 		try {
 			root = jsonMapper.readTree(body == null ? "" : body);
 		}
 		catch (JacksonException ex) {
-			throw new PrometheusException("응답 형식 오류");
+			throw new PrometheusException("응답 형식 오류", false);
 		}
 		JsonNode data = root.path("data");
 		if (!"success".equals(root.path("status").asString(null))
 				|| !expectedType.equals(data.path("resultType").asString(null)) || !data.path("result").isArray()) {
-			throw new PrometheusException("응답 형식 오류");
+			throw new PrometheusException("응답 형식 오류", false);
 		}
 		return data.path("result");
 	}

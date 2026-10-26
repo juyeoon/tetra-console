@@ -39,6 +39,11 @@ dependencies {
 	implementation 'software.amazon.awssdk:sfn'
 	implementation 'software.amazon.awssdk:sesv2'
 	implementation 'software.amazon.awssdk:s3'
+	// OPS-05 트래픽 모니터링(읽기 전용): ALB · RDS · SQS DLQ 지표, ALB · 대상 그룹 조회, RDS 상태, ECS 태스크 수. 버전은 위 BOM
+	implementation 'software.amazon.awssdk:cloudwatch'
+	implementation 'software.amazon.awssdk:elasticloadbalancingv2'
+	implementation 'software.amazon.awssdk:rds'
+	implementation 'software.amazon.awssdk:ecs'
 	// 테넌트 등록 때 t_{tenant_id} 스키마를 만든다(TenantSchemaCreator). 버전은 Boot BOM이 관리.
 	// spring-boot-flyway(자동 설정)는 넣지 않는다 — 기동 때 앱 계정으로 tetra_platform에 마이그레이션하려 들기 때문
 	implementation 'org.flywaydb:flyway-core'

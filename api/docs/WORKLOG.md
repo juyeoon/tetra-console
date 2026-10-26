@@ -227,3 +227,16 @@
 ## 2026-10-26 KST — 실시간 트래픽 빈 상태 문구 변경 (web)
 - 한 일: OPEN 있음 + 시리즈 없음 문구 "요청 데이터 없음" → "아직 요청이 없는 진행 중 이벤트"(NO_DATA_TEXT), 테스트 기대값 · README 같이
 - 파일: ../web/src/pages/dashboard/{monitoringView.ts, monitoringView.test.ts}, ../web/README.md
+
+## 2026-10-26 KST — OPS-05 트래픽 모니터링 1단계(API)
+- 한 일: GET /api/ops/monitoring/platform · /events · /events/{eventId}?range= (명세 docs/ops05). 출처별 캐시(Prometheus · DB 15초, AWS 60초) · single-flight · stale을 RefreshCache로 뽑아 홈 MonitoringService도 같이 씀(동작 같음). Prometheus 쿼리는 TrafficQueries(홈 PromQueries 재사용) + PromBatch 4개 병렬. AWS는 AwsMonitoringGateway(CloudWatch GetMetricData · ELB · RDS · ECS, SDK 4개 모듈 추가 — BOM 버전). 판정(상태 요약 · 이벤트 level · KPI warn)은 TrafficRules, 구역 상태 EventPhase, 진행 단계 TrafficSteps, 범위 TrafficWindow. DLQ(MONITORING_DLQ_NAMES, 점 없음 = 0, 1 이상이면 자동화 위험 + 큐 이름)
+- 결정 반영: 종료 = hosting_end_at(WF4), WF2-2는 입장 직후 OPEN(준비 완료 = OPEN 로그, 걸린 시간 = Pod 시작 → Ready), T−90~T−60은 "오늘 예정", 노드는 node_uname_info 조인(pf-prometheus 확인), 보존 7일
+- 테스트: TrafficRulesTest · TrafficQueriesTest · TrafficAwsCollectorTest · PromBatchTest · TrafficMonitoringApiTest(가짜 Prometheus + AWS 목 + Testcontainers) · TrafficMonitoringUnconfiguredApiTest. FakePrometheus가 요청을 동시에 받게 바꿈
+- 파일: build.gradle, application.yml, .env.example, CLAUDE.md(§1 · §6 · §7.17 · §10), config/{AwsConfig, TetraProperties}.java, domain/platform/{EventRegistryRepository, OperatorNotificationRepository}.java, domain/tenant/EventStatusLogRepository.java, monitoring/{RefreshCache, KeyedRefreshCache, PromBatch, PromValues, MonitoringService, TrafficQueries, TrafficRules, TrafficSteps, TrafficWindow, EventPhase, MonitoringLevel, MonitoringSource, MonitoredEvent, FailureStep, TrafficCatalog, TrafficEventReader, TrafficPlatformCollector, TrafficEventCollector, TrafficAwsCollector, AwsMonitoringGateway, SdkAwsMonitoringGateway, AwsMonitoringException, TrafficMonitoringService, TrafficMonitoringController, Traffic*Response}.java, test monitoring/*, support/FakePrometheus.java
+- 남은 것: TODO(미정) 노드 인스턴스 타입(kube-state-metrics 허용 목록), 대상 그룹 태그 형식(첫 이벤트 때), 후보 이벤트 30일 기준, p95 주의 기준(부하 시험 뒤). 2단계 화면
+
+## 2026-10-26 KST — OPS-05 1단계 리뷰 반영(Prometheus 실패 구분)
+- 한 일: PrometheusException에 serverFailure(연결 거부 · 연결 시간 초과 · 5xx · 미설정 · 갱신 상한 초과 = true, 4xx · 읽기 시간 초과 · 형식 오류 = false). PromBatch는 서버 문제만 갱신 전체 실패(마지막 값 + stale), 쿼리 하나의 오류는 그 항목만 비우고 WARN 한 줄(쿼리 이름 · 짧은 원인, 원문 없음). 비운 항목은 0으로 바꾸지 않음(Pod 개수 · 5xx 0 규칙은 쿼리 성공 때만), 판정은 보이는 위험이 없으면 UNKNOWN(EventSignals.complete, 클러스터 재료 null). 홈은 그대로(구분 안 함)
+- errors.eventTarget은 응답에만, 화면 그래프에는 안 씀(스키마 설명 · CLAUDE.md §7.17)
+- 테스트: PromBatchTest(서버 5xx · 쿼리 하나 5xx · 연결 거부 · 쿼리 400 · 읽기 시간 초과 · 상한 초과, 로그에 원문 없음), TrafficRulesTest(불완전 재료), TrafficMonitoringApiTest(쿼리 오류 시 stale 아님 + null + UNKNOWN, 이벤트 Prometheus 다운). FakePrometheus에 failQuery · delayQuery. 전체 286개 통과(JDK 21)
+- 파일: monitoring/{PrometheusClient, PromBatch, TrafficRules, TrafficPlatformCollector, TrafficEventCollector, TrafficMonitoringService, TrafficEventResponse}.java, test monitoring/{PromBatchTest, TrafficRulesTest, TrafficMonitoringApiTest}.java, support/FakePrometheus.java, CLAUDE.md

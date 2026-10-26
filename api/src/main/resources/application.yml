@@ -79,13 +79,29 @@ tetra:
   approve:
     max-concurrent-events: ${MAX_CONCURRENT_EVENTS:3}
     lock-timeout-seconds: 5
-  # 홈 모니터링 카드(클러스터 · 실시간 트래픽 · 테넌트 별 처리 현황). PROMETHEUS_URL이 비어 있으면 기동은 하고 모니터링만 stale
+  # 홈 모니터링 카드(클러스터 · 실시간 트래픽 · 테넌트 별 처리 현황) · OPS-05 트래픽 모니터링.
+  # PROMETHEUS_URL이 비어 있으면 기동은 하고 모니터링만 stale
   monitoring:
     prometheus-url: ${PROMETHEUS_URL:}
     connect-timeout: ${PROMETHEUS_CONNECT_TIMEOUT:PT2S}
     read-timeout: ${PROMETHEUS_READ_TIMEOUT:PT3S}
     cache-ttl: ${MONITORING_CACHE_TTL:PT15S}
     refresh-timeout: ${MONITORING_REFRESH_TIMEOUT:PT8S}
+    # OPS-05 AWS 지표(읽기 전용). 모두 선택 — 비어 있는 값의 항목만 null
+    aws:
+      cache-ttl: ${MONITORING_AWS_CACHE_TTL:PT60S}
+      refresh-timeout: ${MONITORING_AWS_REFRESH_TIMEOUT:PT10S}
+      issuance-alb-name: ${MONITORING_ISSUANCE_ALB_NAME:}
+      console-alb: ${MONITORING_CONSOLE_ALB:}
+      portal-alb: ${MONITORING_PORTAL_ALB:}
+      console-tg: ${MONITORING_CONSOLE_TG:}
+      portal-tg: ${MONITORING_PORTAL_TG:}
+      console-tg-arn: ${MONITORING_CONSOLE_TG_ARN:}
+      portal-tg-arn: ${MONITORING_PORTAL_TG_ARN:}
+      rds-id: ${MONITORING_RDS_ID:}
+      ecs-cluster: ${MONITORING_ECS_CLUSTER:}
+      ecs-services: ${MONITORING_ECS_SERVICES:}
+      dlq-names: ${MONITORING_DLQ_NAMES:}
   auth:
     jwt-secret: ${OPS_JWT_SECRET}
   password-link:

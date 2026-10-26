@@ -9,6 +9,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.function.Function;
 
 import com.sun.net.httpserver.HttpExchange;
@@ -31,6 +33,9 @@ public final class FakePrometheus implements AutoCloseable {
 
 	private final HttpServer server;
 
+	/** 요청을 동시에 받는다(OPS-05 병렬 조회 확인) */
+	private final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
+
 	private final Map<String, Function<Request, String>> responses = new ConcurrentHashMap<>();
 
 	private final Map<String, String> prefixResponses = new ConcurrentHashMap<>();
@@ -41,6 +46,10 @@ public final class FakePrometheus implements AutoCloseable {
 
 	private volatile long delayMillis;
 
+	private final Map<String, Integer> queryFailures = new ConcurrentHashMap<>();
+
+	private final Map<String, Long> queryDelays = new ConcurrentHashMap<>();
+
 	public FakePrometheus() {
 		try {
 			server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
@@ -49,6 +58,7 @@ public final class FakePrometheus implements AutoCloseable {
 			throw new IllegalStateException(ex);
 		}
 		server.createContext("/", this::handle);
+		server.setExecutor(executor);
 		server.start();
 	}
 
@@ -81,6 +91,18 @@ public final class FakePrometheus implements AutoCloseable {
 		this.delayMillis = millis;
 	}
 
+	/** 이 쿼리만 이 상태 코드(OPS-05 쿼리 하나의 오류) */
+	public FakePrometheus failQuery(String query, int status) {
+		queryFailures.put(query, status);
+		return this;
+	}
+
+	/** 이 쿼리만 늦게 응답(읽기 시간 초과) */
+	public FakePrometheus delayQuery(String query, long millis) {
+		queryDelays.put(query, millis);
+		return this;
+	}
+
 	public List<Request> requests() {
 		return requests;
 	}
@@ -91,14 +113,17 @@ public final class FakePrometheus implements AutoCloseable {
 		requests.clear();
 		failStatus = 0;
 		delayMillis = 0;
+		queryFailures.clear();
+		queryDelays.clear();
 	}
 
 	private void handle(HttpExchange exchange) throws IOException {
 		Request request = new Request(exchange.getRequestURI().getPath(), params(exchange.getRequestURI().getRawQuery()));
 		requests.add(request);
-		if (delayMillis > 0) {
+		long delay = delayMillis + queryDelays.getOrDefault(String.valueOf(request.query()), 0L);
+		if (delay > 0) {
 			try {
-				Thread.sleep(delayMillis);
+				Thread.sleep(delay);
 			}
 			catch (InterruptedException ex) {
 				Thread.currentThread().interrupt();
@@ -106,8 +131,9 @@ public final class FakePrometheus implements AutoCloseable {
 		}
 		int status = 200;
 		String body;
-		if (failStatus != 0) {
-			status = failStatus;
+		int fail = failStatus != 0 ? failStatus : queryFailures.getOrDefault(String.valueOf(request.query()), 0);
+		if (fail != 0) {
+			status = fail;
 			body = "{\"status\":\"error\",\"error\":\"bad query " + request.query() + "\"}";
 		}
 		else {
@@ -153,6 +179,7 @@ public final class FakePrometheus implements AutoCloseable {
 	@Override
 	public void close() {
 		server.stop(0);
+		executor.shutdownNow();
 	}
 
 }
