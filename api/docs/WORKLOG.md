@@ -240,3 +240,16 @@
 - errors.eventTarget은 응답에만, 화면 그래프에는 안 씀(스키마 설명 · CLAUDE.md §7.17)
 - 테스트: PromBatchTest(서버 5xx · 쿼리 하나 5xx · 연결 거부 · 쿼리 400 · 읽기 시간 초과 · 상한 초과, 로그에 원문 없음), TrafficRulesTest(불완전 재료), TrafficMonitoringApiTest(쿼리 오류 시 stale 아님 + null + UNKNOWN, 이벤트 Prometheus 다운). FakePrometheus에 failQuery · delayQuery. 전체 286개 통과(JDK 21)
 - 파일: monitoring/{PrometheusClient, PromBatch, TrafficRules, TrafficPlatformCollector, TrafficEventCollector, TrafficMonitoringService, TrafficEventResponse}.java, test monitoring/{PromBatchTest, TrafficRulesTest, TrafficMonitoringApiTest}.java, support/FakePrometheus.java, CLAUDE.md
+
+## 2026-10-26 KST — OPS-05 트래픽 모니터링 2단계(화면, web)
+- 한 일: /monitoring/traffic placeholder를 실데이터 화면으로. GET /monitoring/platform · /events · /events/{id}?range= 15초 폴링(종료 이벤트는 한 번만). 상태 요약 4칸 · 노드(막대 70~80% 주황 · 80%↑ 빨강 · 80% 점선, 최근 10분 점선 테두리, 타입 null이면 툴팁 생략) · 플랫폼 · 다가오는 이벤트 · 이벤트 구역(드롭다운 기본 = 서버 defaultEventId, 직접 고르면 ?eventId= 유지 · 진행 단계 7개 · 구역 상태별 표시 · KPI · 그래프 7개 x-charts) · 최근 자동화 실패. 에러 그래프는 앱 5xx + ALB 5xx(eventTarget 안 씀), 지연 주의선 500ms (초안), 이벤트 그래프 남색 · 연보라만. 기준선이 값보다 위면 축을 올려 보이게. usePolling에 key · enabled · stopWhen 옵션(대시보드 호출은 그대로)
+- 테스트: trafficMonitoringView.test.ts 28개(상태별 표시, "–", 막대 색 경계, 선택 유지, 그래프 변환). web 138개 통과, tsc · build 통과. 로컬 API(pf-prometheus) + vite로 화면 캡처(실데이터 1장, 상태별 목 3장)
+- 파일: ../web/src/api/{types.ts, monitoring.ts}, ../web/src/hooks/usePolling.ts, ../web/src/pages/monitoring/{TrafficMonitoringPage, StatusSummary, NodesCard, PlatformCards, EventSection, StepTimeline, KpiPanels, MetricChart, FailuresCard}.tsx · {trafficMonitoringView.ts, trafficMonitoringView.test.ts}, ../web/README.md, ../web/tsconfig.json(사람이 수정, 포함)
+
+## 2026-10-26 KST — OPS-05 화면 리뷰 반영(web · api)
+- 5xx 기준을 설계 D-2(주의 1% · 위험 2%)로 통일: 서버 TrafficRules.ERROR_RATIO_WARN 0.005 → 0.01(판정 · kpi.warn · 상태 요약), 화면 trafficMonitoringView의 ERROR_RATIO_WARN · ERROR_RATIO_DANGER · P95_WARN_MS 상수 하나에서 KPI 보조 문구("주의 1% · 위험 2%")와 에러 그래프 기준선(1%)을 만든다
+- 이벤트 상태 이름을 PHASE_META 하나로: 구역 배지(sectionStatus)와 드롭다운 항목(eventStatusText)이 같은 서버 phase 기준 — 예정이면 "예정"(전에는 "진행 중 N"), hosting_end_at이 지난 OPEN 이벤트는 드롭다운도 "종료". 진행 중 · 입장 직전은 판정 칩을 함께
+- 진행 단계 · 드롭다운 시각: 오늘이 아니면 "MM-DD HH:mm"(clockText), 지난 계획 시각에 완료 기록이 없으면 "기록 없음"
+- 사이드바: position fixed · inset 0이라 실제 화면에서는 끝까지 채워짐(스크롤 맨 아래에서 높이 = 뷰포트 확인). 끊겨 보인 것은 전체 페이지 캡처가 fixed 요소를 첫 화면 높이로만 그리는 탓 — 수정 없음
+- 테스트: trafficMonitoringView.test.ts 34개(5xx 기준 상수 일치, 배지 · 드롭다운 같은 상태 이름, clockText, 기록 없음), web 144개 · tsc · build 통과. API TrafficRulesTest · TrafficMonitoringApiTest 기대값 1% 기준으로(모니터링 62개 통과)
+- 파일: api/src/main/java/com/tetra/ops/monitoring/TrafficRules.java, api/src/test/java/com/tetra/ops/monitoring/{TrafficRulesTest, TrafficMonitoringApiTest}.java, ../web/src/pages/monitoring/{trafficMonitoringView.ts, trafficMonitoringView.test.ts, EventSection.tsx, TrafficMonitoringPage.tsx}

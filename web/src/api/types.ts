@@ -340,6 +340,274 @@ export interface MonitoringOverviewResponse {
   }[];
 }
 
+// ---------------------------------------------------------------- 트래픽 모니터링 OPS-05 (TrafficMonitoringController)
+
+/** 상태(명세 2절). UNKNOWN = 판단할 데이터가 없음(조회 실패 · 미설정) */
+export type MonitoringLevel = 'OK' | 'WARN' | 'DANGER' | 'UNKNOWN';
+
+/** 이벤트 구역 상태(명세 4절). 종료 = hosting_end_at(WF4) */
+export type EventPhase = 'SCHEDULED' | 'PRE_ENTRY' | 'LIVE' | 'ENDED' | 'PREPARE_FAILED';
+
+export type FailureStep = 'DEPLOY' | 'HOSTING_START' | 'PREPARE' | 'END' | 'PROVISIONING' | 'MAIL' | 'OTHER';
+
+/** 출처별 기준 시각. stale = 지난 값(조회 실패)이거나 값 없음(asOf null, 미설정) */
+export interface MonitoringSource {
+  asOf: string | null;
+  stale: boolean;
+}
+
+/** [epoch 밀리초, 값 | null] */
+export type MonitoringPoint = [number, number | null];
+
+export interface TrafficNode {
+  name: string;
+  /** 인스턴스 타입(kube-state-metrics 라벨 허용 전에는 null) */
+  type: string | null;
+  ready: boolean;
+  /** 0~1 */
+  cpu: number | null;
+  memory: number | null;
+  createdAt: string | null;
+  /** 최근 10분 안에 생김 */
+  recent: boolean;
+}
+
+export interface TrafficPool {
+  pool: string;
+  /** Ready 노드 수. 쿼리 오류 · 미수집이면 null */
+  count: number | null;
+  addedRecently: number;
+  cpu: { avg: number | null; max: number | null };
+  memory: { avg: number | null; max: number | null };
+  nodes: TrafficNode[];
+}
+
+export interface TrafficServiceStatus {
+  name: string;
+  running: number | null;
+  desired: number | null;
+  healthyTargets: number | null;
+  totalTargets: number | null;
+  /** 최근 5분 대상 5xx + ALB 5xx */
+  fiveXx: number | null;
+}
+
+export interface TrafficFailure {
+  occurredAt: string;
+  eventId: number | null;
+  tenantId: string | null;
+  tenantName: string | null;
+  eventName: string | null;
+  step: FailureStep;
+  reason: string | null;
+}
+
+export interface TrafficUpcoming {
+  eventId: number;
+  tenantId: string;
+  tenantName: string | null;
+  name: string;
+  prepareAt: string;
+  entryAt: string;
+  startAt: string;
+  /** hosting_end_at */
+  endAt: string | null;
+}
+
+/** GET /monitoring/platform — A 상태 요약 · B 노드 · 플랫폼 · 다가오는 이벤트 · E 최근 자동화 실패 */
+export interface TrafficPlatformResponse {
+  prometheus: MonitoringSource;
+  aws: MonitoringSource;
+  /** 4칸 고정 순서: CLUSTER · EVENT · AUTOMATION · PLATFORM */
+  summary: {
+    area: 'CLUSTER' | 'EVENT' | 'AUTOMATION' | 'PLATFORM';
+    level: MonitoringLevel;
+    reason: string;
+    /** EVENT 칸만 */
+    openCount: number | null;
+    eventId: number | null;
+  }[];
+  nodes: {
+    /** 0~1 */
+    cpu: number | null;
+    memory: number | null;
+    /** [epoch 밀리초, CPU, 메모리] 최근 1시간 */
+    history: { stepSeconds: number; points: [number, number | null, number | null][] };
+    pools: TrafficPool[];
+  };
+  platform: {
+    addons: {
+      /** 정상 그룹 수(모르면 null) */
+      healthy: number | null;
+      total: number;
+      groups: { name: string; healthy: boolean | null; problems: { namespace: string; name: string; ready: number | null; desired: number | null }[] }[];
+    };
+    /** MONITORING_RDS_ID가 없거나 AWS를 못 읽었으면 null. cpuPercent 0~100 */
+    rds: { status: string | null; cpuPercent: number | null; connections: number | null; freeStorageBytes: number | null } | null;
+    services: TrafficServiceStatus[];
+  };
+  upcoming: TrafficUpcoming[];
+  failures: TrafficFailure[];
+}
+
+/** GET /monitoring/events — 드롭다운. 진행 중 → 오늘 예정 → 최근 7일 종료 · 준비 실패 */
+export interface TrafficEventsResponse {
+  defaultEventId: number | null;
+  items: TrafficEventItem[];
+}
+
+export interface TrafficEventItem {
+  eventId: number;
+  tenantId: string;
+  tenantName: string | null;
+  name: string;
+  group: 'OPEN' | 'TODAY' | 'ENDED';
+  phase: EventPhase;
+  /** OPEN만 */
+  level: MonitoringLevel | null;
+  reason: string | null;
+  prepareAt: string;
+  entryAt: string;
+  startAt: string;
+  /** hosting_end_at */
+  endAt: string | null;
+  eventStatus: EventStatus | null;
+  hostingStatus: HostingStatus | null;
+}
+
+export type TrafficStepKey = 'APPROVE' | 'HOSTING_START' | 'PREPARE' | 'ENTRY' | 'START' | 'END' | 'AGGREGATE';
+export type TrafficStepState = 'DONE' | 'ACTIVE' | 'WAITING' | 'FAILED' | 'SKIPPED';
+
+export interface TrafficStep {
+  key: TrafficStepKey;
+  plannedAt: string | null;
+  actualAt: string | null;
+  /** 준비만 — Pod 시작 → Ready */
+  durationSeconds: number | null;
+  state: TrafficStepState;
+  reason: string | null;
+}
+
+/** 지금 값. PRE_ENTRY는 rps · errorRatio · p95 · waiting이 null */
+export interface TrafficLiveKpi {
+  rps: number | null;
+  /** 0~1 */
+  errorRatio: number | null;
+  p95Ms: number | null;
+  p95IssuanceMs: number | null;
+  p95TicketMs: number | null;
+  podsReady: number | null;
+  podsMax: number | null;
+  podsMin: number | null;
+  podsPending: number | null;
+  cpuCores: number | null;
+  cpuRequestCores: number | null;
+  memoryBytes: number | null;
+  memoryRequestBytes: number | null;
+  waiting: number | null;
+  stockRemaining: number | null;
+  stockTotal: number | null;
+  /** 0~1 */
+  redisMemoryRatio: number | null;
+  redisMemoryUsedBytes: number | null;
+  redisMemoryMaxBytes: number | null;
+  redisOpsPerSec: number | null;
+  redisRestarts: number | null;
+  redisConnections: number | null;
+  redisUp: boolean | null;
+}
+
+export interface TrafficPeak {
+  value: number | null;
+  at: string | null;
+}
+
+/** 종료된 이벤트 최종값(전체 구간) */
+export interface TrafficSummaryKpi {
+  peakRps: TrafficPeak;
+  errorRatioAvg: number | null;
+  errorRatioMax: number | null;
+  p95MaxMs: number | null;
+  p95AvgMs: number | null;
+  podsMax: number | null;
+  podsLimit: number | null;
+  peakWaiting: TrafficPeak;
+  issued: number | null;
+  stockTotal: number | null;
+  soldOutAt: string | null;
+  cpuMaxCores: number | null;
+  cpuRequestCores: number | null;
+  memoryMaxBytes: number | null;
+  memoryRequestBytes: number | null;
+  redisMemoryMax: number | null;
+  redisRestarts: number | null;
+}
+
+export interface TrafficKpi {
+  /** 진행 중 · 입장 직전만(종료는 null) */
+  level: MonitoringLevel | null;
+  reason: string | null;
+  /** 주의 값인 KPI 키: errorRatio · p95 · pods · redisMemory · redisRestarts · redisUp */
+  warn: string[];
+  live: TrafficLiveKpi | null;
+  summary: TrafficSummaryKpi | null;
+}
+
+/** 그래프 범위 key */
+export type TrafficRangeKey = 'entry' | '15m' | '1h' | 'full' | 'start';
+
+export interface TrafficRange {
+  key: TrafficRangeKey;
+  options: TrafficRangeKey[];
+  from: string;
+  to: string;
+  stepSeconds: number;
+  entryAt: string;
+  startAt: string;
+}
+
+/** Prometheus 값은 timestamps와 같은 길이 배열, AWS 값(errors.alb · eventTarget · rds)은 점 목록 */
+export interface TrafficCharts {
+  timestamps: number[];
+  traffic: { rps: (number | null)[]; cursorPerSec: (number | null)[] };
+  /** 0~1. eventTarget은 화면에서 쓰지 않음(참고용) */
+  errors: { app: (number | null)[]; alb: MonitoringPoint[]; eventTarget: MonitoringPoint[] };
+  /** ms */
+  latency: { issuance: (number | null)[]; ticket: (number | null)[] };
+  pods: { ready: (number | null)[]; pending: (number | null)[]; min: number | null; max: number | null };
+  progress: { waiting: (number | null)[]; stock: (number | null)[] };
+  /** 0~1 */
+  redis: { memory: (number | null)[]; cpu: (number | null)[]; restarts: (number | null)[] };
+  resources: { cpu: (number | null)[]; memory: (number | null)[]; cpuRequest: (number | null)[]; memoryRequest: (number | null)[] };
+  /** cpu 0~100(%), connections 개수 */
+  rds: { cpu: MonitoringPoint[]; connections: MonitoringPoint[] };
+}
+
+/** GET /monitoring/events/{eventId}?range= — C 진행 단계 · D KPI · 그래프 */
+export interface TrafficEventResponse {
+  prometheus: MonitoringSource;
+  aws: MonitoringSource;
+  event: {
+    eventId: number;
+    tenantId: string;
+    tenantName: string | null;
+    name: string;
+    phase: EventPhase;
+    eventStatus: EventStatus | null;
+    hostingStatus: HostingStatus | null;
+    prepareAt: string;
+    entryAt: string;
+    startAt: string;
+    endAt: string | null;
+    stockCount: number | null;
+  };
+  steps: TrafficStep[];
+  /** SCHEDULED · PREPARE_FAILED면 null */
+  kpi: TrafficKpi | null;
+  range: TrafficRange | null;
+  charts: TrafficCharts | null;
+}
+
 // ---------------------------------------------------------------- 알림센터 (NotificationController)
 
 /** GET /notifications 항목. 테넌트 · 이벤트와 무관한 알림이면 tenantId · tenantName · eventId가 null */
