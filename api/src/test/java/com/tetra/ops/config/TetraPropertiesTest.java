@@ -40,6 +40,12 @@ class TetraPropertiesTest {
 				assertThat(context).hasNotFailed();
 				TetraProperties properties = context.getBean(TetraProperties.class);
 				assertThat(properties.csv().presignTtl()).hasMinutes(5);
+				// PROMETHEUS_URL이 없어도 기동한다(모니터링만 stale)
+				assertThat(properties.monitoring().configured()).isFalse();
+				assertThat(properties.monitoring().connectTimeout()).hasSeconds(2);
+				assertThat(properties.monitoring().readTimeout()).hasSeconds(3);
+				assertThat(properties.monitoring().cacheTtl()).hasSeconds(15);
+				assertThat(properties.monitoring().refreshTimeout()).hasSeconds(8);
 				assertThat(properties.dbMigration().username()).isEqualTo("tetra_migrator");
 				assertThat(properties.dbMigration().locations()).isEqualTo("classpath:db/migration/tenant");
 				assertThat(properties.toString()).doesNotContain("0123456789abcdef")

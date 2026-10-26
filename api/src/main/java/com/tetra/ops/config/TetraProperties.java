@@ -29,6 +29,7 @@ public record TetraProperties(
 		@Valid @NotNull @DefaultValue Console console,
 		@Valid @NotNull @DefaultValue Csv csv,
 		@Valid @NotNull @DefaultValue Approve approve,
+		@Valid @NotNull @DefaultValue Monitoring monitoring,
 		@Valid @NotNull Auth auth,
 		@Valid @NotNull PasswordLink passwordLink,
 		@Valid @NotNull DbMigration dbMigration,
@@ -70,6 +71,22 @@ public record TetraProperties(
 	 */
 	public record Approve(@Min(1) @DefaultValue("3") int maxConcurrentEvents,
 			@Min(1) @DefaultValue("5") int lockTimeoutSeconds) {
+	}
+
+	/**
+	 * 홈 모니터링 카드(Prometheus HTTP API, 인증 없음). prometheusUrl이 비어 있어도 기동한다 — 모니터링만 unavailable(stale).
+	 * refreshTimeout = 갱신 1회(쿼리 전부, 순차) 전체 상한. 넘으면 실패로 보고 마지막 값을 stale로 준다.
+	 */
+	public record Monitoring(@DefaultValue("") String prometheusUrl,
+			@NotNull @DefaultValue("PT2S") Duration connectTimeout,
+			@NotNull @DefaultValue("PT3S") Duration readTimeout,
+			@NotNull @DefaultValue("PT15S") Duration cacheTtl,
+			@NotNull @DefaultValue("PT8S") Duration refreshTimeout) {
+
+		public boolean configured() {
+			return prometheusUrl != null && !prometheusUrl.isBlank();
+		}
+
 	}
 
 	// TODO(미정): CSV presigned URL 만료. 임시 5분

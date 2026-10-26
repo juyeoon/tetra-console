@@ -79,6 +79,13 @@ tetra:
   approve:
     max-concurrent-events: ${MAX_CONCURRENT_EVENTS:3}
     lock-timeout-seconds: 5
+  # 홈 모니터링 카드(클러스터 · 실시간 트래픽 · 테넌트 별 처리 현황). PROMETHEUS_URL이 비어 있으면 기동은 하고 모니터링만 stale
+  monitoring:
+    prometheus-url: ${PROMETHEUS_URL:}
+    connect-timeout: ${PROMETHEUS_CONNECT_TIMEOUT:PT2S}
+    read-timeout: ${PROMETHEUS_READ_TIMEOUT:PT3S}
+    cache-ttl: ${MONITORING_CACHE_TTL:PT15S}
+    refresh-timeout: ${MONITORING_REFRESH_TIMEOUT:PT8S}
   auth:
     jwt-secret: ${OPS_JWT_SECRET}
   password-link:

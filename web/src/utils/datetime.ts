@@ -10,14 +10,15 @@ const parts = new Intl.DateTimeFormat('en-US', {
   day: '2-digit',
   hour: '2-digit',
   minute: '2-digit',
+  second: '2-digit',
   hourCycle: 'h23',
 });
 
-function kst(iso: string) {
+function kst(iso: string | number) {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return null;
   const p = Object.fromEntries(parts.formatToParts(date).map((x) => [x.type, x.value]));
-  return { y: p.year, mo: p.month, d: p.day, h: p.hour, mi: p.minute };
+  return { y: p.year, mo: p.month, d: p.day, h: p.hour, mi: p.minute, s: p.second };
 }
 
 /** '2026-10-20T18:09:11+09:00' → '2026.10.20 18:09'. 값이 없으면 '-' */
@@ -36,6 +37,18 @@ export function formatMonthDayTime(iso: string | null | undefined): string {
 export function formatTime(iso: string | null | undefined): string {
   const t = iso ? kst(iso) : null;
   return t ? `${t.h}:${t.mi}` : '-';
+}
+
+/** '2026-10-20T18:09:11+09:00' 또는 epoch 밀리초 → '18:09:11' (마지막 갱신 시각). 값이 없으면 '–' */
+export function formatClock(value: string | number | null | undefined): string {
+  const t = value == null || value === '' ? null : kst(value);
+  return t ? `${t.h}:${t.mi}:${t.s}` : '–';
+}
+
+/** epoch 밀리초 → '18:09' (시간 축 눈금) */
+export function formatClockMinute(epochMillis: number): string {
+  const t = kst(epochMillis);
+  return t ? `${t.h}:${t.mi}` : '';
 }
 
 /** 지금 기준 경과 — '방금 전' · 'N분 전' · 'N시간 전' · 'N일 전'(7일 미만), 그보다 오래면 날짜. 미래 값은 '방금 전' */

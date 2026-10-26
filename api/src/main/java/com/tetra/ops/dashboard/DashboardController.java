@@ -21,8 +21,8 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 
 /**
- * OPS-02 홈 대시보드. 확정된 지표만 돌려준다.
- * TODO(미정): 클러스터 사용량, 실시간 트래픽, 테넌트별 처리 현황은 설계서에서도 미확정이라 응답에 넣지 않는다.
+ * OPS-02 홈 대시보드. 테넌트 수 · 진행 중 이벤트 · 최근 알림(DB).
+ * 클러스터 사용량 · 실시간 트래픽 · 테넌트 별 처리 현황(Prometheus)은 GET /api/ops/monitoring/overview(MonitoringController).
  */
 @Tag(name = "대시보드", description = "OPS-02 홈 대시보드")
 @RestController
@@ -61,7 +61,7 @@ public class DashboardController {
 
 	@Operation(summary = "OPS-02 홈 요약",
 			description = "활성/전체/이번 달(KST) 신규 테넌트 수, 진행 중(OPEN) 이벤트 수와 기준 시각(asOf), 최근 알림 5건. "
-					+ "클러스터 사용량·실시간 트래픽·테넌트별 처리 현황은 미확정이라 없음")
+					+ "클러스터 사용량·실시간 트래픽·테넌트별 처리 현황은 GET /api/ops/monitoring/overview")
 	@GetMapping("/dashboard")
 	@Transactional(readOnly = true)
 	public DashboardResponse dashboard() {

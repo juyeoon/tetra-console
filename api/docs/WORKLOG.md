@@ -198,3 +198,32 @@
 - 한 일: §7.13 알림 표를 NotificationService · 호출 위치 기준으로 다시 씀(수명 주기 리스너 WF2-1 · WF2-2 · WF4 알림 포함, 문구 예시). Portal 신청 알림(APPLIED · APPLY_FAILED)은 Portal이 남김, 계정 INACTIVE → ACTIVE는 남기지 않음, 테넌트 알림은 승인 · 반려 · 종료만(MVP)으로 정리
 - 파일: CLAUDE.md
 - 남은 것: NotificationService 클래스 주석의 `TODO(미정): 알림 문구`를 다음 코드 MR 때 지움(문구는 이미 정해짐)
+
+## 2026-10-26 KST — 홈 모니터링 카드 3개를 Prometheus 실데이터로 (OPS-02)
+- 한 일(api): GET /api/ops/monitoring/overview 추가(운영자 인증, /api/** 규칙 그대로). PrometheusClient(spring-web RestClient + JdkClientHttpRequestFactory, 새 라이브러리 없음): /api/v1/query · query_range GET, vector · matrix 파싱, "NaN" · "+Inf" · "-Inf" → null, 실패는 PrometheusException(HTTP 상태 · 원인 클래스명만 — 쿼리 원문 · 응답 본문 없음). PromQueries: PromQL 상수만(10-24 · 10-26 확정 식), tenant_id는 TenantIds.requireValid 뒤에만 넣음(errorRps tenant_id=~"a|b", 누적 tenant_id="…"[Xs], X 60초 ~ 7일). MonitoringCollector: OPEN 이벤트(event_registry, 테넌트별 한 행) + 쿼리 순차(클러스터 5 · 트래픽 2 · 테넌트 4 + 테넌트당 1). 누적 completed / failed는 sum by (status)(increase …)를 5xx / 나머지로 나눔(사양의 두 식과 같은 값, 쿼리 1개), since = 가장 이른 OPEN 시작 − EntryOpen.ENTRY_OPEN_LEAD(60분, 신설 — web ENTRY_OPEN_LEAD_MINUTES · ops-workflows entryOpenAt · issuance-api entry-open-before와 같은 값). 트래픽 시각은 15초 배수로 맞춰 모든 시리즈가 같은 격자(빈 칸 null), tenant_id 라벨이 없거나 형식이 아닌 시리즈는 합계에만. MonitoringService: Pod별 15초 캐시 + single-flight(CompletableFuture, 가상 스레드), 갱신 1회 전체 상한 8초(orTimeout + 쿼리마다 남은 시간 확인), 쿼리 하나라도 실패하면 갱신 전체 실패 → 마지막 값 stale, 없으면 수치 null + stale(asOf null, tenants는 DB 목록), 실패 뒤 TTL 동안 재조회 안 함, WARN 한 줄. 설정 tetra.monitoring.*(PROMETHEUS_URL 비어도 기동, PROMETHEUS_CONNECT_TIMEOUT 2s · PROMETHEUS_READ_TIMEOUT 3s · MONITORING_CACHE_TTL 15s · MONITORING_REFRESH_TIMEOUT 8s)
+- 0과 null(결정 · 주석): 시리즈 없으면 null. 노드 · Pod 개수는 Ready 노드 쿼리에 시리즈가 있으면(kube-state-metrics 응답) 빠진 그룹 0 — count · sum by가 0개 그룹을 안 돌려주므로(평시 app · redis 0). 테넌트 요청 시리즈가 있으면 빠진 5xx는 0(errorRps · failed), 없으면 rps · errorRps · completed · failed null. HPA가 없으면 pods.max null
+- 한 일(web): 목업(mocks/dashboard.ts) · SampleDataChip · 2초 랜덤 갱신 · "SSE/WebSocket으로 교체" TODO 삭제. usePolling(15초, 탭 숨김이면 멈추고 돌아오면 즉시 1회, 실패하면 지난 값 유지 + 지연). monitoringView.ts(순수 함수): %, "–", "Ready / 전체", 범례 "테넌트 · 이벤트", 마지막 갱신 KST HH:mm:ss, 점 개수(rps 로그 비례 1 + 2·log10, 상한 8, 이동 속도 고정 2.4초) · 완료/실패 분배(errorRps / rps, 5xx 있으면 실패 최소 1). ClusterCard(CPU · Mem %, 노드 app · redis · system — app · redis 0이면 "진행 중 이벤트 없음", Pod api · redis Ready / 전체, 목업 문구 없음). LiveTrafficCard(time 축, "서버 처리 요청 수(초당)", 이벤트 시작 세로 점선 ChartsReferenceLine — 범위 안의 것만, 색 3개 반복, 빈 상태 문구). TenantFlowCard("테넌트 별 처리 현황", OPEN 테넌트 전부, "Pod ready / max", "처리 완료" · "실패", 입장 열림부터 누적 툴팁, 빈 상태). datetime.ts formatClock · formatClockMinute
+- 응답: 1단계 사양에서 바뀐 것 — 트래픽 series.eventNames → events[{eventId, name, startAt}](tenants.events와 같은 형식, startAt은 세로 점선), tenants[].errorRps 추가, Prometheus를 못 읽은 경우 asOf null
+- 테스트: api PrometheusClientTest(JDK HttpServer 목 — vector · matrix · 빈 결과 · NaN/Inf · 쿼리 인코딩 · HTTP 오류 본문 미노출 · 읽기 타임아웃 · 연결 거부 · 미설정), PromQueriesTest(tenant_id 검증 · 범위 자르기), MonitoringServiceTest(TTL · 동시 10개 조회 1회 · 실패 시 stale · 캐시 없음 · 상한 초과 · 미설정), MonitoringApiTest(Testcontainers 시드 + 가짜 Prometheus: 필드 전부, OPEN 2개 한 행, SCHEDULED 제외, DB에 없는 테넌트, 누적 범위 초, 격자, OPEN 없음, 실패 뒤 stale, 401), MonitoringUnconfiguredApiTest(PROMETHEUS_URL 없이 기동 · 200 · null · stale), TetraPropertiesTest 기본값. web monitoringView.test.ts. api 247개, web 102개 통과, web build 통과
+- 파일: src/main/java/com/tetra/ops/{monitoring/(PrometheusClient, PromQueries, MonitoringCollector, MonitoringService, MonitoringController, MonitoringOverview — 신규), event/EntryOpen(신규), config/TetraProperties, domain/platform/EventRegistryRepository, dashboard/DashboardController(주석)}.java, src/main/resources/application.yml, .env.example, src/test/java/com/tetra/ops/{support/FakePrometheus(신규), monitoring/(PrometheusClientTest, PromQueriesTest, MonitoringServiceTest, MonitoringApiTest, MonitoringUnconfiguredApiTest — 신규), config/TetraPropertiesTest}.java, ../web/src/{api/(monitoring.ts 신규, types.ts), hooks/usePolling.ts(신규), pages/dashboard/(monitoringView.ts · monitoringView.test.ts · ClusterCard.tsx · UpdatedIndicator.tsx 신규, DashboardPage.tsx, LiveTrafficCard.tsx, TenantFlowCard.tsx), utils/datetime.ts}, 삭제 ../web/src/{mocks/dashboard.ts, components/common/SampleDataChip.tsx}, ../web/README.md. 로컬(커밋 안 함): CLAUDE.md(§1 · §6 · §7.2 · §7.16 신설 · §10), deploy/example/configmap.yaml
+- 남은 것: 실제 Prometheus(port-forward)로 화면 확인은 못 함 — 라벨 이름(label_tetra_io_* · status · uri)이 실제와 맞는지 dev에서 확인 필요. 화면(DOM) 테스트 도구가 없어 카드 렌더링 · 세로 점선은 빌드 · 타입 검사까지만 확인
+
+## 2026-10-26 KST — 홈 모니터링 0/null 규칙 확정 · 로컬 Prometheus 포트
+- 한 일: MonitoringCollector의 TODO(미정)를 확정 결정으로 바꿈 — kube-state-metrics 응답이 있으면 빠진 그룹 0, 응답 자체가 없으면 null. 요청 시리즈가 있고 5xx 시리즈만 없으면 errorRps · failed = 0. 로컬 확인 안내를 포트 포워드 pf-prometheus(localhost:19090) → PROMETHEUS_URL=http://localhost:19090으로
+- 확인: PromQueries 쿼리 수 = 고정 11 + OPEN 테넌트 수(누적 completed/failed 쿼리가 테넌트마다 1개). 한 번에 받는 방식은 계획만 보고(미구현)
+- 파일: src/main/java/com/tetra/ops/monitoring/MonitoringCollector.java(주석), .env.example, ../web/README.md. 로컬: CLAUDE.md §7.16
+
+## 2026-10-26 KST — 누적 쿼리 단일화(A안) 보류
+- 결정: 누적 completed/failed 쿼리는 테넌트당 1회 호출 유지(MonitoringCollector 호출부 주석). 동시 이벤트 상한 3이라 쿼리는 최대 14개, 순차여도 갱신 상한 8초 안
+- 보류: A안 — 테넌트별 increase(...[Xs])를 or로 이은 단일 쿼리(sum by (tenant_id, status))로 받아 앱에서 나눔. 동시 이벤트 상한을 올리면 적용
+- 파일: src/main/java/com/tetra/ops/monitoring/MonitoringCollector.java(주석)
+
+## 2026-10-26 KST — 홈 모니터링 화면 문구 · 네임스페이스 원 (web)
+- 배경: 로컬에서 실제 Prometheus로 확인(데이터 경로 정상). 로컬 DB에 OPEN 1건(A사)이 있고 dev 클러스터에 Pod가 없는 상황에서 문구가 맞지 않았음
+- 한 일: monitoringView.ts에 판단 함수 hasOpenEvents(응답 tenants[].events, DB 기준) · trafficEmptyState(시리즈 있음 → null, OPEN 0건 → "진행 중 이벤트 없음", OPEN 있음 → "요청 데이터 없음" + "테넌트명 · 이벤트명" 목록) · openEventLabels. ClusterCard "(진행 중 이벤트 없음)"은 app 노드 수 대신 OPEN 0건일 때만(OPEN 있고 app 0이면 괄호 없음, 응답 전이면 표시 안 함). TenantFlowCard 가운데 원: 네임스페이스 이름은 Tooltip "네임스페이스 tenant-…", 원 안은 api Pod "ready/max"(h3, 한 줄, max null이면 ready만) + 작은 "Pod", 원 아래 Pod 칸 · "Pod x / y" 줄 삭제(원 크기 그대로)
+- 테스트: monitoringView.test.ts — OPEN 유무별 클러스터 괄호 문구, 트래픽 빈 상태 3가지, 이벤트 목록 문구, podCountText(32/32 · max null · ready null). web 110개 통과, tsc · build 통과
+- 파일: ../web/src/pages/dashboard/{monitoringView.ts, monitoringView.test.ts, LiveTrafficCard.tsx, TenantFlowCard.tsx}, ../web/README.md
+
+## 2026-10-26 KST — 실시간 트래픽 빈 상태 문구 변경 (web)
+- 한 일: OPEN 있음 + 시리즈 없음 문구 "요청 데이터 없음" → "아직 요청이 없는 진행 중 이벤트"(NO_DATA_TEXT), 테스트 기대값 · README 같이
+- 파일: ../web/src/pages/dashboard/{monitoringView.ts, monitoringView.test.ts}, ../web/README.md

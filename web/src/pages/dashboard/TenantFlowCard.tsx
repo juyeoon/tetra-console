@@ -1,9 +1,10 @@
-import { Box, Card, Stack, Typography } from '@mui/material';
+import { Box, Card, Stack, Tooltip, Typography } from '@mui/material';
 import { keyframes } from '@mui/material/styles';
-import SampleDataChip from '@/components/common/SampleDataChip';
+import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import SectionTitle from '@/components/common/SectionTitle';
-import { mockDashboard } from '@/mocks/dashboard';
 import { color, line, radius, size, text, tones } from '@/theme/theme';
+import { LANE_SECONDS, NO_EVENT_TEXT, type TenantFlowView, type UpdatedView } from './monitoringView';
+import UpdatedIndicator from './UpdatedIndicator';
 
 const flow = keyframes`
   0% { left: 0%; opacity: 0; }
@@ -12,12 +13,15 @@ const flow = keyframes`
   100% { left: 100%; opacity: 0; }
 `;
 
-function Lane({ dot, dots = 3, duration = 2.4 }: { dot: string; dots?: number; duration?: number }) {
+const CUMULATIVE_HELP = '입장 열림(이벤트 시작 60분 전)부터 누적한 요청 수입니다. 실패는 서버 오류(5xx) 응답입니다.';
+
+/** 점이 같은 속도(LANE_SECONDS)로 지나가고, 개수(= 생성 빈도)만 rps에 따라 바뀐다. 0개면 빈 레인 */
+function Lane({ dot, dots }: { dot: string; dots: number }) {
   return (
     <Box sx={{ position: 'relative', height: 2, borderRadius: 1, bgcolor: line.base }}>
       {Array.from({ length: dots }, (_, i) => (
         <Box
-          key={i}
+          key={`${dots}-${i}`}
           sx={{
             position: 'absolute',
             top: '50%',
@@ -27,8 +31,9 @@ function Lane({ dot, dots = 3, duration = 2.4 }: { dot: string; dots?: number; d
             ml: `calc(${size.dot} / -2)`,
             borderRadius: '50%',
             bgcolor: dot,
-            animation: `${flow} ${duration}s linear infinite`,
-            animationDelay: `${(duration / dots) * i}s`,
+            animation: `${flow} ${LANE_SECONDS}s linear infinite`,
+            animationDelay: `${(LANE_SECONDS / dots) * i}s`,
+            animationFillMode: 'backwards',
           }}
         />
       ))}
@@ -36,9 +41,7 @@ function Lane({ dot, dots = 3, duration = 2.4 }: { dot: string; dots?: number; d
   );
 }
 
-type FlowRow = (typeof mockDashboard.topTenants)[number];
-
-function FlowRowView({ row }: { row: FlowRow }) {
+function FlowRowView({ row }: { row: TenantFlowView }) {
   return (
     <Box
       sx={{
@@ -51,68 +54,80 @@ function FlowRowView({ row }: { row: FlowRow }) {
         bgcolor: color.surface,
       }}
     >
-      <Typography variant="h4">{row.tenant}</Typography>
+      <Box sx={{ minWidth: 0, maxWidth: 140 }}>
+        <Typography variant="h4" noWrap title={row.name}>
+          {row.name}
+        </Typography>
+        {row.events && (
+          <Typography variant="caption" component="p" noWrap title={row.events} sx={{ color: text.tertiary }}>
+            {row.events}
+          </Typography>
+        )}
+      </Box>
 
-      <Lane dot={color.peri} dots={4} duration={2} />
+      <Lane dot={color.peri} dots={row.dots.inflow} />
 
-      <Stack alignItems="center" spacing={0.75}>
-        <Box sx={{ width: size.flowNode, height: size.flowNode, borderRadius: '50%', display: 'grid', placeItems: 'center', textAlign: 'center', bgcolor: color.periTint }}>
-          <Box>
-            <Typography variant="subtitle2">{row.namespace}</Typography>
-            <Typography variant="caption">네임스페이스</Typography>
+      {/* 네임스페이스 원 — 이름은 툴팁, 안에는 api Pod ready/max */}
+      <Tooltip title={row.namespaceTitle}>
+        <Box sx={{ width: size.flowNode, height: size.flowNode, borderRadius: '50%', display: 'grid', placeItems: 'center', textAlign: 'center', bgcolor: color.periTint, px: 1 }}>
+          <Box sx={{ minWidth: 0 }}>
+            <Typography variant="h3" component="p" sx={{ whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums', lineHeight: 1.2 }}>
+              {row.podCount}
+            </Typography>
+            <Typography variant="caption">Pod</Typography>
           </Box>
         </Box>
-        <Stack direction="row" alignItems="center" spacing={0.75}>
-          <Stack direction="row" spacing={0.25}>
-            {Array.from({ length: row.maxPods }, (_, i) => (
-              <Box key={i} sx={{ width: 8, height: 6, borderRadius: '2px', bgcolor: i < row.pods ? color.navy : line.base }} />
-            ))}
-          </Stack>
-          <Typography variant="caption">
-            Pod {row.pods}/{row.maxPods}
-          </Typography>
-        </Stack>
-      </Stack>
+      </Tooltip>
 
       <Stack spacing={4.5}>
-        <Lane dot={tones.green.dot} dots={3} duration={2.2} />
-        <Lane dot={tones.red.dot} dots={1} duration={3.2} />
+        <Lane dot={tones.green.dot} dots={row.dots.completed} />
+        <Lane dot={tones.red.dot} dots={row.dots.failed} />
       </Stack>
 
-      <Stack spacing={1} sx={{ textAlign: 'right' }}>
-        <Box>
-          <Typography variant="caption">처리 완료</Typography>
-          <Typography variant="h3" component="p" sx={{ color: tones.green.fg }}>
-            {row.done}
-          </Typography>
-        </Box>
-        <Box>
-          <Typography variant="caption">대기·실패</Typography>
-          <Typography variant="h3" component="p" sx={{ color: tones.red.fg }}>
-            {row.waitingOrFailed}
-          </Typography>
-        </Box>
-      </Stack>
+      <Tooltip title={CUMULATIVE_HELP} placement="left">
+        <Stack spacing={1} sx={{ textAlign: 'right' }}>
+          <Box>
+            <Typography variant="caption">처리 완료</Typography>
+            <Typography variant="h3" component="p" sx={{ color: tones.green.fg, fontVariantNumeric: 'tabular-nums' }}>
+              {row.completed}
+            </Typography>
+          </Box>
+          <Box>
+            <Typography variant="caption">실패</Typography>
+            <Typography variant="h3" component="p" sx={{ color: tones.red.fg, fontVariantNumeric: 'tabular-nums' }}>
+              {row.failed}
+            </Typography>
+          </Box>
+        </Stack>
+      </Tooltip>
     </Box>
   );
 }
 
-/** 상위 2개 테넌트 고정 노출 (클릭 이동 없음, 읽기 전용) */
-export default function TenantFlowCard() {
+/** 진행 중(OPEN) 이벤트가 있는 테넌트 전부 (클릭 이동 없음, 읽기 전용) */
+export default function TenantFlowCard({ rows, updated }: { rows: TenantFlowView[]; updated: UpdatedView }) {
   return (
     <Card sx={{ p: 3, height: '100%' }}>
-      <SectionTitle>
-        테넌트 별 처리 현황 (상위 2개)
-        <SampleDataChip />
-      </SectionTitle>
-      <Stack spacing={1}>
-        {mockDashboard.topTenants.map((row) => (
-          <FlowRowView key={row.namespace} row={row} />
-        ))}
+      <SectionTitle action={<UpdatedIndicator updated={updated} />}>테넌트 별 처리 현황</SectionTitle>
+      {rows.length === 0 ? (
+        <Typography variant="body2" sx={{ color: text.tertiary, py: 4, textAlign: 'center' }}>
+          {NO_EVENT_TEXT}
+        </Typography>
+      ) : (
+        <Stack spacing={1}>
+          {rows.map((row) => (
+            <FlowRowView key={row.key} row={row} />
+          ))}
+        </Stack>
+      )}
+      <Stack direction="row" alignItems="center" spacing={0.5} sx={{ mt: 1.5 }}>
+        <Typography variant="caption" component="p" sx={{ color: text.tertiary }}>
+          요청 유입 → 네임스페이스 처리 → 처리 완료 / 실패
+        </Typography>
+        <Tooltip title={`숫자 기준: ${CUMULATIVE_HELP}`}>
+          <InfoOutlinedIcon sx={{ fontSize: size.iconSm, color: text.tertiary, cursor: 'help' }} />
+        </Tooltip>
       </Stack>
-      <Typography variant="caption" component="p" sx={{ mt: 1.5, color: text.tertiary }}>
-        요청 유입 → 네임스페이스 처리 → 처리 완료 / 대기·실패
-      </Typography>
     </Card>
   );
 }
