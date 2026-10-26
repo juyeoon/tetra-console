@@ -39,6 +39,21 @@ public interface EventRegistryRepository extends JpaRepository<EventRegistry, Lo
 			 order by r.startAt, r.eventId""")
 	List<WithTenantName> findOpenWithTenantName();
 
+	/**
+	 * OPS-05 모니터링 대상 후보: 승인된 이벤트 중 호스팅이 아직 안 끝난 것 + 시작이 since 이후인 것(최근 종료 7일 · 실패 목록용).
+	 * registry에 hosting_end_at이 없어 종료 시각은 테넌트 스키마 event에서 붙인다.
+	 */
+	@Query("""
+			select new com.tetra.ops.domain.platform.EventRegistryRepository$WithTenantName(r, t.name)
+			  from EventRegistry r join Tenant t on t.tenantId = r.tenantId
+			 where r.applicationStatus = com.tetra.ops.domain.ApplicationStatus.APPROVED
+			   and (r.hostingStatus is null
+			        or r.hostingStatus not in (com.tetra.ops.domain.HostingStatus.ENDED,
+			                                   com.tetra.ops.domain.HostingStatus.END_FAILED)
+			        or r.startAt >= :since)
+			 order by r.startAt, r.eventId""")
+	List<WithTenantName> findMonitoringCandidates(@Param("since") LocalDateTime since);
+
 	/** OPS-06-2: 테넌트별, 신청시각 내림차순 (idx_registry_tenant_applied). */
 	List<EventRegistry> findByTenantIdOrderByAppliedAtDescEventIdDesc(String tenantId);
 

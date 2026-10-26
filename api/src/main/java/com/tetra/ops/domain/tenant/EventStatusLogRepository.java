@@ -1,5 +1,7 @@
 package com.tetra.ops.domain.tenant;
 
+import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -17,5 +19,9 @@ public interface EventStatusLogRepository extends JpaRepository<EventStatusLog, 
 			StatusType statusType, String newStatus);
 
 	List<EventStatusLog> findByEventIdOrderByLogIdAsc(Long eventId);
+
+	/** OPS-05 최근 자동화 실패: 이벤트들의 *_FAILED 로그 (idx_status_log_event). */
+	List<EventStatusLog> findByEventIdInAndNewStatusInAndChangedAtGreaterThanEqual(Collection<Long> eventIds,
+			Collection<String> newStatuses, LocalDateTime since);
 
 }

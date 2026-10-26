@@ -1,6 +1,9 @@
 package com.tetra.ops.config;
 
 import java.time.Duration;
+import java.util.Arrays;
+import java.util.List;
+import java.util.stream.Stream;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.bind.DefaultValue;
@@ -74,17 +77,60 @@ public record TetraProperties(
 	}
 
 	/**
-	 * 홈 모니터링 카드(Prometheus HTTP API, 인증 없음). prometheusUrl이 비어 있어도 기동한다 — 모니터링만 unavailable(stale).
-	 * refreshTimeout = 갱신 1회(쿼리 전부, 순차) 전체 상한. 넘으면 실패로 보고 마지막 값을 stale로 준다.
+	 * 홈 모니터링 카드 · OPS-05 트래픽 모니터링(Prometheus HTTP API, 인증 없음). prometheusUrl이 비어 있어도 기동한다 —
+	 * 모니터링만 unavailable(stale). refreshTimeout = 갱신 1회(쿼리 전부) 전체 상한. 넘으면 실패로 보고 마지막 값을 stale로 준다.
+	 * cacheTtl은 Prometheus · DB 공통. AWS는 aws.cacheTtl.
 	 */
 	public record Monitoring(@DefaultValue("") String prometheusUrl,
 			@NotNull @DefaultValue("PT2S") Duration connectTimeout,
 			@NotNull @DefaultValue("PT3S") Duration readTimeout,
 			@NotNull @DefaultValue("PT15S") Duration cacheTtl,
-			@NotNull @DefaultValue("PT8S") Duration refreshTimeout) {
+			@NotNull @DefaultValue("PT8S") Duration refreshTimeout,
+			@Valid @NotNull @DefaultValue MonitoringAws aws) {
 
 		public boolean configured() {
 			return prometheusUrl != null && !prometheusUrl.isBlank();
+		}
+
+	}
+
+	/**
+	 * OPS-05 AWS 지표(CloudWatch GetMetricData · ELB · RDS · ECS, 읽기 전용). 모두 선택 — 비어 있는 값의 항목만 null로 응답한다.
+	 * ALB · 대상 그룹 값은 CloudWatch 차원용 arn_suffix(app/… · targetgroup/…), *TgArn은 DescribeTargetHealth용 ARN.
+	 * issuanceAlbName은 이름 — 실행 중 DescribeLoadBalancers로 ARN을 얻어 캐시한다(ALB가 이벤트 때 다시 만들어질 수 있어서).
+	 * ecsServices · dlqNames는 쉼표 구분.
+	 */
+	public record MonitoringAws(@NotNull @DefaultValue("PT60S") Duration cacheTtl,
+			@NotNull @DefaultValue("PT10S") Duration refreshTimeout,
+			@DefaultValue("") String issuanceAlbName,
+			@DefaultValue("") String consoleAlb, @DefaultValue("") String portalAlb,
+			@DefaultValue("") String consoleTg, @DefaultValue("") String portalTg,
+			@DefaultValue("") String consoleTgArn, @DefaultValue("") String portalTgArn,
+			@DefaultValue("") String rdsId,
+			@DefaultValue("") String ecsCluster, @DefaultValue("") String ecsServices,
+			@DefaultValue("") String dlqNames) {
+
+		/** 하나라도 값이 있으면 AWS를 조회한다(전부 비면 aws.stale = true, 수치 null) */
+		public boolean configured() {
+			return Stream
+				.of(issuanceAlbName, consoleAlb, portalAlb, consoleTg, portalTg, consoleTgArn, portalTgArn, rdsId,
+						ecsCluster, dlqNames)
+				.anyMatch(v -> v != null && !v.isBlank());
+		}
+
+		public List<String> ecsServiceNames() {
+			return split(ecsServices);
+		}
+
+		public List<String> dlqNameList() {
+			return split(dlqNames);
+		}
+
+		private static List<String> split(String value) {
+			if (value == null || value.isBlank()) {
+				return List.of();
+			}
+			return Arrays.stream(value.split(",")).map(String::strip).filter(s -> !s.isEmpty()).toList();
 		}
 
 	}
