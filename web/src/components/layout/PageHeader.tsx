@@ -5,7 +5,7 @@ import { Box, IconButton, Link, Stack, Typography } from '@mui/material';
 import ArrowBackRoundedIcon from '@mui/icons-material/ArrowBackRounded';
 import MenuRoundedIcon from '@mui/icons-material/MenuRounded';
 import { layout, size, text, type } from '@/theme/theme';
-import { useLayout } from './LayoutContext';
+import { NAV_DRAWER_ID, SIDEBAR_BREAKPOINT, useLayout } from './LayoutContext';
 import UserMenu from './UserMenu';
 
 interface PageHeaderProps {
@@ -23,7 +23,7 @@ interface PageHeaderProps {
  * 레이아웃의 상단바 영역에 portal로 렌더링되어 가로 전체를 채운다. 제목은 한 번만 표시한다.
  */
 export default function PageHeader({ breadcrumbs, back, title, actions }: PageHeaderProps) {
-  const { openNav, topbar } = useLayout();
+  const { openNav, navOpen, topbar } = useLayout();
   if (!topbar) return null;
 
   // 제목이 따로 없으면 마지막 경로가 제목 → 경로 줄에서는 빼서 중복 표시하지 않음
@@ -33,7 +33,8 @@ export default function PageHeader({ breadcrumbs, back, title, actions }: PageHe
   return createPortal(
     <Box sx={{ maxWidth: layout.pageMaxWidth, mx: 'auto', px: { xs: layout.pagePaddingXMobile, md: layout.pagePaddingX }, py: layout.topbarPaddingY }}>
       <Stack direction="row" alignItems="flex-start" spacing={1}>
-        <IconButton onClick={openNav} sx={{ display: { md: 'none' }, ml: -1 }} aria-label="메뉴 열기">
+        {/* 햄버거 — 고정 사이드바가 없는 좁은 화면에서만(헤더 왼쪽) */}
+        <IconButton onClick={openNav} sx={{ display: { [SIDEBAR_BREAKPOINT]: 'none' }, ml: -1 }} aria-label="메뉴 열기" aria-controls={NAV_DRAWER_ID} aria-expanded={navOpen}>
           <MenuRoundedIcon />
         </IconButton>
 
