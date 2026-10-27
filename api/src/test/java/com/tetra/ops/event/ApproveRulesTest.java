@@ -24,34 +24,53 @@ class ApproveRulesTest {
 
 	@Test
 	void constantsComeFromWorkflows() {
-		assertThat(ApproveRules.HOSTING_LEAD_BEFORE_START).hasMinutes(90);
+		// TEST-LEAD: 서비스 값 90
+		// assertThat(ApproveRules.HOSTING_LEAD_BEFORE_START).hasMinutes(90);
+		assertThat(ApproveRules.HOSTING_LEAD_BEFORE_START).hasMinutes(15); // TEST-LEAD
 		assertThat(ApproveRules.SCHEDULE_GAP).hasMinutes(10);
-		assertThat(ApproveRules.APPROVE_MIN_LEAD).hasMinutes(30);
+		// TEST-LEAD: 서비스 값 30
+		// assertThat(ApproveRules.APPROVE_MIN_LEAD).hasMinutes(30);
+		assertThat(ApproveRules.APPROVE_MIN_LEAD).hasMinutes(10); // TEST-LEAD
 	}
 
 	@Test
 	void hostingStartMustBeAtLeast100MinutesBeforeStart() {
-		assertThat(codes(START.minusMinutes(100), START, NOW)).isEmpty();
-		assertThat(codes(START.minusMinutes(101), START, NOW)).isEmpty();
-		// 99분 전 · 90분 전(WF2-1과 WF2-2가 같은 시각) · 같은 시각 · 시작 뒤는 막는다
-		for (LocalDateTime hostingStart : List.of(START.minusMinutes(99), START.minusMinutes(90), START, START.plusMinutes(1))) {
+		// TEST-LEAD: 서비스 값 100 · 101 · 99 · 90
+		// assertThat(codes(START.minusMinutes(100), START, NOW)).isEmpty();
+		// assertThat(codes(START.minusMinutes(101), START, NOW)).isEmpty();
+		// for (LocalDateTime hostingStart : List.of(START.minusMinutes(99), START.minusMinutes(90), START, START.plusMinutes(1))) {
+		assertThat(codes(START.minusMinutes(25), START, NOW)).isEmpty(); // TEST-LEAD
+		assertThat(codes(START.minusMinutes(26), START, NOW)).isEmpty(); // TEST-LEAD
+		// 24분 전 · 15분 전(WF2-1과 WF2-2가 같은 시각) · 같은 시각 · 시작 뒤는 막는다
+		for (LocalDateTime hostingStart : List.of(START.minusMinutes(24), START.minusMinutes(15), START, START.plusMinutes(1))) { // TEST-LEAD
 			assertThat(codes(hostingStart, START, NOW)).as(hostingStart.toString()).containsExactly(ApproveRules.HOSTING_START_TOO_LATE);
 		}
-		assertThat(ApproveRules.dataReasons("이벤트", "https://a.com", START.minusMinutes(60), START, NOW))
-			.containsEntry(ApproveRules.HOSTING_START_TOO_LATE,
-					"호스팅 시작은 이벤트 시작 100분 전까지여야 합니다. (호스팅 시작 10.25 12:00 · 이벤트 시작 10.25 13:00)");
+		// TEST-LEAD: 서비스 값 START − 60분 · 100분
+		// assertThat(ApproveRules.dataReasons("이벤트", "https://a.com", START.minusMinutes(60), START, NOW))
+		// 	.containsEntry(ApproveRules.HOSTING_START_TOO_LATE,
+		// 			"호스팅 시작은 이벤트 시작 100분 전까지여야 합니다. (호스팅 시작 10.25 12:00 · 이벤트 시작 10.25 13:00)");
+		assertThat(ApproveRules.dataReasons("이벤트", "https://a.com", START.minusMinutes(20), START, NOW)) // TEST-LEAD
+			.containsEntry(ApproveRules.HOSTING_START_TOO_LATE, // TEST-LEAD
+					"호스팅 시작은 이벤트 시작 25분 전까지여야 합니다. (호스팅 시작 10.25 12:40 · 이벤트 시작 10.25 13:00)"); // TEST-LEAD
 	}
 
 	@Test
 	void hostingStartMustBeAtLeast30MinutesAfterApproval() {
 		LocalDateTime start = NOW.plusDays(1);
-		assertThat(codes(NOW.plusMinutes(30), start, NOW)).isEmpty();
-		assertThat(codes(NOW.plusMinutes(29).plusSeconds(59), start, NOW)).containsExactly(ApproveRules.HOSTING_START_TOO_SOON);
+		// TEST-LEAD: 서비스 값 30 · 29분 59초
+		// assertThat(codes(NOW.plusMinutes(30), start, NOW)).isEmpty();
+		// assertThat(codes(NOW.plusMinutes(29).plusSeconds(59), start, NOW)).containsExactly(ApproveRules.HOSTING_START_TOO_SOON);
+		assertThat(codes(NOW.plusMinutes(10), start, NOW)).isEmpty(); // TEST-LEAD
+		assertThat(codes(NOW.plusMinutes(9).plusSeconds(59), start, NOW)).containsExactly(ApproveRules.HOSTING_START_TOO_SOON); // TEST-LEAD
 		// 이미 지난 호스팅 시작도 같은 사유
 		assertThat(codes(NOW.minusDays(1), start, NOW)).containsExactly(ApproveRules.HOSTING_START_TOO_SOON);
-		assertThat(ApproveRules.dataReasons("이벤트", "https://a.com", NOW.plusMinutes(10), start, NOW))
-			.containsEntry(ApproveRules.HOSTING_START_TOO_SOON,
-					"호스팅 시작까지 30분 이상 남아 있어야 승인할 수 있습니다. (호스팅 시작 10.24 09:10)");
+		// TEST-LEAD: 서비스 값 NOW + 10분 · 30분
+		// assertThat(ApproveRules.dataReasons("이벤트", "https://a.com", NOW.plusMinutes(10), start, NOW))
+		// 	.containsEntry(ApproveRules.HOSTING_START_TOO_SOON,
+		// 			"호스팅 시작까지 30분 이상 남아 있어야 승인할 수 있습니다. (호스팅 시작 10.24 09:10)");
+		assertThat(ApproveRules.dataReasons("이벤트", "https://a.com", NOW.plusMinutes(5), start, NOW)) // TEST-LEAD
+			.containsEntry(ApproveRules.HOSTING_START_TOO_SOON, // TEST-LEAD
+					"호스팅 시작까지 10분 이상 남아 있어야 승인할 수 있습니다. (호스팅 시작 10.24 09:05)"); // TEST-LEAD
 	}
 
 	@ParameterizedTest
@@ -91,7 +110,9 @@ class ApproveRulesTest {
 	@Test
 	void redisWindowStartsAt90MinutesBeforeStart() {
 		assertThat(ApproveRules.redisWindow(START, START.plusHours(5)))
-			.isEqualTo(new Window(START.minusMinutes(90), START.plusHours(5)));
+			// TEST-LEAD: 서비스 값 90
+			// .isEqualTo(new Window(START.minusMinutes(90), START.plusHours(5)));
+			.isEqualTo(new Window(START.minusMinutes(15), START.plusHours(5))); // TEST-LEAD
 	}
 
 	@Test

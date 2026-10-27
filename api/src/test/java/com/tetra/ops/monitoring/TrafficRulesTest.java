@@ -123,7 +123,9 @@ class TrafficRulesTest {
 		assertThat(TrafficRules.automation(List.of(), null, List.of("7번 준비 12분 지연", "8번 종료 11분 지연")))
 			.isEqualTo(new Judgment(MonitoringLevel.WARN, "7번 준비 12분 지연 외 1"));
 
-		LocalDateTime start = now.plusMinutes(48); // 입장 = now − 12분
+		// TEST-LEAD: 서비스 값 now + 48분(입장 −60)
+		// LocalDateTime start = now.plusMinutes(48); // 입장 = now − 12분
+		LocalDateTime start = now.minusMinutes(7); // 입장 = now − 12분 // TEST-LEAD
 		var late = new MonitoredEvent(7L, "aaaaaaaaaaaa", "A사", "쿠폰", start.minusHours(2), start, start.plusHours(2),
 				EventStatus.SCHEDULED, HostingStatus.HOSTING, 5000L);
 		assertThat(TrafficRules.delays(List.of(late), now)).containsExactly("7번 준비 12분 지연");
@@ -163,11 +165,17 @@ class TrafficRulesTest {
 	void phaseByTimeAndStatus() {
 		LocalDateTime start = LocalDateTime.of(2026, 10, 26, 15, 0);
 		LocalDateTime end = start.plusMinutes(40);
-		assertThat(EventPhase.of(start, end, EventStatus.SCHEDULED, HostingStatus.HOSTING, start.minusMinutes(71)))
+		// TEST-LEAD: 서비스 값 71
+		// assertThat(EventPhase.of(start, end, EventStatus.SCHEDULED, HostingStatus.HOSTING, start.minusMinutes(71)))
+		assertThat(EventPhase.of(start, end, EventStatus.SCHEDULED, HostingStatus.HOSTING, start.minusMinutes(16))) // TEST-LEAD
 			.isEqualTo(EventPhase.SCHEDULED);
-		assertThat(EventPhase.of(start, end, EventStatus.SCHEDULED, HostingStatus.HOSTING, start.minusMinutes(70)))
+		// TEST-LEAD: 서비스 값 70
+		// assertThat(EventPhase.of(start, end, EventStatus.SCHEDULED, HostingStatus.HOSTING, start.minusMinutes(70)))
+		assertThat(EventPhase.of(start, end, EventStatus.SCHEDULED, HostingStatus.HOSTING, start.minusMinutes(15))) // TEST-LEAD
 			.isEqualTo(EventPhase.PRE_ENTRY);
-		assertThat(EventPhase.of(start, end, EventStatus.OPEN, HostingStatus.HOSTING, start.minusMinutes(60)))
+		// TEST-LEAD: 서비스 값 60
+		// assertThat(EventPhase.of(start, end, EventStatus.OPEN, HostingStatus.HOSTING, start.minusMinutes(60)))
+		assertThat(EventPhase.of(start, end, EventStatus.OPEN, HostingStatus.HOSTING, start.minusMinutes(5))) // TEST-LEAD
 			.isEqualTo(EventPhase.LIVE);
 		assertThat(EventPhase.of(start, end, EventStatus.OPEN, HostingStatus.HOSTING, end)).isEqualTo(EventPhase.ENDED);
 		assertThat(EventPhase.of(start, end, EventStatus.EXPIRED, HostingStatus.ENDED, start)).isEqualTo(EventPhase.ENDED);
@@ -182,8 +190,11 @@ class TrafficRulesTest {
 		TrafficWindow entry = TrafficWindow.of(EventPhase.LIVE, null, start, start.plusMinutes(40), now,
 				TrafficWindow.PROMETHEUS_MIN_STEP);
 		assertThat(entry.key()).isEqualTo("entry");
-		assertThat(Duration.between(entry.from(), entry.to())).isEqualTo(Duration.ofMinutes(80));
-		assertThat(entry.step()).isEqualTo(Duration.ofSeconds(30)); // 4800초 ÷ 300 = 16초 → 15초 배수 올림
+		// TEST-LEAD: 서비스 값 80분 · 30초
+		// assertThat(Duration.between(entry.from(), entry.to())).isEqualTo(Duration.ofMinutes(80));
+		// assertThat(entry.step()).isEqualTo(Duration.ofSeconds(30)); // 4800초 ÷ 300 = 16초 → 15초 배수 올림
+		assertThat(Duration.between(entry.from(), entry.to())).isEqualTo(Duration.ofMinutes(25)); // TEST-LEAD
+		assertThat(entry.step()).isEqualTo(Duration.ofSeconds(15)); // 1500초 ÷ 300 = 5초 → 최소 15초 // TEST-LEAD
 		assertThat(TrafficWindow.of(EventPhase.LIVE, "15m", start, null, now, TrafficWindow.PROMETHEUS_MIN_STEP).step())
 			.isEqualTo(Duration.ofSeconds(15));
 		// 종료 상태에서 15m은 기본값 full로
@@ -191,7 +202,9 @@ class TrafficRulesTest {
 		TrafficWindow full = TrafficWindow.of(EventPhase.ENDED, "15m", start, start.plusMinutes(40), later,
 				TrafficWindow.AWS_MIN_STEP);
 		assertThat(full.key()).isEqualTo("full");
-		assertThat(Duration.between(full.from(), full.to())).isEqualTo(Duration.ofMinutes(120));
+		// TEST-LEAD: 서비스 값 120
+		// assertThat(Duration.between(full.from(), full.to())).isEqualTo(Duration.ofMinutes(120));
+		assertThat(Duration.between(full.from(), full.to())).isEqualTo(Duration.ofMinutes(65)); // TEST-LEAD
 		assertThat(full.step()).isEqualTo(Duration.ofSeconds(60));
 		TrafficWindow around = TrafficWindow.of(EventPhase.ENDED, "start", start, start.plusMinutes(40), later,
 				TrafficWindow.PROMETHEUS_MIN_STEP);
