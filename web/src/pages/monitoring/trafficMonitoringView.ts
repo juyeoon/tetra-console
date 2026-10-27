@@ -423,9 +423,12 @@ export interface EventOption {
   label: string;
 }
 
-/** 드롭다운 항목(서버 순서: 진행 중 → 오늘 예정 → 최근 종료). 고른 이벤트가 목록에 없으면 맨 앞에 붙인다 */
+/** 드롭다운 항목(서버 순서: 진행 중 → 오늘 예정 → 최근 종료). 같은 이벤트는 처음 것만. 고른 이벤트가 목록에 없으면 맨 앞에 붙인다 */
 export function eventOptions(events: TrafficEventsResponse | undefined, selected: number | null, now: Date): EventOption[] {
-  const options = (events?.items ?? []).map((item) => ({ value: item.eventId, label: `${eventTitle(item)} · ${eventStatusText(item, now)}` }));
+  const seen = new Set<number>();
+  const options = (events?.items ?? [])
+    .filter((item) => !seen.has(item.eventId) && seen.add(item.eventId))
+    .map((item) => ({ value: item.eventId, label: `${eventTitle(item)} · ${eventStatusText(item, now)}` }));
   if (selected != null && !options.some((o) => o.value === selected)) {
     options.unshift({ value: selected, label: `${selected} · 목록 밖 이벤트(최근 7일 이전)` });
   }

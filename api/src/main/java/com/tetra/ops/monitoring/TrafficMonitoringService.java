@@ -7,11 +7,13 @@ import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.function.UnaryOperator;
@@ -328,6 +330,8 @@ public class TrafficMonitoringService {
 		List<MonitoredEvent> today = db.events()
 			.stream()
 			.filter(e -> e.eventStatus() == EventStatus.SCHEDULED && e.startAt().toLocalDate().equals(now.toLocalDate()))
+			// DB 상태는 SCHEDULED여도 hosting_end_at이 지났으면(호스팅 안 된 DEPLOY_FAILED 등) 최근 종료에만 넣는다
+			.filter(e -> endedAt(e, now) == null)
 			.sorted(Comparator.comparing(MonitoredEvent::entryAt).thenComparing(MonitoredEvent::eventId))
 			.toList();
 		today.forEach(e -> items.add(item(e, Group.TODAY, null, now)));
@@ -343,6 +347,9 @@ public class TrafficMonitoringService {
 				.thenComparing(MonitoredEvent::eventId))
 			.toList();
 		ended.forEach(e -> items.add(item(e, Group.ENDED, null, now)));
+		// 같은 이벤트는 한 번만(앞 그룹 우선)
+		Set<Long> seen = new HashSet<>();
+		items.removeIf(i -> !seen.add(i.eventId()));
 		Long defaultEventId = items.isEmpty() ? null : items.get(0).eventId();
 		return new TrafficEventsResponse(defaultEventId, items);
 	}
