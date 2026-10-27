@@ -134,6 +134,12 @@ class TrafficCatalog {
 			failedLogs.addAll(tenantRows.failedLogs());
 		}
 
+		// 이벤트 · 실패 상태별 마지막 실패 시각(목록의 failedAt)
+		Map<Long, Map<String, LocalDateTime>> lastFailed = new HashMap<>();
+		for (EventStatusLog l : failedLogs) {
+			lastFailed.computeIfAbsent(l.getEventId(), id -> new HashMap<>())
+				.merge(l.getNewStatus(), l.getChangedAt(), (a, b) -> a.isAfter(b) ? a : b);
+		}
 		List<MonitoredEvent> events = new ArrayList<>();
 		Map<Long, String[]> names = new HashMap<>();
 		for (EventRegistryRepository.WithTenantName row : rows) {
@@ -143,9 +149,12 @@ class TrafficCatalog {
 				continue;
 			}
 			Event e = eventRows.get(r.getEventId());
-			events.add(new MonitoredEvent(r.getEventId(), r.getTenantId(), row.tenantName(), r.getName(),
+			MonitoredEvent base = new MonitoredEvent(r.getEventId(), r.getTenantId(), row.tenantName(), r.getName(),
 					r.getHostingStartAt(), r.getStartAt(), e == null ? null : e.getHostingEndAt(), r.getEventStatus(),
-					r.getHostingStatus(), e == null ? null : e.getStockCount()));
+					r.getHostingStatus(), e == null ? null : e.getStockCount(), null);
+			String failedStatus = base.failedStatus();
+			events.add(failedStatus == null ? base : base.withFailedAt(
+					lastFailed.getOrDefault(r.getEventId(), Map.of()).get(failedStatus)));
 		}
 		return new Snapshot(now, List.copyOf(events), failures(urgent, failedLogs, failedSince, names));
 	}

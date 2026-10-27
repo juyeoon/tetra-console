@@ -41,7 +41,7 @@ public class TrafficMonitoringController {
 	}
 
 	@Operation(summary = "OPS-05 이벤트 진행 단계 · KPI · 그래프",
-			description = "phase(SCHEDULED · PRE_ENTRY · LIVE · ENDED · PREPARE_FAILED)에 따라 kpi · range · charts가 달라진다. "
+			description = "phase(SCHEDULED · PRE_ENTRY · ENTRY_OPEN · LIVE · ENDED · PREPARE_FAILED · DEPLOY_FAILED · HOSTING_FAILED)에 따라 kpi · range · charts가 달라진다. "
 					+ "없는 이벤트 404 EVENT_NOT_FOUND, 테넌트 준비 전 409 TENANT_NOT_READY, 모르는 range 400")
 	@GetMapping("/events/{eventId}")
 	public TrafficEventResponse event(@PathVariable Long eventId,

@@ -21,17 +21,20 @@ public record TrafficEventsResponse(
 		OPEN,
 		/** 오늘(KST) 시작 예정(SCHEDULED). 입장 전(T−90 ~ T−60)도 여기 */
 		TODAY,
-		/** 최근 7일 안에 종료(hosting_end_at) 또는 준비 실패(입장 예정 시각 기준) */
+		/** 최근 7일 안에 종료(hosting_end_at) · 준비 실패(입장 예정 시각) · 배포 실패(실패 시각, 없으면 입장 예정 시각) ·
+		 * hosting_end_at이 지난 호스팅 실패 */
 		ENDED
 	}
 
 	/**
 	 * level · reason은 OPEN만(나머지 null). endAt = hosting_end_at(WF4, 테넌트가 READY가 아니면 null).
-	 * 화면 표기: OPEN "진행 중", TODAY "입장 HH:mm 예정", ENDED "종료 MM-dd" · PREPARE_FAILED "준비 실패(MM-dd)"
+	 * failedAt = 지금 실패 상태(DEPLOY_FAILED · HOSTING_FAILED · OPEN_FAILED)로 바뀐 마지막 로그 시각(최근 7일, 없으면 null).
+	 * 화면 표기: phase 이름 + 시각 — "예정 · 15:00 시작" · "종료 · 10-24 15:40" · "준비 실패 · 입장 시각" · "배포 실패 · 실패 시각"
 	 */
 	public record Item(Long eventId, String tenantId, String tenantName, String name, Group group, EventPhase phase,
 			MonitoringLevel level, String reason, OffsetDateTime prepareAt, OffsetDateTime entryAt,
-			OffsetDateTime startAt, OffsetDateTime endAt, EventStatus eventStatus, HostingStatus hostingStatus) {
+			OffsetDateTime startAt, OffsetDateTime endAt, EventStatus eventStatus, HostingStatus hostingStatus,
+			OffsetDateTime failedAt) {
 	}
 
 }

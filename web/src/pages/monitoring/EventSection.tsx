@@ -16,6 +16,7 @@ import {
   LIST_ORDER_TEXT,
   liveKpiGroups,
   NO_EVENT_TEXT,
+  OPEN_GROUP_TEXT,
   rangeButtons,
   sectionStatus,
   stepViews,
@@ -59,49 +60,52 @@ function Notice({ title, description, tone, action }: { title: string; descripti
   );
 }
 
-/** C · D 이벤트 구역 — 드롭다운 · 진행 단계 7개 · (상태에 따라) KPI · 그래프 7개 */
+/** C · D 이벤트 구역 — 드롭다운 · 진행 단계 8개 · (상태에 따라) KPI · 그래프 7개 */
 export default function EventSection({ options, selected, onSelect, detail, failed, listLoading, onRange, now }: EventSectionProps) {
   const status = sectionStatus(detail);
   const noEvents = !listLoading && options.length === 0;
   return (
     <Card sx={{ p: 3 }}>
-      <Stack direction={{ xs: 'column', md: 'row' }} alignItems={{ md: 'center' }} justifyContent="space-between" spacing={1.5}>
-        <Stack direction="row" alignItems="center" spacing={1.5} sx={{ minWidth: 0 }}>
-          <Typography variant="h4" component="h3">
-            이벤트
-          </Typography>
-          <TextField
-            select
-            size="small"
-            value={selected ?? ''}
-            disabled={noEvents || listLoading}
-            onChange={(e) => onSelect(Number(e.target.value))}
-            sx={{ minWidth: { xs: 0, sm: 360 }, flex: { xs: 1, sm: 'none' } }}
-            slotProps={{ select: { displayEmpty: true, renderValue: (v) => (v === '' ? (noEvents ? NO_EVENT_TEXT : '불러오는 중') : options.find((o) => o.value === v)?.label ?? String(v)) } }}
-          >
-            {options.map((o) => (
-              <MenuItem key={o.value} value={o.value}>
-                {o.label}
-              </MenuItem>
-            ))}
-          </TextField>
-        </Stack>
-        <Stack direction="row" alignItems="center" spacing={1} flexWrap="wrap" useFlexGap>
-          <Typography variant="caption" sx={{ color: text.tertiary }}>
+      {/* 왼쪽: 제목 · 드롭다운(남는 폭, 긴 항목은 말줄임) + 아래 줄 목록 순서 안내. 오른쪽: 상태 칩 · 갱신(줄지 않음) */}
+      <Stack direction={{ xs: 'column', md: 'row' }} alignItems={{ md: 'flex-start' }} justifyContent="space-between" spacing={1.5}>
+        <Box sx={{ flex: 1, minWidth: 0 }}>
+          <Stack direction="row" alignItems="center" spacing={1.5} sx={{ minWidth: 0 }}>
+            <Typography variant="h4" component="h3" sx={{ whiteSpace: 'nowrap', flexShrink: 0 }}>
+              이벤트
+            </Typography>
+            <TextField
+              select
+              size="small"
+              value={selected ?? ''}
+              disabled={noEvents || listLoading}
+              onChange={(e) => onSelect(Number(e.target.value))}
+              sx={{ flex: 1, minWidth: 0, maxWidth: 560 }}
+              slotProps={{ select: { displayEmpty: true, renderValue: (v) => (v === '' ? (noEvents ? NO_EVENT_TEXT : '불러오는 중') : options.find((o) => o.value === v)?.label ?? String(v)) } }}
+            >
+              {options.map((o) => (
+                <MenuItem key={o.value} value={o.value}>
+                  {o.label}
+                </MenuItem>
+              ))}
+            </TextField>
+          </Stack>
+          <Typography variant="caption" component="p" sx={{ color: text.tertiary, mt: 0.75 }}>
             {LIST_ORDER_TEXT}
           </Typography>
+        </Box>
+        <Stack direction="row" alignItems="center" spacing={1} flexWrap="wrap" useFlexGap sx={{ flexShrink: 0, pt: { md: 0.75 } }}>
           {status.chips.map((c) => (
             <StatusChip key={c.label} label={c.label} tone={c.tone} />
           ))}
           {detail && (
-            <Typography variant="caption" sx={{ color: text.tertiary }}>
+            <Typography variant="caption" sx={{ color: text.tertiary, whiteSpace: 'nowrap' }}>
               {status.refresh}
             </Typography>
           )}
         </Stack>
       </Stack>
 
-      {noEvents && <Notice tone="grey" title={NO_EVENT_TEXT} description="진행 중 · 오늘 예정 · 최근 7일 안에 종료된 이벤트가 없어요" />}
+      {noEvents && <Notice tone="grey" title={NO_EVENT_TEXT} description={`${OPEN_GROUP_TEXT} · 오늘 예정 · 최근 7일 안에 종료된 이벤트가 없어요`} />}
       {!noEvents && !detail && (failed ? <Notice tone="red" title="이벤트를 불러오지 못했습니다" description="이벤트 번호를 확인하거나 목록에서 다시 골라 주세요" /> : <QueryLoading minHeight={160} />)}
       {detail && <EventDetail detail={detail} onRange={onRange} now={now} />}
     </Card>

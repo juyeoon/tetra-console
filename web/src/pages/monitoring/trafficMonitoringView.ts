@@ -338,7 +338,7 @@ export function upcomingViews(upcoming: TrafficUpcoming[] | undefined, now: Date
 // ---------------------------------------------------------------- E 최근 자동화 실패
 
 export const FAILURE_STEP_LABEL: Record<TrafficFailure['step'], string> = {
-  DEPLOY: '등록(WF1-2) 실패',
+  DEPLOY: '배포(WF1-2) 실패',
   HOSTING_START: '호스팅 시작(WF2-1) 실패',
   PREPARE: '준비(WF2-2) 실패',
   END: '종료(WF4) 실패',
@@ -387,19 +387,24 @@ export function selectedEventId(param: string | null | undefined, events: Traffi
 
 /**
  * 이벤트 상태 — 이벤트 구역 배지와 드롭다운 항목이 같이 쓴다(서버 phase 기준: hosting_end_at이 지났으면 DB 상태가 OPEN이어도 '종료').
+ * 실패는 배포 → 호스팅 → 준비 순으로 시각 · 종료보다 먼저 본다(호스팅 실패는 hosting_end_at이 지나도 '호스팅 실패').
  */
 export const PHASE_META: Record<EventPhase, { label: string; tone: Tone }> = {
   SCHEDULED: { label: '예정', tone: 'grey' },
   PRE_ENTRY: { label: '입장 직전', tone: 'blue' },
+  ENTRY_OPEN: { label: '입장 중', tone: 'blue' },
   LIVE: { label: '진행 중', tone: 'blue' },
   ENDED: { label: '종료', tone: 'grey' },
   PREPARE_FAILED: { label: '준비 실패', tone: 'red' },
+  DEPLOY_FAILED: { label: '배포 실패', tone: 'red' },
+  HOSTING_FAILED: { label: '호스팅 실패', tone: 'red' },
 };
 
-/** 상태 옆 기준 시각: 예정 → 시작, 입장 직전 · 준비 실패 → 입장, 종료 → hosting_end_at, 진행 중 → 없음 */
-function phaseTime(phase: EventPhase, e: { entryAt: string; startAt: string; endAt: string | null }, now: Date): string | null {
+/** 상태 옆 기준 시각: 예정 · 입장 중 → 시작, 입장 직전 · 준비 실패 → 입장, 종료 → hosting_end_at, 배포 · 호스팅 실패 → 실패 시각, 진행 중 → 없음 */
+function phaseTime(phase: EventPhase, e: { entryAt: string; startAt: string; endAt: string | null; failedAt: string | null }, now: Date): string | null {
   switch (phase) {
     case 'SCHEDULED':
+    case 'ENTRY_OPEN':
       return `${clockText(e.startAt, now)} 시작`;
     case 'PRE_ENTRY':
       return `${clockText(e.entryAt, now)} 입장`;
@@ -407,13 +412,19 @@ function phaseTime(phase: EventPhase, e: { entryAt: string; startAt: string; end
       return clockText(e.entryAt, now);
     case 'ENDED':
       return e.endAt ? clockText(e.endAt, now) : null;
+    case 'DEPLOY_FAILED':
+    case 'HOSTING_FAILED':
+      return e.failedAt ? clockText(e.failedAt, now) : null;
     default:
       return null;
   }
 }
 
-/** 드롭다운 항목 끝 상태: '진행 중' · '예정 · 15:00 시작' · '입장 직전 · 14:00 입장' · '종료 · 10-24 15:40' · '준비 실패 · 10-25 14:00' */
-export function eventStatusText(item: Pick<TrafficEventItem, 'phase' | 'entryAt' | 'startAt' | 'endAt'>, now: Date): string {
+/**
+ * 드롭다운 항목 끝 상태: '진행 중' · '예정 · 15:00 시작' · '입장 직전 · 14:00 입장' · '입장 중 · 15:00 시작' · '종료 · 10-24 15:40' · '준비 실패 · 10-25 14:00' ·
+ * '배포 실패 · 10-26 14:05' · '호스팅 실패 · 13:50'
+ */
+export function eventStatusText(item: Pick<TrafficEventItem, 'phase' | 'entryAt' | 'startAt' | 'endAt' | 'failedAt'>, now: Date): string {
   const time = phaseTime(item.phase, item, now);
   return time ? `${PHASE_META[item.phase].label} · ${time}` : PHASE_META[item.phase].label;
 }
@@ -437,12 +448,14 @@ export function eventOptions(events: TrafficEventsResponse | undefined, selected
 
 export const NO_EVENT_TEXT = '최근 7일 이벤트 없음';
 
-export const LIST_ORDER_TEXT = '목록 순서: 진행 중 → 오늘 예정 → 최근 종료(7일)';
+/** 진행 중 묶음(event_status OPEN) 이름. 입장 ~ 시작 전(상태 '입장 중')도 들어 있다 */
+export const OPEN_GROUP_TEXT = '진행 중(입장 중 포함)';
+export const LIST_ORDER_TEXT = `목록 순서: ${OPEN_GROUP_TEXT} → 오늘 예정 → 최근 종료(7일)`;
 
 // ---------------------------------------------------------------- C 구역 상태 · 진행 단계
 
 export interface SectionStatusView {
-  /** 이벤트 상태(드롭다운과 같은 PHASE_META) + 진행 중 · 입장 직전이면 판정(정상 · 주의 · 위험 · 확인 불가) */
+  /** 이벤트 상태(드롭다운과 같은 PHASE_META) + 입장 직전 · 입장 중 · 진행 중이면 판정(정상 · 주의 · 위험 · 확인 불가) */
   chips: { label: string; tone: Tone }[];
   refresh: string;
   /** 종료면 false — 다시 부르지 않음 */
@@ -455,7 +468,7 @@ export function sectionStatus(event: TrafficEventResponse | undefined): SectionS
   if (!event) return { chips: [], refresh, autoRefresh: true };
   const phase = event.event.phase;
   const chips = [PHASE_META[phase]];
-  if (phase === 'PRE_ENTRY' || phase === 'LIVE') chips.push(LEVEL_META[event.kpi?.level ?? 'UNKNOWN']);
+  if (phase === 'PRE_ENTRY' || phase === 'ENTRY_OPEN' || phase === 'LIVE') chips.push(LEVEL_META[event.kpi?.level ?? 'UNKNOWN']);
   return phase === 'ENDED' ? { chips, refresh: '자동 갱신 꺼짐', autoRefresh: false } : { chips, refresh, autoRefresh: true };
 }
 
@@ -464,6 +477,7 @@ export const stopPollingWhen = (event: TrafficEventResponse) => event.event.phas
 
 const STEP_LABEL: Record<TrafficStep['key'], string> = {
   APPROVE: '승인',
+  DEPLOY: '배포',
   HOSTING_START: '호스팅 시작',
   // TEST-LEAD: 서비스 값 T−90 · T−60
   // PREPARE: '준비 (T−90)',
@@ -476,7 +490,7 @@ const STEP_LABEL: Record<TrafficStep['key'], string> = {
 };
 
 const STEP_FAILURE_LABEL: Partial<Record<TrafficStep['key'], string>> = {
-  APPROVE: '등록(WF1-2) 실패',
+  DEPLOY: '배포(WF1-2) 실패',
   HOSTING_START: '호스팅 시작(WF2-1) 실패',
   PREPARE: '준비(WF2-2) 실패',
   END: '종료(WF4) 실패',
@@ -490,8 +504,8 @@ export interface StepView {
 }
 
 /**
- * 7단계 아래 글자: '13:30 완료 · 3분 20초' · '15:00 진행 중' · '15:40 예정' · '16:09 기록 없음'(계획 시각이 지났는데 완료 기록이 없음) ·
- * '종료 뒤' · '10-25 13:31 실패' · '진행 안 됨'. 시각은 오늘이 아니면 날짜 포함(clockText)
+ * 8단계 아래 글자: '13:30 완료 · 3분 20초' · '13:30 진행 중' · '14:55 시작 · 진행 중'(입장 · 시작) · '15:40 예정' · '16:09 기록 없음'(계획 시각이 지났는데 완료 기록이 없음) ·
+ * '배포 중' · '종료 뒤' · '10-25 13:31 실패' · '진행 안 됨'(앞 단계 실패). 시각은 오늘이 아니면 날짜 포함(clockText)
  */
 export function stepViews(steps: TrafficStep[] | undefined, now: Date): StepView[] {
   const when = (iso: string) => clockText(iso, now);
@@ -504,8 +518,14 @@ export function stepViews(steps: TrafficStep[] | undefined, now: Date): StepView
         break;
       }
       case 'ACTIVE': {
+        if (s.key === 'DEPLOY') {
+          sub = '배포 중';
+          break;
+        }
         const t = s.actualAt ?? s.plannedAt;
-        sub = t ? `${when(t)} ${now.getTime() >= Date.parse(t) ? '진행 중' : '예정'}` : '진행 중';
+        // 입장 · 시작은 시작한 시각을 붙인다(입장 = OPEN 로그, 시작 = 시작 시각)
+        const running = s.key === 'ENTRY' || s.key === 'START' ? '시작 · 진행 중' : '진행 중';
+        sub = t ? `${when(t)} ${now.getTime() >= Date.parse(t) ? running : '예정'}` : '진행 중';
         break;
       }
       case 'FAILED': {
@@ -514,7 +534,7 @@ export function stepViews(steps: TrafficStep[] | undefined, now: Date): StepView
         break;
       }
       case 'SKIPPED':
-        sub = s.key === 'END' || s.key === 'AGGREGATE' ? EMPTY : '진행 안 됨';
+        sub = '진행 안 됨';
         break;
       default:
         sub = s.plannedAt
@@ -527,11 +547,18 @@ export function stepViews(steps: TrafficStep[] | undefined, now: Date): StepView
   });
 }
 
-/** C·D 구역 본문(명세 4절): 예정 · 준비 실패는 그래프 · KPI 대신 안내 */
+/** C·D 구역 본문(명세 4절): 예정 · 실패(배포 · 호스팅 · 준비)는 그래프 · KPI 대신 안내 */
 export type EventBody =
   | { kind: 'scheduled'; title: string; description: string }
   | { kind: 'failed'; title: string; description: string; link: string }
   | { kind: 'metrics' };
+
+/** 실패 상태별 안내: 실패한 단계가 응답에 없을 때의 이름 · 그래프가 없는 이유 */
+const FAILED_BODY: Partial<Record<EventPhase, { label: string; description: string }>> = {
+  DEPLOY_FAILED: { label: '배포(WF1-2) 실패', description: '배포가 끝나지 않아 이벤트가 열리지 않았어요 · 그래프·KPI가 없어요' },
+  HOSTING_FAILED: { label: '호스팅 시작(WF2-1) 실패', description: '이벤트 페이지가 열리지 않아 그래프·KPI가 없어요' },
+  PREPARE_FAILED: { label: '준비(WF2-2) 실패', description: '입장 게이트가 열리지 않아 그래프·KPI가 없어요' },
+};
 
 export function eventBody(event: TrafficEventResponse): EventBody {
   const phase: EventPhase = event.event.phase;
@@ -543,13 +570,14 @@ export function eventBody(event: TrafficEventResponse): EventBody {
       description: `그래프와 KPI는 입장 10분 전(${chartFrom})부터 표시돼요 · 사전 점검은 위쪽 노드·플랫폼 칸에서`,
     };
   }
-  if (phase === 'PREPARE_FAILED') {
+  const failure = FAILED_BODY[phase];
+  if (failure) {
     const failed = event.steps.find((s) => s.state === 'FAILED');
-    const label = (failed && STEP_FAILURE_LABEL[failed.key]) ?? '준비(WF2-2) 실패';
+    const label = (failed && STEP_FAILURE_LABEL[failed.key]) ?? failure.label;
     return {
       kind: 'failed',
       title: failed?.reason ? `${label} — ${failed.reason}` : label,
-      description: '입장 게이트가 열리지 않아 그래프·KPI가 없어요',
+      description: failure.description,
       link: `/events/progress/${event.event.eventId}`,
     };
   }

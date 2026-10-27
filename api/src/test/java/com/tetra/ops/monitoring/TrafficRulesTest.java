@@ -127,15 +127,15 @@ class TrafficRulesTest {
 		// LocalDateTime start = now.plusMinutes(48); // 입장 = now − 12분
 		LocalDateTime start = now.minusMinutes(7); // 입장 = now − 12분 // TEST-LEAD
 		var late = new MonitoredEvent(7L, "aaaaaaaaaaaa", "A사", "쿠폰", start.minusHours(2), start, start.plusHours(2),
-				EventStatus.SCHEDULED, HostingStatus.HOSTING, 5000L);
+				EventStatus.SCHEDULED, HostingStatus.HOSTING, 5000L, null);
 		assertThat(TrafficRules.delays(List.of(late), now)).containsExactly("7번 준비 12분 지연");
 		// 10분 이내면 지연 아님
 		assertThat(TrafficRules.delays(List.of(late), now.minusMinutes(3))).isEmpty();
 		var open = new MonitoredEvent(8L, "aaaaaaaaaaaa", "A사", "쿠폰", start.minusHours(2), start, now.minusMinutes(11),
-				EventStatus.OPEN, HostingStatus.HOSTING, 5000L);
+				EventStatus.OPEN, HostingStatus.HOSTING, 5000L, null);
 		assertThat(TrafficRules.delays(List.of(open), now)).containsExactly("8번 종료 11분 지연");
 		var hosting = new MonitoredEvent(9L, "aaaaaaaaaaaa", "A사", "쿠폰", now.minusMinutes(15), now.plusHours(3),
-				now.plusHours(5), EventStatus.SCHEDULED, HostingStatus.DEPLOYED, 5000L);
+				now.plusHours(5), EventStatus.SCHEDULED, HostingStatus.DEPLOYED, 5000L, null);
 		assertThat(TrafficRules.delays(List.of(hosting), now)).containsExactly("9번 호스팅 시작 15분 지연");
 	}
 
@@ -173,14 +173,40 @@ class TrafficRulesTest {
 		// assertThat(EventPhase.of(start, end, EventStatus.SCHEDULED, HostingStatus.HOSTING, start.minusMinutes(70)))
 		assertThat(EventPhase.of(start, end, EventStatus.SCHEDULED, HostingStatus.HOSTING, start.minusMinutes(15))) // TEST-LEAD
 			.isEqualTo(EventPhase.PRE_ENTRY);
+		// 입장 ~ 시작 전은 입장 중, 시작부터 진행 중
 		// TEST-LEAD: 서비스 값 60
 		// assertThat(EventPhase.of(start, end, EventStatus.OPEN, HostingStatus.HOSTING, start.minusMinutes(60)))
 		assertThat(EventPhase.of(start, end, EventStatus.OPEN, HostingStatus.HOSTING, start.minusMinutes(5))) // TEST-LEAD
-			.isEqualTo(EventPhase.LIVE);
+			.isEqualTo(EventPhase.ENTRY_OPEN);
+		assertThat(EventPhase.of(start, end, EventStatus.OPEN, HostingStatus.HOSTING, start.minusSeconds(1)))
+			.isEqualTo(EventPhase.ENTRY_OPEN);
+		assertThat(EventPhase.of(start, end, EventStatus.OPEN, HostingStatus.HOSTING, start)).isEqualTo(EventPhase.LIVE);
+		assertThat(EventPhase.ENTRY_OPEN.entryOpened()).isTrue();
+		assertThat(EventPhase.ENTRY_OPEN.hasMetrics()).isTrue();
+		assertThat(EventPhase.PRE_ENTRY.entryOpened()).isFalse();
 		assertThat(EventPhase.of(start, end, EventStatus.OPEN, HostingStatus.HOSTING, end)).isEqualTo(EventPhase.ENDED);
 		assertThat(EventPhase.of(start, end, EventStatus.EXPIRED, HostingStatus.ENDED, start)).isEqualTo(EventPhase.ENDED);
 		assertThat(EventPhase.of(start, end, EventStatus.OPEN_FAILED, HostingStatus.HOSTING, start))
 			.isEqualTo(EventPhase.PREPARE_FAILED);
+	}
+
+	@Test
+	void failurePhasesComeFirst() {
+		LocalDateTime start = LocalDateTime.of(2026, 10, 26, 15, 0);
+		LocalDateTime end = start.plusMinutes(40);
+		// 배포 실패 → 호스팅 실패 → 준비 실패 → 종료 순으로 먼저 본다(시각 · 다른 실패와 상관없이)
+		assertThat(EventPhase.of(start, end, EventStatus.SCHEDULED, HostingStatus.DEPLOY_FAILED, start.minusDays(1)))
+			.isEqualTo(EventPhase.DEPLOY_FAILED);
+		assertThat(EventPhase.of(start, end, EventStatus.OPEN_FAILED, HostingStatus.DEPLOY_FAILED, end))
+			.isEqualTo(EventPhase.DEPLOY_FAILED);
+		assertThat(EventPhase.of(start, end, EventStatus.SCHEDULED, HostingStatus.HOSTING_FAILED, start))
+			.isEqualTo(EventPhase.HOSTING_FAILED);
+		assertThat(EventPhase.of(start, end, EventStatus.OPEN_FAILED, HostingStatus.HOSTING_FAILED, end.plusDays(1)))
+			.isEqualTo(EventPhase.HOSTING_FAILED);
+		assertThat(EventPhase.of(start, end, EventStatus.OPEN_FAILED, HostingStatus.HOSTING, end.plusDays(1)))
+			.isEqualTo(EventPhase.PREPARE_FAILED);
+		assertThat(EventPhase.HOSTING_FAILED.hasMetrics()).isFalse();
+		assertThat(EventPhase.DEPLOY_FAILED.hasMetrics()).isFalse();
 	}
 
 	@Test
@@ -197,6 +223,11 @@ class TrafficRulesTest {
 		assertThat(entry.step()).isEqualTo(Duration.ofSeconds(15)); // 1500초 ÷ 300 = 5초 → 최소 15초 // TEST-LEAD
 		assertThat(TrafficWindow.of(EventPhase.LIVE, "15m", start, null, now, TrafficWindow.PROMETHEUS_MIN_STEP).step())
 			.isEqualTo(Duration.ofSeconds(15));
+		// 입장 중(시작 전)도 진행 중과 같은 범위 · 선택지
+		TrafficWindow entering = TrafficWindow.of(EventPhase.ENTRY_OPEN, null, start, start.plusMinutes(40),
+				start.minusMinutes(1).atZone(Kst.ZONE).toInstant(), TrafficWindow.PROMETHEUS_MIN_STEP);
+		assertThat(entering.key()).isEqualTo("entry");
+		assertThat(entering.options()).containsExactly("entry", "15m", "1h");
 		// 종료 상태에서 15m은 기본값 full로
 		var later = start.plusHours(5).atZone(Kst.ZONE).toInstant();
 		TrafficWindow full = TrafficWindow.of(EventPhase.ENDED, "15m", start, start.plusMinutes(40), later,

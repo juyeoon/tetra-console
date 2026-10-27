@@ -207,7 +207,8 @@ public class TrafficMonitoringService {
 
 	private StatusCell eventCell(List<Judged> open) {
 		if (open.isEmpty()) {
-			return new StatusCell(Area.EVENT, MonitoringLevel.OK, "진행 중 이벤트 없음", 0, null);
+			// 진행 중 = event_status OPEN(입장 중 포함)
+			return new StatusCell(Area.EVENT, MonitoringLevel.OK, "진행 중(입장 중 포함) 이벤트 없음", 0, null);
 		}
 		Judged worst = open.get(0);
 		Judgment j = worst.judgment();
@@ -354,9 +355,14 @@ public class TrafficMonitoringService {
 		return new TrafficEventsResponse(defaultEventId, items);
 	}
 
-	/** 최근 종료 목록의 기준 시각: 준비 실패는 입장 예정 시각, 종료는 hosting_end_at. 해당 없으면 null */
+	/**
+	 * 최근 종료 목록의 기준 시각: 배포 실패는 실패 시각(없으면 입장 예정 시각), 준비 실패는 입장 예정 시각, 종료는 hosting_end_at,
+	 * 호스팅 실패는 hosting_end_at이 지났을 때만 hosting_end_at. 해당 없으면 null(목록 위치는 시각대로)
+	 */
 	private static LocalDateTime endedAt(MonitoredEvent e, LocalDateTime now) {
 		return switch (e.phase(now)) {
+			case DEPLOY_FAILED -> e.failedAt() != null ? e.failedAt() : e.entryAt();
+			case HOSTING_FAILED -> e.hostingEndAt() != null && !now.isBefore(e.hostingEndAt()) ? e.hostingEndAt() : null;
 			case PREPARE_FAILED -> e.entryAt();
 			case ENDED -> e.hostingEndAt() != null ? e.hostingEndAt() : e.startAt();
 			default -> null;
@@ -367,7 +373,7 @@ public class TrafficMonitoringService {
 		return new TrafficEventsResponse.Item(e.eventId(), e.tenantId(), e.tenantName(), e.name(), group, e.phase(now),
 				judgment == null ? null : judgment.level(), judgment == null ? null : judgment.reason(),
 				Kst.toOffset(e.prepareAt()), Kst.toOffset(e.entryAt()), Kst.toOffset(e.startAt()),
-				Kst.toOffset(e.hostingEndAt()), e.eventStatus(), e.hostingStatus());
+				Kst.toOffset(e.hostingEndAt()), e.eventStatus(), e.hostingStatus(), Kst.toOffset(e.failedAt()));
 	}
 
 	private record Judged(MonitoredEvent event, Judgment judgment) {
@@ -451,12 +457,12 @@ public class TrafficMonitoringService {
 	private static Kpi kpi(EventPhase phase, TrafficEventCollector.Metrics m, Event event,
 			TrafficEventReader.Detail detail, LocalDateTime now) {
 		switch (phase) {
-			case PRE_ENTRY, LIVE -> {
+			case PRE_ENTRY, ENTRY_OPEN, LIVE -> {
 				if (m == null || m.live() == null) {
 					return new Kpi(MonitoringLevel.UNKNOWN, TrafficRules.Judgment.NO_DATA.reason(), List.of(), null, null);
 				}
 				Live live = m.live();
-				Judgment j = phase == EventPhase.LIVE ? TrafficRules.event(m.signals(), !now.isBefore(event.getStartAt()))
+				Judgment j = phase.entryOpened() ? TrafficRules.event(m.signals(), !now.isBefore(event.getStartAt()))
 						: TrafficRules.preEntry(m.signals());
 				List<String> warn = TrafficRules.kpiWarnings(live.errorRatio(),
 						live.p95Ms() == null ? null : live.p95Ms() / 1000.0, live.podsReady(), live.podsMax(),
@@ -527,7 +533,7 @@ public class TrafficMonitoringService {
 				? TrafficWindow.of(EventPhase.ENDED, "full", key.startAt(), key.hostingEndAt(), now,
 						TrafficWindow.PROMETHEUS_MIN_STEP)
 				: null;
-		Instant prepareAt = key.openAt() != null && (key.phase() == EventPhase.LIVE || key.phase() == EventPhase.ENDED)
+		Instant prepareAt = key.openAt() != null && (key.phase().entryOpened() || key.phase() == EventPhase.ENDED)
 				? key.openAt().atZone(Kst.ZONE).toInstant() : null;
 		TrafficEventCollector.Metrics metrics = eventCollector.collect(new TrafficEventCollector.Request(key.eventId(),
 				key.tenantId(), key.phase(), window, full, prepareAt, key.stockTotal()), deadlineNanos, executor);
