@@ -282,7 +282,9 @@ class TrafficMonitoringApiTest extends IntegrationTest {
 			// B-3 다가오는 이벤트
 			.andExpect(jsonPath("$.upcoming.length()").value(1))
 			.andExpect(jsonPath("$.upcoming[0].eventId").value(7106))
-			.andExpect(jsonPath("$.upcoming[0].prepareAt").value(iso(now.plusDays(2).minusMinutes(90))))
+			// TEST-LEAD: 서비스 값 90
+			// .andExpect(jsonPath("$.upcoming[0].prepareAt").value(iso(now.plusDays(2).minusMinutes(90))))
+			.andExpect(jsonPath("$.upcoming[0].prepareAt").value(iso(now.plusDays(2).minusMinutes(15)))) // TEST-LEAD
 			.andExpect(jsonPath("$.upcoming[0].endAt").value(iso(now.plusDays(2).plusHours(5))))
 			// E. 실패: 알림 + OPEN_FAILED 로그는 한 건(로그의 단계 · 사유), 메일 알림은 내용 그대로
 			.andExpect(jsonPath("$.failures.length()").value(2))
@@ -443,14 +445,18 @@ class TrafficMonitoringApiTest extends IntegrationTest {
 			.andExpect(jsonPath("$.prometheus.stale").value(false))
 			.andExpect(jsonPath("$.event.phase").value("LIVE"))
 			.andExpect(jsonPath("$.event.tenantName").value("A사"))
-			.andExpect(jsonPath("$.event.entryAt").value(iso(now.minusMinutes(70))))
+			// TEST-LEAD: 서비스 값 70(시작 now−10 − 60)
+			// .andExpect(jsonPath("$.event.entryAt").value(iso(now.minusMinutes(70))))
+			.andExpect(jsonPath("$.event.entryAt").value(iso(now.minusMinutes(15)))) // TEST-LEAD
 			.andExpect(jsonPath("$.event.endAt").value(iso(now.minusMinutes(10).plusHours(5))))
 			// 진행 단계
 			.andExpect(jsonPath("$.steps[*].key")
 				.value(contains("APPROVE", "HOSTING_START", "PREPARE", "ENTRY", "START", "END", "AGGREGATE")))
 			.andExpect(jsonPath("$.steps[*].state")
 				.value(contains("DONE", "DONE", "DONE", "DONE", "ACTIVE", "WAITING", "WAITING")))
-			.andExpect(jsonPath("$.steps[2].plannedAt").value(iso(now.minusMinutes(100))))
+			// TEST-LEAD: 서비스 값 100(시작 now−10 − 90)
+			// .andExpect(jsonPath("$.steps[2].plannedAt").value(iso(now.minusMinutes(100))))
+			.andExpect(jsonPath("$.steps[2].plannedAt").value(iso(now.minusMinutes(25)))) // TEST-LEAD
 			.andExpect(jsonPath("$.steps[2].actualAt").value(iso(now.minusMinutes(70).plusSeconds(20))))
 			.andExpect(jsonPath("$.steps[2].durationSeconds").value(200))
 			.andExpect(jsonPath("$.steps[4].actualAt").value(iso(now.minusMinutes(10))))
@@ -471,10 +477,14 @@ class TrafficMonitoringApiTest extends IntegrationTest {
 			.andExpect(jsonPath("$.kpi.live.redisMemoryRatio").value(0.38))
 			.andExpect(jsonPath("$.kpi.live.redisUp").value(true))
 			.andExpect(jsonPath("$.kpi.summary").value(nullValue()))
-			// 범위 · 그래프: 입장 −10분 ~ 지금(80분 → 30초 간격)
+			// TEST-LEAD: 서비스 값 80분 → 30초
+			// // 범위 · 그래프: 입장 −10분 ~ 지금(80분 → 30초 간격)
+			// 범위 · 그래프: 입장 −10분 ~ 지금(25분 → 15초 간격) // TEST-LEAD
 			.andExpect(jsonPath("$.range.key").value("entry"))
 			.andExpect(jsonPath("$.range.options").value(contains("entry", "15m", "1h")))
-			.andExpect(jsonPath("$.range.stepSeconds").value(30))
+			// TEST-LEAD: 서비스 값 30
+			// .andExpect(jsonPath("$.range.stepSeconds").value(30))
+			.andExpect(jsonPath("$.range.stepSeconds").value(15)) // TEST-LEAD
 			.andExpect(jsonPath("$.charts.traffic.rps[0]").value(1131.24))
 			.andExpect(jsonPath("$.charts.errors.app[0]").value(0.012))
 			.andExpect(jsonPath("$.charts.latency.issuance[0]").value(180.0))
@@ -523,7 +533,9 @@ class TrafficMonitoringApiTest extends IntegrationTest {
 			.andExpect(jsonPath("$.kpi.summary.soldOutAt").isString())
 			.andExpect(jsonPath("$.range.key").value("full"))
 			.andExpect(jsonPath("$.range.options").value(contains("full", "start")))
-			.andExpect(jsonPath("$.range.from").value(iso(now.minusDays(2).minusMinutes(70))))
+			// TEST-LEAD: 서비스 값 70(입장 −60 · −10)
+			// .andExpect(jsonPath("$.range.from").value(iso(now.minusDays(2).minusMinutes(70))))
+			.andExpect(jsonPath("$.range.from").value(iso(now.minusDays(2).minusMinutes(15)))) // TEST-LEAD
 			.andExpect(jsonPath("$.range.to").value(iso(now.minusDays(2).plusHours(5).plusMinutes(10))));
 		mvc.perform(get("/api/ops/monitoring/events/7104").param("range", "start").cookie(operatorCookie()))
 			.andExpect(jsonPath("$.range.key").value("start"))

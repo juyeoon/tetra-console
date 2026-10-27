@@ -29,7 +29,9 @@ public enum EventPhase {
 	static final Duration CHART_LEAD = Duration.ofMinutes(10);
 
 	/** 준비(WF2-2) 스케줄 = 시작 − 90분 (WF1-2 eventOpenScheduleAt, ApproveRules.HOSTING_LEAD_BEFORE_START) */
-	static final Duration PREPARE_LEAD = Duration.ofMinutes(90);
+	// TEST-LEAD: 서비스 값 90
+	// static final Duration PREPARE_LEAD = Duration.ofMinutes(90);
+	static final Duration PREPARE_LEAD = Duration.ofMinutes(15); // TEST-LEAD
 
 	static LocalDateTime prepareAt(LocalDateTime startAt) {
 		return startAt.minus(PREPARE_LEAD);

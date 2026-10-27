@@ -23,13 +23,17 @@ final class ApproveRules {
 	 * event-open 스케줄(WF2-2, T−90) = 이벤트 시작 − 90분. Redis도 이때 뜬다(scaledUp).
 	 * ops-workflows wf1-2/EventRegister.asl.json Init의 inputErrors(5400000ms) · eventOpenScheduleAt과 같은 값.
 	 */
-	static final Duration HOSTING_LEAD_BEFORE_START = Duration.ofMinutes(90);
+	// TEST-LEAD: 서비스 값 90
+	// static final Duration HOSTING_LEAD_BEFORE_START = Duration.ofMinutes(90);
+	static final Duration HOSTING_LEAD_BEFORE_START = Duration.ofMinutes(15); // TEST-LEAD
 
 	/** WF2-1(호스팅 시작)과 WF2-2(T−90)가 같은 시각에 돌지 않게 두는 간격 */
 	static final Duration SCHEDULE_GAP = Duration.ofMinutes(10);
 
 	/** 승인 뒤 WF1-2가 끝날 때까지 걸릴 수 있는 시간. ops-workflows wf1-2/EventRegister.asl.json TimeoutSeconds 1800 */
-	static final Duration APPROVE_MIN_LEAD = Duration.ofMinutes(30);
+	// TEST-LEAD: 서비스 값 30
+	// static final Duration APPROVE_MIN_LEAD = Duration.ofMinutes(30);
+	static final Duration APPROVE_MIN_LEAD = Duration.ofMinutes(10); // TEST-LEAD
 
 	static final String HOSTING_START_TOO_LATE = "HOSTING_START_TOO_LATE";
 

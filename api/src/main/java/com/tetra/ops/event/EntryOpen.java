@@ -11,7 +11,9 @@ public final class EntryOpen {
 	 * web ENTRY_OPEN_LEAD_MINUTES(pages/events/eventView.ts), ops-workflows wf1-2 entryOpenAt,
 	 * issuance-api tetra.session.entry-open-before와 같은 값 — 바꾸면 함께 바꾼다.
 	 */
-	public static final Duration ENTRY_OPEN_LEAD = Duration.ofMinutes(60);
+	// TEST-LEAD: 서비스 값 60
+	// public static final Duration ENTRY_OPEN_LEAD = Duration.ofMinutes(60);
+	public static final Duration ENTRY_OPEN_LEAD = Duration.ofMinutes(5); // TEST-LEAD
 
 	private EntryOpen() {
 	}

@@ -16,7 +16,9 @@ type Tone = 'blue' | 'amber' | 'green' | 'red' | 'grey';
  * ops-workflows wf1-2/EventRegister.asl.json Init의 entryOpenAt(start_at − 60분),
  * issuance-api tetra.session.entry-open-before(values-*.yml 60m)와 같은 값이어야 한다.
  */
-export const ENTRY_OPEN_LEAD_MINUTES = 60;
+// TEST-LEAD: 서비스 값 60
+// export const ENTRY_OPEN_LEAD_MINUTES = 60;
+export const ENTRY_OPEN_LEAD_MINUTES = 5; // TEST-LEAD
 
 /**
  * 최대 동시 세션 계산에 쓰는 세션 유효 시간(시간). Console API에 없어 화면 상수로 둔다.

@@ -462,8 +462,11 @@ export const stopPollingWhen = (event: TrafficEventResponse) => event.event.phas
 const STEP_LABEL: Record<TrafficStep['key'], string> = {
   APPROVE: '승인',
   HOSTING_START: '호스팅 시작',
-  PREPARE: '준비 (T−90)',
-  ENTRY: '입장 (T−60)',
+  // TEST-LEAD: 서비스 값 T−90 · T−60
+  // PREPARE: '준비 (T−90)',
+  // ENTRY: '입장 (T−60)',
+  PREPARE: '준비 (T−15)', // TEST-LEAD
+  ENTRY: '입장 (T−5)', // TEST-LEAD
   START: '이벤트 시작',
   END: '종료',
   AGGREGATE: '집계',
