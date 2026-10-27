@@ -35,6 +35,7 @@ import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 import com.tetra.ops.common.time.Kst;
+import com.tetra.ops.event.EntryOpen;
 import com.tetra.ops.monitoring.AwsMonitoringGateway.LoadBalancerRef;
 import com.tetra.ops.monitoring.AwsMonitoringGateway.MetricPoint;
 import com.tetra.ops.monitoring.AwsMonitoringGateway.ServiceCount;
@@ -399,10 +400,10 @@ class TrafficMonitoringApiTest extends IntegrationTest {
 
 	@Test
 	void scheduledButEndedEventListedOnce() throws Exception {
-		// 오늘 시작, DB는 SCHEDULED · DEPLOY_FAILED(호스팅 안 함), hosting_end_at 지남 → 오늘 예정 · 최근 종료 둘 다에 걸리던 이벤트
+		// 오늘 시작, DB는 SCHEDULED · DEPLOYED(호스팅 시작 기록 없음), hosting_end_at 지남 → 오늘 예정 · 최근 종료 둘 다에 걸리던 이벤트
 		LocalDateTime start = now.minusMinutes(30);
 		assumeTrue(start.toLocalDate().equals(now.toLocalDate()));
-		data.event(7109, A).name("A 배포 실패").approved("DEPLOY_FAILED", "SCHEDULED", "slug7109").startAt(start).insert();
+		data.event(7109, A).name("A 호스팅 안 됨").approved("DEPLOYED", "SCHEDULED", "slug7109").startAt(start).insert();
 		data.jdbc().update("UPDATE t_%s.event SET end_at = ?, hosting_end_at = ? WHERE event_id = 7109".formatted(A),
 				now.minusMinutes(10), now.minusMinutes(1));
 		respondPlatform();
@@ -417,12 +418,51 @@ class TrafficMonitoringApiTest extends IntegrationTest {
 	}
 
 	@Test
+	void failedEventsInList() throws Exception {
+		LocalDateTime todayStart = now.plusMinutes(60);
+		LocalDateTime pastStart = now.minusMinutes(30);
+		assumeTrue(todayStart.toLocalDate().equals(now.toLocalDate()) && pastStart.toLocalDate().equals(now.toLocalDate()));
+		// 배포 실패: 시각과 상관없이 최근 종료, 기준 · 표시 시각은 실패 로그
+		data.event(7115, A).name("A 배포 실패").approved("DEPLOY_FAILED", "SCHEDULED", "slug7115").startAt(now.plusDays(3))
+			.insert();
+		data.statusLog(A, 7115, "HOSTING", "PENDING", "DEPLOY_FAILED", now.minusMinutes(2), "ECR 이미지 없음");
+		// 호스팅 실패, hosting_end_at 전: 시각대로(오늘 예정)
+		data.event(7116, A).name("A 호스팅 실패").approved("HOSTING_FAILED", "SCHEDULED", "slug7116").startAt(todayStart)
+			.insert();
+		// 호스팅 실패, hosting_end_at 지남: 최근 종료
+		data.event(7117, A).name("A 호스팅 실패 지남").approved("HOSTING_FAILED", "SCHEDULED", "slug7117")
+			.startAt(pastStart)
+			.insert();
+		data.jdbc().update("UPDATE t_%s.event SET end_at = ?, hosting_end_at = ? WHERE event_id = 7117".formatted(A),
+				now.minusMinutes(10), now.minusMinutes(1));
+		respondPlatform();
+		mvc.perform(get("/api/ops/monitoring/events").cookie(operatorCookie()))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.items[*].eventId").value(contains(7101, 7102, 7116, 7117, 7115, 7105, 7104)))
+			.andExpect(jsonPath("$.items[2].group").value("TODAY"))
+			.andExpect(jsonPath("$.items[2].phase").value("HOSTING_FAILED"))
+			.andExpect(jsonPath("$.items[3].group").value("ENDED"))
+			.andExpect(jsonPath("$.items[3].phase").value("HOSTING_FAILED"))
+			.andExpect(jsonPath("$.items[4].group").value("ENDED"))
+			.andExpect(jsonPath("$.items[4].phase").value("DEPLOY_FAILED"))
+			.andExpect(jsonPath("$.items[4].failedAt").value(iso(now.minusMinutes(2))))
+			// 준비 실패도 실패 시각을 준다(표시는 입장 예정 시각 그대로)
+			.andExpect(jsonPath("$.items[5].failedAt").value(iso(now.minusDays(1).minusMinutes(59))))
+			.andExpect(jsonPath("$.items[6].failedAt").value(nullValue()));
+	}
+
+	@Test
 	void noEventsMeansNoDefault() throws Exception {
 		data.reset();
 		mvc.perform(get("/api/ops/monitoring/events").cookie(operatorCookie()))
 			.andExpect(status().isOk())
 			.andExpect(jsonPath("$.defaultEventId").value(nullValue()))
 			.andExpect(jsonPath("$.items.length()").value(0));
+		// 상태 요약 이벤트 칸: 진행 중 묶음은 입장 중도 포함
+		mvc.perform(get("/api/ops/monitoring/platform").cookie(operatorCookie()))
+			.andExpect(jsonPath("$.summary[1].area").value("EVENT"))
+			.andExpect(jsonPath("$.summary[1].openCount").value(0))
+			.andExpect(jsonPath("$.summary[1].reason").value("진행 중(입장 중 포함) 이벤트 없음"));
 	}
 
 	// ---------------------------------------------------------------- event detail
@@ -471,15 +511,18 @@ class TrafficMonitoringApiTest extends IntegrationTest {
 			.andExpect(jsonPath("$.event.endAt").value(iso(now.minusMinutes(10).plusHours(5))))
 			// 진행 단계
 			.andExpect(jsonPath("$.steps[*].key")
-				.value(contains("APPROVE", "HOSTING_START", "PREPARE", "ENTRY", "START", "END", "AGGREGATE")))
+				.value(contains("APPROVE", "DEPLOY", "HOSTING_START", "PREPARE", "ENTRY", "START", "END", "AGGREGATE")))
 			.andExpect(jsonPath("$.steps[*].state")
-				.value(contains("DONE", "DONE", "DONE", "DONE", "ACTIVE", "WAITING", "WAITING")))
+				.value(contains("DONE", "DONE", "DONE", "DONE", "DONE", "ACTIVE", "WAITING", "WAITING")))
+			// 배포: DEPLOYED 이후라 완료, → DEPLOYED 로그가 없어 시각 없음. 호스팅 시작: HOSTING 로그 시각
+			.andExpect(jsonPath("$.steps[1].actualAt").value(nullValue()))
+			.andExpect(jsonPath("$.steps[2].actualAt").value(iso(now.minusMinutes(10).minusHours(2))))
 			// TEST-LEAD: 서비스 값 100(시작 now−10 − 90)
-			// .andExpect(jsonPath("$.steps[2].plannedAt").value(iso(now.minusMinutes(100))))
-			.andExpect(jsonPath("$.steps[2].plannedAt").value(iso(now.minusMinutes(25)))) // TEST-LEAD
-			.andExpect(jsonPath("$.steps[2].actualAt").value(iso(now.minusMinutes(70).plusSeconds(20))))
-			.andExpect(jsonPath("$.steps[2].durationSeconds").value(200))
-			.andExpect(jsonPath("$.steps[4].actualAt").value(iso(now.minusMinutes(10))))
+			// .andExpect(jsonPath("$.steps[3].plannedAt").value(iso(now.minusMinutes(100))))
+			.andExpect(jsonPath("$.steps[3].plannedAt").value(iso(now.minusMinutes(25)))) // TEST-LEAD
+			.andExpect(jsonPath("$.steps[3].actualAt").value(iso(now.minusMinutes(70).plusSeconds(20))))
+			.andExpect(jsonPath("$.steps[3].durationSeconds").value(200))
+			.andExpect(jsonPath("$.steps[5].actualAt").value(iso(now.minusMinutes(10))))
 			// KPI
 			.andExpect(jsonPath("$.kpi.level").value("WARN"))
 			.andExpect(jsonPath("$.kpi.reason").value("5xx 1.2%"))
@@ -517,6 +560,36 @@ class TrafficMonitoringApiTest extends IntegrationTest {
 	}
 
 	@Test
+	void entryOpenBeforeStart() throws Exception {
+		// 입장은 열렸고(OPEN 로그) 시작은 3분 뒤: 입장이 지금 단계, 시작은 예정
+		LocalDateTime start = now.plusMinutes(3);
+		data.event(7118, A).name("A 입장 중").approved("HOSTING", "OPEN", "slug7118").startAt(start).insert();
+		approvedLogs(A, 7118, start);
+		LocalDateTime openedAt = EntryOpen.at(start).plusSeconds(20);
+		data.statusLog(A, 7118, "EVENT", "SCHEDULED", "OPEN", openedAt, null);
+		respondPlatform();
+		mvc.perform(get("/api/ops/monitoring/events/7118").cookie(operatorCookie()))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.event.phase").value("ENTRY_OPEN"))
+			.andExpect(jsonPath("$.steps[*].state")
+				.value(contains("DONE", "DONE", "DONE", "DONE", "ACTIVE", "WAITING", "WAITING", "WAITING")))
+			// 준비 · 입장 모두 OPEN 로그 시각(따로 준비 완료 시각이 없음)
+			.andExpect(jsonPath("$.steps[3].actualAt").value(iso(openedAt)))
+			.andExpect(jsonPath("$.steps[4].key").value("ENTRY"))
+			.andExpect(jsonPath("$.steps[4].actualAt").value(iso(openedAt)))
+			.andExpect(jsonPath("$.steps[5].key").value("START"))
+			.andExpect(jsonPath("$.steps[5].plannedAt").value(iso(start)))
+			.andExpect(jsonPath("$.steps[5].actualAt").value(nullValue()))
+			// 그래프 · KPI는 진행 중과 같은 모양(Prometheus 조회)
+			.andExpect(jsonPath("$.range.key").value("entry"))
+			.andExpect(jsonPath("$.kpi").isNotEmpty());
+		// 목록: DB 상태 OPEN이라 진행 중 묶음, phase는 입장 중
+		mvc.perform(get("/api/ops/monitoring/events").cookie(operatorCookie()))
+			.andExpect(jsonPath("$.items[?(@.eventId == 7118)].group").value(contains("OPEN")))
+			.andExpect(jsonPath("$.items[?(@.eventId == 7118)].phase").value(contains("ENTRY_OPEN")));
+	}
+
+	@Test
 	void liveEventRangeOption() throws Exception {
 		respondLiveEvent();
 		mvc.perform(get("/api/ops/monitoring/events/7101").param("range", "15m").cookie(operatorCookie()))
@@ -540,8 +613,8 @@ class TrafficMonitoringApiTest extends IntegrationTest {
 			.andExpect(status().isOk())
 			.andExpect(jsonPath("$.event.phase").value("ENDED"))
 			.andExpect(jsonPath("$.steps[*].state")
-				.value(contains("DONE", "DONE", "DONE", "DONE", "DONE", "DONE", "DONE")))
-			.andExpect(jsonPath("$.steps[5].actualAt").value(iso(now.minusDays(2).plusHours(5))))
+				.value(contains("DONE", "DONE", "DONE", "DONE", "DONE", "DONE", "DONE", "DONE")))
+			.andExpect(jsonPath("$.steps[6].actualAt").value(iso(now.minusDays(2).plusHours(5))))
 			.andExpect(jsonPath("$.kpi.live").value(nullValue()))
 			.andExpect(jsonPath("$.kpi.summary.peakRps.value").value(1820.0))
 			.andExpect(jsonPath("$.kpi.summary.errorRatioAvg").value(closeTo(0.00281, 0.00001)))
@@ -570,18 +643,76 @@ class TrafficMonitoringApiTest extends IntegrationTest {
 			.andExpect(status().isOk())
 			.andExpect(jsonPath("$.event.phase").value("PREPARE_FAILED"))
 			.andExpect(jsonPath("$.steps[*].state")
-				.value(contains("DONE", "DONE", "FAILED", "SKIPPED", "SKIPPED", "SKIPPED", "SKIPPED")))
-			.andExpect(jsonPath("$.steps[2].reason").value("동결 확인 시간 초과"))
+				.value(contains("DONE", "DONE", "DONE", "FAILED", "SKIPPED", "SKIPPED", "SKIPPED", "SKIPPED")))
+			.andExpect(jsonPath("$.steps[3].reason").value("동결 확인 시간 초과"))
 			.andExpect(jsonPath("$.kpi").value(nullValue()))
 			.andExpect(jsonPath("$.range").value(nullValue()))
 			.andExpect(jsonPath("$.charts").value(nullValue()));
 		mvc.perform(get("/api/ops/monitoring/events/7106").cookie(operatorCookie()))
 			.andExpect(jsonPath("$.event.phase").value("SCHEDULED"))
 			.andExpect(jsonPath("$.steps[*].state")
-				.value(contains("DONE", "WAITING", "WAITING", "WAITING", "WAITING", "WAITING", "WAITING")))
+				.value(contains("DONE", "DONE", "WAITING", "WAITING", "WAITING", "WAITING", "WAITING", "WAITING")))
 			.andExpect(jsonPath("$.kpi").value(nullValue()))
 			.andExpect(jsonPath("$.charts").value(nullValue()));
 		assertThat(prometheus.requests()).isEmpty();
+	}
+
+	@Test
+	void deployStepByHostingStatus() throws Exception {
+		LocalDateTime start = now.plusDays(1);
+		// 배포 중(PENDING): 예정 상태여도 배포 칸이 지금 단계
+		data.event(7110, A).name("A 배포 중").approved("PENDING", "SCHEDULED", "slug7110").startAt(start).insert();
+		mvc.perform(get("/api/ops/monitoring/events/7110").cookie(operatorCookie()))
+			.andExpect(jsonPath("$.event.phase").value("SCHEDULED"))
+			.andExpect(jsonPath("$.steps[*].state")
+				.value(contains("DONE", "ACTIVE", "WAITING", "WAITING", "WAITING", "WAITING", "WAITING", "WAITING")));
+
+		// 배포 완료: 시각은 마지막 → DEPLOYED 로그(재시도 DEPLOY_FAILED → DEPLOYED)
+		data.event(7111, A).name("A 배포 완료").approved("DEPLOYED", "SCHEDULED", "slug7111").startAt(start).insert();
+		data.statusLog(A, 7111, "HOSTING", "PENDING", "DEPLOY_FAILED", now.minusMinutes(20), "시간 초과");
+		data.statusLog(A, 7111, "HOSTING", "DEPLOY_FAILED", "DEPLOYED", now.minusMinutes(19), null);
+		mvc.perform(get("/api/ops/monitoring/events/7111").cookie(operatorCookie()))
+			.andExpect(jsonPath("$.steps[1].state").value("DONE"))
+			.andExpect(jsonPath("$.steps[1].actualAt").value(iso(now.minusMinutes(19))));
+
+		// 배포 실패: 빨강 + 사유, 뒤 단계 전부 진행 안 됨(승인은 완료)
+		data.event(7112, A).name("A 배포 실패").approved("DEPLOY_FAILED", "SCHEDULED", "slug7112").startAt(start).insert();
+		data.statusLog(A, 7112, "HOSTING", "PENDING", "DEPLOY_FAILED", now.minusMinutes(5), "ECR 이미지 없음");
+		mvc.perform(get("/api/ops/monitoring/events/7112").cookie(operatorCookie()))
+			.andExpect(jsonPath("$.event.phase").value("DEPLOY_FAILED"))
+			.andExpect(jsonPath("$.steps[*].state")
+				.value(contains("DONE", "FAILED", "SKIPPED", "SKIPPED", "SKIPPED", "SKIPPED", "SKIPPED", "SKIPPED")))
+			.andExpect(jsonPath("$.steps[1].actualAt").value(iso(now.minusMinutes(5))))
+			.andExpect(jsonPath("$.steps[1].reason").value("ECR 이미지 없음"))
+			.andExpect(jsonPath("$.kpi").value(nullValue()))
+			.andExpect(jsonPath("$.charts").value(nullValue()));
+		assertThat(prometheus.requests()).isEmpty();
+	}
+
+	@Test
+	void hostingStartByHostingStatus() throws Exception {
+		LocalDateTime start = now.plusDays(1);
+		// 호스팅 중인데 → HOSTING 로그가 없음: 상태로 완료, 시각 없음
+		data.event(7113, A).name("A 로그 누락").approved("HOSTING", "SCHEDULED", "slug7113").startAt(start).insert();
+		mvc.perform(get("/api/ops/monitoring/events/7113").cookie(operatorCookie()))
+			.andExpect(jsonPath("$.steps[2].key").value("HOSTING_START"))
+			.andExpect(jsonPath("$.steps[2].state").value("DONE"))
+			.andExpect(jsonPath("$.steps[2].actualAt").value(nullValue()));
+
+		// 호스팅 실패: 준비 · 입장 · 시작 · 집계 진행 안 됨, 종료는 자기 기록대로(아직 없으면 진행 안 됨)
+		data.event(7114, A).name("A 호스팅 실패").approved("HOSTING_FAILED", "SCHEDULED", "slug7114").startAt(start).insert();
+		data.statusLog(A, 7114, "HOSTING", "DEPLOYED", "HOSTING_FAILED", now.minusMinutes(3), "Ingress 생성 실패");
+		mvc.perform(get("/api/ops/monitoring/events/7114").cookie(operatorCookie()))
+			.andExpect(jsonPath("$.event.phase").value("HOSTING_FAILED"))
+			.andExpect(jsonPath("$.steps[*].state")
+				.value(contains("DONE", "DONE", "FAILED", "SKIPPED", "SKIPPED", "SKIPPED", "SKIPPED", "SKIPPED")))
+			.andExpect(jsonPath("$.steps[2].reason").value("Ingress 생성 실패"))
+			.andExpect(jsonPath("$.charts").value(nullValue()));
+
+		data.statusLog(A, 7114, "HOSTING", "HOSTING_FAILED", "ENDED", now.minusMinutes(1), null);
+		mvc.perform(get("/api/ops/monitoring/events/7114").cookie(operatorCookie()))
+			.andExpect(jsonPath("$.steps[6].key").value("END"))
+			.andExpect(jsonPath("$.steps[6].state").value("DONE"));
 	}
 
 	@Test

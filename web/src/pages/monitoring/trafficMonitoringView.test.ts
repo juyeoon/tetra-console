@@ -80,6 +80,7 @@ const item = (patch: Partial<TrafficEventItem>): TrafficEventItem => ({
   endAt: '2026-10-26T15:40:00+09:00',
   eventStatus: 'OPEN',
   hostingStatus: 'HOSTING',
+  failedAt: null,
   ...patch,
 });
 
@@ -307,8 +308,14 @@ describe('드롭다운 선택 유지', () => {
     );
     assert.equal(eventStatusText(item({ group: 'TODAY', phase: 'PRE_ENTRY' }), new Date('2026-10-26T13:52:00+09:00')), '입장 직전 · 14:00 입장');
     assert.equal(eventStatusText(item({ group: 'OPEN', phase: 'LIVE' }), NOW), '진행 중');
+    // 입장 ~ 시작 전: DB는 OPEN(진행 중 묶음)이지만 상태는 '입장 중'
+    assert.equal(eventStatusText(item({ group: 'OPEN', phase: 'ENTRY_OPEN' }), new Date('2026-10-26T14:57:00+09:00')), '입장 중 · 15:00 시작');
     assert.equal(eventStatusText(item({ group: 'ENDED', phase: 'ENDED', endAt: '2026-10-24T15:40:00+09:00' }), NOW), '종료 · 10-24 15:40');
     assert.equal(eventStatusText(item({ group: 'ENDED', phase: 'PREPARE_FAILED', entryAt: '2026-10-25T14:00:00+09:00' }), NOW), '준비 실패 · 10-25 14:00');
+    // 배포 · 호스팅 실패: 실패 시각(없으면 이름만). 호스팅 실패는 hosting_end_at이 지나도 '호스팅 실패'
+    assert.equal(eventStatusText(item({ group: 'ENDED', phase: 'DEPLOY_FAILED', failedAt: '2026-10-25T10:01:00+09:00' }), NOW), '배포 실패 · 10-25 10:01');
+    assert.equal(eventStatusText(item({ group: 'TODAY', phase: 'HOSTING_FAILED', failedAt: '2026-10-26T13:50:00+09:00' }), NOW), '호스팅 실패 · 13:50');
+    assert.equal(eventStatusText(item({ group: 'ENDED', phase: 'HOSTING_FAILED', failedAt: null }), NOW), '호스팅 실패');
   });
   test('DB는 OPEN이어도 hosting_end_at이 지났으면(서버 phase ENDED) 드롭다운도 "종료"', () => {
     const stale = item({ group: 'OPEN', phase: 'ENDED', eventStatus: 'OPEN', endAt: '2026-10-21T22:09:00+09:00' });
@@ -336,10 +343,14 @@ describe('구역 상태별 표시(명세 4절)', () => {
     ]);
     assert.deepEqual(sectionStatus(eventResponse('ENDED')), { chips: [{ label: '종료', tone: 'grey' }], refresh: '자동 갱신 꺼짐', autoRefresh: false });
     assert.deepEqual(sectionStatus(eventResponse('PREPARE_FAILED')).chips, [{ label: '준비 실패', tone: 'red' }]);
+    assert.deepEqual(sectionStatus(eventResponse('ENTRY_OPEN', { kpi: { level: 'OK', reason: '정상', warn: [], live: null, summary: null } })).chips, [
+      { label: '입장 중', tone: 'blue' },
+      { label: '정상', tone: 'green' },
+    ]);
     assert.deepEqual(sectionStatus(undefined).chips, []);
   });
   test('구역 배지와 드롭다운 항목은 같은 상태 이름(PHASE_META)', () => {
-    for (const phase of ['SCHEDULED', 'PRE_ENTRY', 'LIVE', 'ENDED', 'PREPARE_FAILED'] as const) {
+    for (const phase of ['SCHEDULED', 'PRE_ENTRY', 'ENTRY_OPEN', 'LIVE', 'ENDED', 'PREPARE_FAILED', 'DEPLOY_FAILED', 'HOSTING_FAILED'] as const) {
       const badge = sectionStatus(eventResponse(phase)).chips[0].label;
       assert.equal(badge, PHASE_META[phase].label);
       assert.ok(eventStatusText(item({ phase }), NOW).startsWith(badge), phase);
@@ -367,6 +378,26 @@ describe('구역 상태별 표시(명세 4절)', () => {
     assert.deepEqual(eventBody(eventResponse('LIVE')), { kind: 'metrics' });
     assert.deepEqual(eventBody(eventResponse('ENDED')), { kind: 'metrics' });
   });
+  test('배포 · 호스팅 실패도 그래프 · KPI 대신 빨간 안내(실패 단계 이름 + 사유), 자동 갱신은 켜 둔다', () => {
+    const deploy = eventResponse('DEPLOY_FAILED', {
+      steps: [{ key: 'DEPLOY', plannedAt: null, actualAt: '2026-10-26T10:01:00+09:00', durationSeconds: null, state: 'FAILED', reason: 'ECR 이미지 없음' }],
+    });
+    assert.deepEqual(eventBody(deploy), {
+      kind: 'failed',
+      title: '배포(WF1-2) 실패 — ECR 이미지 없음',
+      description: '배포가 끝나지 않아 이벤트가 열리지 않았어요 · 그래프·KPI가 없어요',
+      link: '/events/progress/7',
+    });
+    // 실패 단계가 응답에 없으면 상태 이름으로
+    assert.deepEqual(eventBody(eventResponse('HOSTING_FAILED', { steps: [] })), {
+      kind: 'failed',
+      title: '호스팅 시작(WF2-1) 실패',
+      description: '이벤트 페이지가 열리지 않아 그래프·KPI가 없어요',
+      link: '/events/progress/7',
+    });
+    assert.deepEqual(sectionStatus(deploy), { chips: [{ label: '배포 실패', tone: 'red' }], refresh: '자동 갱신 · 15초', autoRefresh: true });
+    assert.equal(stopPollingWhen(eventResponse('HOSTING_FAILED')), false);
+  });
   test('진행 단계 아래 글자', () => {
     const steps: TrafficStep[] = [
       { key: 'APPROVE', plannedAt: null, actualAt: '2026-10-23T10:02:00+09:00', durationSeconds: null, state: 'DONE', reason: null },
@@ -382,7 +413,7 @@ describe('구역 상태별 표시(명세 4절)', () => {
         // TEST-LEAD: 서비스 값 T−90
         // ['준비 (T−90)', '14:00 완료 · 3분 20초'],
         ['준비 (T−15)', '14:00 완료 · 3분 20초'], // TEST-LEAD
-        ['이벤트 시작', '15:00 진행 중'],
+        ['이벤트 시작', '15:00 시작 · 진행 중'],
         ['종료', '15:40 예정'],
         ['집계', '종료 뒤'],
       ],
@@ -392,9 +423,40 @@ describe('구역 상태별 표시(명세 4절)', () => {
       { key: 'ENTRY', plannedAt: '2026-10-25T14:00:00+09:00', actualAt: null, durationSeconds: null, state: 'SKIPPED', reason: null },
       { key: 'END', plannedAt: '2026-10-25T15:40:00+09:00', actualAt: null, durationSeconds: null, state: 'SKIPPED', reason: null },
     ];
+    // 앞 단계 실패로 진행 안 된 칸은 모두 '진행 안 됨'(종료 · 집계 포함)
     assert.deepEqual(
       stepViews(failed, NOW).map((s) => s.sub),
-      ['10-25 13:31 실패', '진행 안 됨', EMPTY],
+      ['10-25 13:31 실패', '진행 안 됨', '진행 안 됨'],
+    );
+    // 배포: 배포 중(PENDING)은 시각 없이 '배포 중', 실패는 실패 시각
+    assert.deepEqual(
+      stepViews(
+        [
+          { key: 'DEPLOY', plannedAt: null, actualAt: null, durationSeconds: null, state: 'ACTIVE', reason: null },
+          { key: 'DEPLOY', plannedAt: null, actualAt: '2026-10-26T10:00:40+09:00', durationSeconds: null, state: 'DONE', reason: null },
+          { key: 'DEPLOY', plannedAt: null, actualAt: null, durationSeconds: null, state: 'DONE', reason: null },
+          { key: 'DEPLOY', plannedAt: null, actualAt: '2026-10-26T10:01:00+09:00', durationSeconds: null, state: 'FAILED', reason: 'x' },
+        ],
+        NOW,
+      ).map((s) => [s.label, s.sub]),
+      [
+        ['배포', '배포 중'],
+        ['배포', '10:00 완료'],
+        ['배포', `${EMPTY} 완료`],
+        ['배포', '10:01 실패'],
+      ],
+    );
+    // 입장 중(시작 전): 입장이 지금 단계(OPEN 로그 시각), 시작은 예정. 준비는 같은 OPEN 로그 시각으로 완료
+    assert.deepEqual(
+      stepViews(
+        [
+          { key: 'PREPARE', plannedAt: '2026-10-26T14:45:00+09:00', actualAt: '2026-10-26T14:55:20+09:00', durationSeconds: null, state: 'DONE', reason: null },
+          { key: 'ENTRY', plannedAt: '2026-10-26T14:55:00+09:00', actualAt: '2026-10-26T14:55:20+09:00', durationSeconds: null, state: 'ACTIVE', reason: null },
+          { key: 'START', plannedAt: '2026-10-26T15:00:00+09:00', actualAt: null, durationSeconds: null, state: 'WAITING', reason: null },
+        ],
+        new Date('2026-10-26T14:57:00+09:00'),
+      ).map((s) => s.sub),
+      ['14:55 완료', '14:55 시작 · 진행 중', '15:00 예정'],
     );
     // 입장 직전: 준비가 진행 중(계획 시각 지남)
     assert.equal(

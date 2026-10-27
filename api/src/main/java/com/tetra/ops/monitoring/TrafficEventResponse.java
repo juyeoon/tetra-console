@@ -11,8 +11,8 @@ import io.swagger.v3.oas.annotations.media.Schema;
 
 /**
  * GET /api/ops/monitoring/events/{eventId}?range= — OPS-05 C(진행 단계) · D(KPI · 그래프). 구역 모습은 event.phase(명세 4절):
- * SCHEDULED · PREPARE_FAILED는 kpi · range · charts가 null(Prometheus를 조회하지 않음), PRE_ENTRY는 kpi.live 일부만,
- * LIVE는 kpi.live 전부, ENDED는 kpi.summary(최종값).
+ * SCHEDULED · 실패(PREPARE_FAILED · DEPLOY_FAILED · HOSTING_FAILED)는 kpi · range · charts가 null(Prometheus를 조회하지 않음), PRE_ENTRY는 kpi.live 일부만,
+ * ENTRY_OPEN(입장 중) · LIVE(진행 중)는 kpi.live 전부, ENDED는 kpi.summary(최종값).
  */
 public record TrafficEventResponse(MonitoringSource prometheus,
 		@Schema(description = "ALB · RDS 그래프(60초 단위, 60초 캐시)") MonitoringSource aws, Info event, List<Step> steps,
@@ -27,6 +27,8 @@ public record TrafficEventResponse(MonitoringSource prometheus,
 	public enum StepKey {
 		/** 승인 */
 		APPROVE,
+		/** 배포(WF1-2, hosting PENDING → DEPLOYED) */
+		DEPLOY,
 		/** 호스팅 시작(WF2-1) */
 		HOSTING_START,
 		/** 준비(T−90, WF2-2) */
@@ -44,7 +46,7 @@ public record TrafficEventResponse(MonitoringSource prometheus,
 	public enum StepState {
 		/** 끝남 */
 		DONE,
-		/** 지금 단계(강조). 진행 중 · 입장 직전에만 하나 */
+		/** 지금 단계(강조). 입장 직전 · 입장 중 · 진행 중에만 하나, 배포(PENDING)는 상태와 상관없이 */
 		ACTIVE,
 		/** 아직 */
 		WAITING,
@@ -55,7 +57,7 @@ public record TrafficEventResponse(MonitoringSource prometheus,
 	}
 
 	/**
-	 * plannedAt: 계획 시각(승인 · 집계는 null). actualAt: 상태 로그 · 결과 요약 시각(시작은 시작 시각).
+	 * plannedAt: 계획 시각(승인 · 배포 · 집계는 null). actualAt: 상태 로그 · 결과 요약 시각(시작은 시작 시각).
 	 * durationSeconds: 준비만 — api · Redis Pod 시작 → Ready(Prometheus), 못 구하면 null
 	 */
 	public record Step(StepKey key, OffsetDateTime plannedAt, OffsetDateTime actualAt, Long durationSeconds,

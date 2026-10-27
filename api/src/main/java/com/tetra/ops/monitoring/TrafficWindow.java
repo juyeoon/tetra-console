@@ -40,7 +40,7 @@ record TrafficWindow(String key, List<String> options, Instant from, Instant to,
 			Instant now, Duration minStep) {
 		Instant entry = instant(EntryOpen.at(startAt));
 		Instant start = instant(startAt);
-		if (phase == EventPhase.PRE_ENTRY || phase == EventPhase.LIVE) {
+		if (phase == EventPhase.PRE_ENTRY || phase.entryOpened()) {
 			String key = requested != null && LIVE_OPTIONS.contains(requested) ? requested : "entry";
 			Instant from = switch (key) {
 				case "15m" -> now.minus(Duration.ofMinutes(15));

@@ -18,12 +18,18 @@ public enum EventPhase {
 	SCHEDULED,
 	/** 입장 −10분 ~ 입장. Pod · 재고 · Redis · 자원만 값 */
 	PRE_ENTRY,
-	/** 입장 ~ 종료(hosting_end_at) */
+	/** 입장 ~ 이벤트 시작(대기방 입장, 발급 전). 그래프 · KPI는 진행 중과 같다 */
+	ENTRY_OPEN,
+	/** 이벤트 시작 ~ 종료(hosting_end_at) */
 	LIVE,
 	/** 종료 이후(시각 또는 WF4 결과). 최종값, 그래프 범위 고정, 자동 갱신 꺼짐 */
 	ENDED,
 	/** WF2-2 실패(OPEN_FAILED). 진행 단계만 */
-	PREPARE_FAILED;
+	PREPARE_FAILED,
+	/** WF1-2 배포 실패(hosting DEPLOY_FAILED). 진행 단계만, 목록은 바로 최근 종료 */
+	DEPLOY_FAILED,
+	/** WF2-1 호스팅 시작 실패(HOSTING_FAILED). 진행 단계만, 목록은 hosting_end_at 전엔 시각대로 · 지나면 최근 종료 */
+	HOSTING_FAILED;
 
 	/** 그래프 · KPI를 그리기 시작하는 시점: 입장 10분 전 */
 	static final Duration CHART_LEAD = Duration.ofMinutes(10);
@@ -37,8 +43,15 @@ public enum EventPhase {
 		return startAt.minus(PREPARE_LEAD);
 	}
 
+	/** 실패를 먼저 본다: DEPLOY_FAILED → HOSTING_FAILED → OPEN_FAILED → 종료 → 시각 */
 	static EventPhase of(LocalDateTime startAt, LocalDateTime hostingEndAt, EventStatus eventStatus,
 			HostingStatus hostingStatus, LocalDateTime now) {
+		if (hostingStatus == HostingStatus.DEPLOY_FAILED) {
+			return DEPLOY_FAILED;
+		}
+		if (hostingStatus == HostingStatus.HOSTING_FAILED) {
+			return HOSTING_FAILED;
+		}
 		if (eventStatus == EventStatus.OPEN_FAILED) {
 			return PREPARE_FAILED;
 		}
@@ -46,9 +59,12 @@ public enum EventPhase {
 				|| hostingStatus == HostingStatus.END_FAILED || (hostingEndAt != null && !now.isBefore(hostingEndAt))) {
 			return ENDED;
 		}
+		if (!now.isBefore(startAt)) {
+			return LIVE;
+		}
 		LocalDateTime entryAt = EntryOpen.at(startAt);
 		if (!now.isBefore(entryAt)) {
-			return LIVE;
+			return ENTRY_OPEN;
 		}
 		if (!now.isBefore(entryAt.minus(CHART_LEAD))) {
 			return PRE_ENTRY;
@@ -56,9 +72,14 @@ public enum EventPhase {
 		return SCHEDULED;
 	}
 
+	/** 입장 뒤 ~ 종료 전(입장 중 · 진행 중): KPI 순간값 전부 */
+	boolean entryOpened() {
+		return this == ENTRY_OPEN || this == LIVE;
+	}
+
 	/** Prometheus를 조회하는 상태 */
 	boolean hasMetrics() {
-		return this == PRE_ENTRY || this == LIVE || this == ENDED;
+		return this == PRE_ENTRY || entryOpened() || this == ENDED;
 	}
 
 }

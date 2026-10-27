@@ -345,8 +345,8 @@ export interface MonitoringOverviewResponse {
 /** 상태(명세 2절). UNKNOWN = 판단할 데이터가 없음(조회 실패 · 미설정) */
 export type MonitoringLevel = 'OK' | 'WARN' | 'DANGER' | 'UNKNOWN';
 
-/** 이벤트 구역 상태(명세 4절). 종료 = hosting_end_at(WF4) */
-export type EventPhase = 'SCHEDULED' | 'PRE_ENTRY' | 'LIVE' | 'ENDED' | 'PREPARE_FAILED';
+/** 이벤트 구역 상태(명세 4절). ENTRY_OPEN = 입장 ~ 시작 전(발급 전), LIVE = 시작 ~ 종료. 종료 = hosting_end_at(WF4). 실패는 배포 → 호스팅 → 준비 순으로 먼저 본다 */
+export type EventPhase = 'SCHEDULED' | 'PRE_ENTRY' | 'ENTRY_OPEN' | 'LIVE' | 'ENDED' | 'PREPARE_FAILED' | 'DEPLOY_FAILED' | 'HOSTING_FAILED';
 
 export type FailureStep = 'DEPLOY' | 'HOSTING_START' | 'PREPARE' | 'END' | 'PROVISIONING' | 'MAIL' | 'OTHER';
 
@@ -473,9 +473,11 @@ export interface TrafficEventItem {
   endAt: string | null;
   eventStatus: EventStatus | null;
   hostingStatus: HostingStatus | null;
+  /** 지금 실패 상태(DEPLOY_FAILED · HOSTING_FAILED · OPEN_FAILED)로 바뀐 마지막 로그 시각(최근 7일, 없으면 null) */
+  failedAt: string | null;
 }
 
-export type TrafficStepKey = 'APPROVE' | 'HOSTING_START' | 'PREPARE' | 'ENTRY' | 'START' | 'END' | 'AGGREGATE';
+export type TrafficStepKey = 'APPROVE' | 'DEPLOY' | 'HOSTING_START' | 'PREPARE' | 'ENTRY' | 'START' | 'END' | 'AGGREGATE';
 export type TrafficStepState = 'DONE' | 'ACTIVE' | 'WAITING' | 'FAILED' | 'SKIPPED';
 
 export interface TrafficStep {
@@ -602,7 +604,7 @@ export interface TrafficEventResponse {
     stockCount: number | null;
   };
   steps: TrafficStep[];
-  /** SCHEDULED · PREPARE_FAILED면 null */
+  /** SCHEDULED · 실패(PREPARE_FAILED · DEPLOY_FAILED · HOSTING_FAILED)면 null */
   kpi: TrafficKpi | null;
   range: TrafficRange | null;
   charts: TrafficCharts | null;

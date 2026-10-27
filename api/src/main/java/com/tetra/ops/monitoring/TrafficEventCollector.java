@@ -117,7 +117,7 @@ class TrafficEventCollector {
 			fullGrid = Grid.of(req.full().from(), req.full().to(), req.full().step());
 			addRanges(batch, "f.", q, fullGrid);
 		}
-		boolean live = req.phase() == EventPhase.LIVE;
+		boolean live = req.phase().entryOpened();
 		boolean instants = live || req.phase() == EventPhase.PRE_ENTRY;
 		if (instants) {
 			if (live) {
