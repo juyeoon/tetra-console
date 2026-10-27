@@ -5,6 +5,7 @@ import static org.hamcrest.Matchers.closeTo;
 import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.everyItem;
 import static org.hamcrest.Matchers.hasItem;
+import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.nullValue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
@@ -394,6 +395,25 @@ class TrafficMonitoringApiTest extends IntegrationTest {
 			.andExpect(jsonPath("$.defaultEventId").value(7107))
 			.andExpect(jsonPath("$.items[0].group").value("TODAY"))
 			.andExpect(jsonPath("$.items[0].phase").value("SCHEDULED"));
+	}
+
+	@Test
+	void scheduledButEndedEventListedOnce() throws Exception {
+		// 오늘 시작, DB는 SCHEDULED · DEPLOY_FAILED(호스팅 안 함), hosting_end_at 지남 → 오늘 예정 · 최근 종료 둘 다에 걸리던 이벤트
+		LocalDateTime start = now.minusMinutes(30);
+		assumeTrue(start.toLocalDate().equals(now.toLocalDate()));
+		data.event(7109, A).name("A 배포 실패").approved("DEPLOY_FAILED", "SCHEDULED", "slug7109").startAt(start).insert();
+		data.jdbc().update("UPDATE t_%s.event SET end_at = ?, hosting_end_at = ? WHERE event_id = 7109".formatted(A),
+				now.minusMinutes(10), now.minusMinutes(1));
+		respondPlatform();
+		mvc.perform(get("/api/ops/monitoring/events").cookie(operatorCookie()))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.defaultEventId").value(7101))
+			.andExpect(jsonPath("$.items[?(@.eventId == 7109)]").value(hasSize(1)))
+			// 최근 종료(늦은 순)의 맨 앞: hosting_end_at now−1분
+			.andExpect(jsonPath("$.items[*].eventId").value(contains(7101, 7102, 7109, 7105, 7104)))
+			.andExpect(jsonPath("$.items[2].group").value("ENDED"))
+			.andExpect(jsonPath("$.items[2].phase").value("ENDED"));
 	}
 
 	@Test

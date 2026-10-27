@@ -282,6 +282,22 @@ describe('드롭다운 선택 유지', () => {
     assert.deepEqual(eventOptions(events, 7, NOW), [{ value: 7, label: '7 · A사 쿠폰 이벤트 · 진행 중' }]);
     assert.deepEqual(eventOptions(events, 12, NOW)[0], { value: 12, label: '12 · 목록 밖 이벤트(최근 7일 이전)' });
   });
+  test('같은 이벤트는 한 번만 — 선택돼 있어도, 서버 목록에 두 번 와도', () => {
+    const ended9 = { eventId: 9, phase: 'ENDED' as const, level: null, eventStatus: 'SCHEDULED' as const, hostingStatus: 'DEPLOY_FAILED' as const, endAt: '2026-10-26T13:30:00+09:00' };
+    const list: TrafficEventsResponse = {
+      defaultEventId: 9,
+      items: [
+        item({ ...ended9, group: 'TODAY' }),
+        item({ eventId: 10, group: 'TODAY', phase: 'SCHEDULED', level: null, eventStatus: 'SCHEDULED', startAt: '2026-10-26T14:25:00+09:00' }),
+        item({ ...ended9, group: 'ENDED' }),
+        item({ eventId: 6, group: 'ENDED', phase: 'ENDED', level: null, eventStatus: 'EXPIRED', endAt: '2026-10-25T18:00:00+09:00' }),
+      ],
+    };
+    assert.deepEqual(eventOptions(list, 9, NOW).map((o) => o.value), [9, 10, 6]);
+    assert.equal(eventOptions(list, 9, NOW)[0].label, '9 · A사 쿠폰 이벤트 · 종료 · 13:30');
+    // 서버가 고친 뒤 순서(예정 → 최근 종료): 고른 9가 목록에 있으면 앞에 따로 붙이지 않는다
+    assert.deepEqual(eventOptions({ defaultEventId: 10, items: list.items.slice(1, 3) }, 9, NOW).map((o) => o.value), [10, 9]);
+  });
   test('항목 끝 상태: 서버 phase 기준, 시각은 오늘이 아니면 MM-DD HH:mm', () => {
     const early = new Date('2026-10-26T12:00:00+09:00');
     assert.equal(eventStatusText(item({ group: 'TODAY', phase: 'SCHEDULED', level: null }), early), '예정 · 15:00 시작');
