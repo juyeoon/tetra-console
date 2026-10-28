@@ -13,6 +13,7 @@ import org.junit.jupiter.api.Test;
 import com.tetra.ops.common.time.Kst;
 import com.tetra.ops.domain.EventStatus;
 import com.tetra.ops.domain.HostingStatus;
+import com.tetra.ops.event.EntryOpen;
 import com.tetra.ops.monitoring.TrafficRules.AddonMember;
 import com.tetra.ops.monitoring.TrafficRules.EventSignals;
 import com.tetra.ops.monitoring.TrafficRules.Judgment;
@@ -126,16 +127,16 @@ class TrafficRulesTest {
 		// TEST-LEAD: 서비스 값 now + 48분(입장 −60)
 		// LocalDateTime start = now.plusMinutes(48); // 입장 = now − 12분
 		LocalDateTime start = now.minusMinutes(7); // 입장 = now − 12분 // TEST-LEAD
-		var late = new MonitoredEvent(7L, "aaaaaaaaaaaa", "A사", "쿠폰", start.minusHours(2), start, start.plusHours(2),
-				EventStatus.SCHEDULED, HostingStatus.HOSTING, 5000L, null);
+		var late = new MonitoredEvent(7L, "aaaaaaaaaaaa", "A사", "쿠폰", start.minusHours(2), start, start.plusHours(1),
+				start.plusHours(2), EventStatus.SCHEDULED, HostingStatus.HOSTING, 5000L, false, null);
 		assertThat(TrafficRules.delays(List.of(late), now)).containsExactly("7번 준비 12분 지연");
 		// 10분 이내면 지연 아님
 		assertThat(TrafficRules.delays(List.of(late), now.minusMinutes(3))).isEmpty();
-		var open = new MonitoredEvent(8L, "aaaaaaaaaaaa", "A사", "쿠폰", start.minusHours(2), start, now.minusMinutes(11),
-				EventStatus.OPEN, HostingStatus.HOSTING, 5000L, null);
+		var open = new MonitoredEvent(8L, "aaaaaaaaaaaa", "A사", "쿠폰", start.minusHours(2), start, now.minusMinutes(20),
+				now.minusMinutes(11), EventStatus.OPEN, HostingStatus.HOSTING, 5000L, false, null);
 		assertThat(TrafficRules.delays(List.of(open), now)).containsExactly("8번 종료 11분 지연");
 		var hosting = new MonitoredEvent(9L, "aaaaaaaaaaaa", "A사", "쿠폰", now.minusMinutes(15), now.plusHours(3),
-				now.plusHours(5), EventStatus.SCHEDULED, HostingStatus.DEPLOYED, 5000L, null);
+				now.plusHours(4), now.plusHours(5), EventStatus.SCHEDULED, HostingStatus.DEPLOYED, 5000L, false, null);
 		assertThat(TrafficRules.delays(List.of(hosting), now)).containsExactly("9번 호스팅 시작 15분 지연");
 	}
 
@@ -184,10 +185,62 @@ class TrafficRulesTest {
 		assertThat(EventPhase.ENTRY_OPEN.entryOpened()).isTrue();
 		assertThat(EventPhase.ENTRY_OPEN.hasMetrics()).isTrue();
 		assertThat(EventPhase.PRE_ENTRY.entryOpened()).isFalse();
-		assertThat(EventPhase.of(start, end, EventStatus.OPEN, HostingStatus.HOSTING, end)).isEqualTo(EventPhase.ENDED);
-		assertThat(EventPhase.of(start, end, EventStatus.EXPIRED, HostingStatus.ENDED, start)).isEqualTo(EventPhase.ENDED);
+		// end_at · 집계를 모르면(5인자) 마무리 없이 호스팅 종료 뒤 종료 처리 중
+		assertThat(EventPhase.of(start, end, EventStatus.OPEN, HostingStatus.HOSTING, end)).isEqualTo(EventPhase.ENDING);
+		assertThat(EventPhase.of(start, end, EventStatus.EXPIRED, HostingStatus.ENDED, start)).isEqualTo(EventPhase.ENDING);
 		assertThat(EventPhase.of(start, end, EventStatus.OPEN_FAILED, HostingStatus.HOSTING, start))
 			.isEqualTo(EventPhase.PREPARE_FAILED);
+	}
+
+	@Test
+	void phaseBoundariesWithEventEndAndAggregation() {
+		LocalDateTime start = LocalDateTime.of(2026, 10, 28, 10, 0);
+		LocalDateTime entry = EntryOpen.at(start);
+		LocalDateTime endAt = start.plusMinutes(15);
+		LocalDateTime hostingEnd = start.plusMinutes(25);
+		// 입장 · 시작 · 이벤트 종료 · 호스팅 종료 · 집계 완료 경계(시각은 그 순간부터 다음 상태)
+		assertThat(phase(start, endAt, hostingEnd, EventStatus.SCHEDULED, HostingStatus.HOSTING, false, entry.minusSeconds(1)))
+			.isEqualTo(EventPhase.PRE_ENTRY);
+		assertThat(phase(start, endAt, hostingEnd, EventStatus.OPEN, HostingStatus.HOSTING, false, entry))
+			.isEqualTo(EventPhase.ENTRY_OPEN);
+		assertThat(phase(start, endAt, hostingEnd, EventStatus.OPEN, HostingStatus.HOSTING, false, start))
+			.isEqualTo(EventPhase.LIVE);
+		assertThat(phase(start, endAt, hostingEnd, EventStatus.OPEN, HostingStatus.HOSTING, false, endAt.minusSeconds(1)))
+			.isEqualTo(EventPhase.LIVE);
+		assertThat(phase(start, endAt, hostingEnd, EventStatus.OPEN, HostingStatus.HOSTING, false, endAt))
+			.isEqualTo(EventPhase.WRAP_UP);
+		assertThat(phase(start, endAt, hostingEnd, EventStatus.OPEN, HostingStatus.HOSTING, false, hostingEnd.minusSeconds(1)))
+			.isEqualTo(EventPhase.WRAP_UP);
+		// 호스팅 종료: WF4가 아직이어도(OPEN · HOSTING) 종료 처리 중, WF4 성공 뒤 집계 전도 종료 처리 중
+		assertThat(phase(start, endAt, hostingEnd, EventStatus.OPEN, HostingStatus.HOSTING, false, hostingEnd))
+			.isEqualTo(EventPhase.ENDING);
+		assertThat(phase(start, endAt, hostingEnd, EventStatus.EXPIRED, HostingStatus.ENDED, false, hostingEnd.plusMinutes(1)))
+			.isEqualTo(EventPhase.ENDING);
+		// 집계 완료 = 종료. WF4 결과가 시각보다 먼저 와도(일찍 끝냄) 호스팅 종료 뒤로 본다
+		assertThat(phase(start, endAt, hostingEnd, EventStatus.EXPIRED, HostingStatus.ENDED, true, hostingEnd.plusMinutes(2)))
+			.isEqualTo(EventPhase.ENDED);
+		assertThat(phase(start, endAt, hostingEnd, EventStatus.EXPIRED, HostingStatus.ENDED, true, endAt))
+			.isEqualTo(EventPhase.ENDED);
+		// WF4 실패 = 종료 · 집계 실패(집계 기록과 상관없이)
+		assertThat(phase(start, endAt, hostingEnd, EventStatus.OPEN, HostingStatus.END_FAILED, false, hostingEnd.plusMinutes(1)))
+			.isEqualTo(EventPhase.END_FAILED);
+		// end_at을 모르면 마무리 없이 호스팅 종료까지 진행 중
+		assertThat(phase(start, null, hostingEnd, EventStatus.OPEN, HostingStatus.HOSTING, false, endAt))
+			.isEqualTo(EventPhase.LIVE);
+
+		assertThat(EventPhase.WRAP_UP.entryOpened()).isTrue();
+		assertThat(EventPhase.WRAP_UP.closed()).isFalse();
+		for (EventPhase closed : List.of(EventPhase.ENDING, EventPhase.ENDED, EventPhase.END_FAILED)) {
+			assertThat(closed.closed()).isTrue();
+			assertThat(closed.entryOpened()).isFalse();
+			assertThat(closed.hasMetrics()).isTrue();
+		}
+		assertThat(EventPhase.LIVE.closed()).isFalse();
+	}
+
+	private static EventPhase phase(LocalDateTime start, LocalDateTime endAt, LocalDateTime hostingEnd, EventStatus event,
+			HostingStatus hosting, boolean aggregated, LocalDateTime now) {
+		return EventPhase.of(start, endAt, hostingEnd, event, hosting, aggregated, now);
 	}
 
 	@Test
@@ -243,6 +296,27 @@ class TrafficRulesTest {
 		assertThat(TrafficWindow.of(EventPhase.SCHEDULED, null, start, null, now, TrafficWindow.PROMETHEUS_MIN_STEP))
 			.isNull();
 		assertThat(TrafficWindow.isKnown("2h")).isFalse();
+	}
+
+	@Test
+	void windowsAfterHostingEndAreFixed() {
+		LocalDateTime start = LocalDateTime.of(2026, 10, 28, 10, 0);
+		LocalDateTime hostingEnd = start.plusMinutes(25);
+		var justEnded = hostingEnd.plusSeconds(30).atZone(Kst.ZONE).toInstant();
+		// 호스팅 종료 직후에도 끝은 호스팅 종료 +10분(지금으로 자르지 않음)
+		for (EventPhase closed : List.of(EventPhase.ENDING, EventPhase.ENDED, EventPhase.END_FAILED)) {
+			TrafficWindow full = TrafficWindow.of(closed, null, start, hostingEnd, justEnded, TrafficWindow.PROMETHEUS_MIN_STEP);
+			assertThat(full.key()).isEqualTo("full");
+			assertThat(full.options()).containsExactly("full", "start");
+			assertThat(full.from()).isEqualTo(EntryOpen.at(start).minusMinutes(10).atZone(Kst.ZONE).toInstant());
+			assertThat(full.to()).isEqualTo(hostingEnd.plusMinutes(10).atZone(Kst.ZONE).toInstant());
+		}
+		// 마무리는 진행 중과 같은 범위 · 선택지
+		TrafficWindow wrapUp = TrafficWindow.of(EventPhase.WRAP_UP, null, start, hostingEnd,
+				start.plusMinutes(20).atZone(Kst.ZONE).toInstant(), TrafficWindow.PROMETHEUS_MIN_STEP);
+		assertThat(wrapUp.key()).isEqualTo("entry");
+		assertThat(wrapUp.options()).containsExactly("entry", "15m", "1h");
+		assertThat(wrapUp.to()).isEqualTo(start.plusMinutes(20).atZone(Kst.ZONE).toInstant());
 	}
 
 }

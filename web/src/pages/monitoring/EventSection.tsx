@@ -10,10 +10,12 @@ import MetricChart from './MetricChart';
 import StepTimeline from './StepTimeline';
 import {
   CHART_ROWS,
+  chartRefreshText,
   chartsMissingText,
   chartViews,
   endedKpiTiles,
   eventBody,
+  isClosedPhase,
   LIST_ORDER_TEXT,
   liveKpiGroups,
   NO_EVENT_TEXT,
@@ -138,12 +140,20 @@ function EventDetail({ detail, onRange, now }: { detail: TrafficEventResponse; o
   );
 }
 
+/** 호스팅 종료 뒤(종료 처리 중 · 종료 · 종료 실패)는 최종값 10칸, 그 전(입장 직전 ~ 마무리)은 실시간 KPI 4묶음 */
 function Metrics({ detail, onRange }: { detail: TrafficEventResponse; onRange: (range: TrafficRangeKey) => void }) {
-  const ended = detail.event.phase === 'ENDED';
+  const closed = isClosedPhase(detail.event.phase);
+  // 세로 점선은 그래프 범위 안의 것만 그려진다(마무리부터 이벤트 종료, 호스팅 종료 뒤 호스팅 종료)
   const charts = detail.charts
     ? chartViews(
         detail.charts,
-        { entryAt: detail.event.entryAt, startAt: detail.event.startAt, endAt: ended ? detail.event.endAt : null, soldOutAt: detail.kpi?.summary?.soldOutAt ?? null },
+        {
+          entryAt: detail.event.entryAt,
+          startAt: detail.event.startAt,
+          eventEndAt: detail.event.eventEndAt,
+          hostingEndAt: closed ? detail.event.endAt : null,
+          soldOutAt: detail.kpi?.summary?.soldOutAt ?? null,
+        },
         detail.aws.stale,
       )
     : [];
@@ -154,7 +164,7 @@ function Metrics({ detail, onRange }: { detail: TrafficEventResponse; onRange: (
         <Typography variant="h4" component="h4">
           이벤트 그래프{' '}
           <Typography component="span" variant="caption" sx={{ color: text.tertiary }}>
-            · 앱 지표 15초 · ALB·RDS 60초 갱신{detail.prometheus.stale ? ' · 데이터 지연됨' : ''}
+            · {chartRefreshText(detail)}
           </Typography>
         </Typography>
         <Stack direction="row" spacing={0.75}>
@@ -166,7 +176,7 @@ function Metrics({ detail, onRange }: { detail: TrafficEventResponse; onRange: (
         </Stack>
       </Stack>
 
-      {ended ? <KpiTiles tiles={endedKpiTiles(detail.kpi?.summary)} /> : <KpiGroups groups={liveKpiGroups(detail.kpi, detail.event.phase)} />}
+      {closed ? <KpiTiles tiles={endedKpiTiles(detail.kpi?.summary)} /> : <KpiGroups groups={liveKpiGroups(detail.kpi, detail.event.phase)} />}
 
       {detail.charts == null ? (
         <Typography variant="body2" sx={{ color: text.tertiary, mt: 2 }}>

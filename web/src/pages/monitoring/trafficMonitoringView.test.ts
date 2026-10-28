@@ -5,6 +5,7 @@ import {
   addonsView,
   barPercent,
   bytesText,
+  chartRefreshText,
   chartsMissingText,
   chartViews,
   clockText,
@@ -12,18 +13,21 @@ import {
   dayLabel,
   durationText,
   EMPTY,
+  endedKpiTiles,
   ERROR_RATIO_DANGER,
   ERROR_RATIO_WARN,
   ERROR_RULE_TEXT,
-  endedKpiTiles,
   eventBody,
   eventOptions,
   eventStatusText,
   failureRows,
   headerView,
+  isClosedPhase,
   liveKpiGroups,
+  markerLabels,
   mergeOnTime,
   nodeTooltip,
+  OPEN_GROUP_TEXT,
   opsText,
   parseEventId,
   percentText,
@@ -39,8 +43,12 @@ import {
   stepViews,
   stopPollingWhen,
   summaryCells,
+  timeTicks,
+  tooltipValue,
   upcomingViews,
   usageTone,
+  X_TICK_MIN_PX,
+  Y_AXIS_WIDTH,
   yMaxFor,
 } from './trafficMonitoringView.ts';
 
@@ -100,6 +108,7 @@ const eventResponse = (phase: TrafficEventResponse['event']['phase'], patch: Par
     entryAt: '2026-10-26T14:00:00+09:00',
     startAt: '2026-10-26T15:00:00+09:00',
     endAt: '2026-10-26T15:40:00+09:00',
+    eventEndAt: '2026-10-26T15:30:00+09:00',
     stockCount: 5000,
   },
   steps: [],
@@ -350,8 +359,44 @@ describe('구역 상태별 표시(명세 4절)', () => {
     ]);
     assert.deepEqual(sectionStatus(undefined).chips, []);
   });
+  test('상태별 갱신: 마무리는 실시간, 종료 처리 중은 진행 단계만 15초, 종료 · 종료 실패는 꺼짐', () => {
+    const wrapUp = eventResponse('WRAP_UP', { kpi: { level: 'OK', reason: '정상', warn: [], live: null, summary: null } });
+    assert.deepEqual(sectionStatus(wrapUp), {
+      chips: [
+        { label: '마무리', tone: 'blue' },
+        { label: '정상', tone: 'green' },
+      ],
+      refresh: '자동 갱신 · 15초',
+      autoRefresh: true,
+    });
+    assert.deepEqual(sectionStatus(eventResponse('ENDING')), { chips: [{ label: '종료 처리 중', tone: 'grey' }], refresh: '자동 갱신 · 15초 · 진행 단계만', autoRefresh: true });
+    assert.deepEqual(sectionStatus(eventResponse('END_FAILED')), { chips: [{ label: '종료·집계 실패', tone: 'red' }], refresh: '자동 갱신 꺼짐', autoRefresh: false });
+    for (const [phase, stop] of [
+      ['PRE_ENTRY', false],
+      ['ENTRY_OPEN', false],
+      ['LIVE', false],
+      ['WRAP_UP', false],
+      ['ENDING', false],
+      ['ENDED', true],
+      ['END_FAILED', true],
+    ] as const) {
+      assert.equal(stopPollingWhen(eventResponse(phase)), stop, phase);
+    }
+    // 그래프 머리글: 호스팅 종료 뒤는 값 고정
+    assert.equal(chartRefreshText(eventResponse('WRAP_UP')), '앱 지표 15초 · ALB·RDS 60초 갱신');
+    assert.equal(chartRefreshText(eventResponse('ENDING')), '호스팅 종료 뒤 값 고정');
+    assert.equal(chartRefreshText(eventResponse('LIVE', { prometheus: { asOf: null, stale: true, staleReason: 'SOURCE' } })), '앱 지표 15초 · ALB·RDS 60초 갱신 · 데이터 지연됨');
+    assert.equal(isClosedPhase('ENDING') && isClosedPhase('ENDED') && isClosedPhase('END_FAILED'), true);
+    assert.equal(isClosedPhase('WRAP_UP') || isClosedPhase('LIVE'), false);
+  });
+  test('드롭다운 상태 시각: 마무리는 호스팅 종료 예정, 호스팅 종료 뒤는 hosting_end_at', () => {
+    assert.equal(eventStatusText(item({ phase: 'WRAP_UP' }), NOW), '마무리 · 15:40 호스팅 종료');
+    assert.equal(eventStatusText(item({ group: 'ENDED', phase: 'ENDING' }), NOW), '종료 처리 중 · 15:40');
+    assert.equal(eventStatusText(item({ group: 'ENDED', phase: 'END_FAILED' }), NOW), '종료·집계 실패 · 15:40');
+    assert.equal(OPEN_GROUP_TEXT, '진행 중(입장 중 · 마무리 포함)');
+  });
   test('구역 배지와 드롭다운 항목은 같은 상태 이름(PHASE_META)', () => {
-    for (const phase of ['SCHEDULED', 'PRE_ENTRY', 'ENTRY_OPEN', 'LIVE', 'ENDED', 'PREPARE_FAILED', 'DEPLOY_FAILED', 'HOSTING_FAILED'] as const) {
+    for (const phase of ['SCHEDULED', 'PRE_ENTRY', 'ENTRY_OPEN', 'LIVE', 'WRAP_UP', 'ENDING', 'ENDED', 'END_FAILED', 'PREPARE_FAILED', 'DEPLOY_FAILED', 'HOSTING_FAILED'] as const) {
       const badge = sectionStatus(eventResponse(phase)).chips[0].label;
       assert.equal(badge, PHASE_META[phase].label);
       assert.ok(eventStatusText(item({ phase }), NOW).startsWith(badge), phase);
@@ -424,9 +469,9 @@ describe('구역 상태별 표시(명세 4절)', () => {
         // TEST-LEAD: 서비스 값 T−90
         // ['준비 (T−90)', '14:00 완료 · 3분 20초'],
         ['준비 (T−15)', '14:00 완료 · 3분 20초'], // TEST-LEAD
-        ['이벤트 시작', '15:00 시작 · 진행 중'],
-        ['종료', '15:40 예정'],
-        ['집계', '종료 뒤'],
+        ['이벤트 진행', '15:00 시작 · 진행 중'],
+        ['호스팅 종료', '15:40 예정'],
+        ['집계', '호스팅 종료 뒤'],
       ],
     );
     const failed: TrafficStep[] = [
@@ -439,10 +484,11 @@ describe('구역 상태별 표시(명세 4절)', () => {
       stepViews(failed, NOW).map((s) => s.sub),
       ['10-25 13:31 실패', '진행 안 됨', '진행 안 됨'],
     );
-    // 배포: 배포 중(PENDING)은 시각 없이 '배포 중', 실패는 실패 시각
+    // 배포: 배포 중(PENDING)은 시작(승인) 시각과 '시작 · 진행 중'(모르면 '진행 중'), 실패는 실패 시각
     assert.deepEqual(
       stepViews(
         [
+          { key: 'DEPLOY', plannedAt: null, actualAt: '2026-10-26T09:58:00+09:00', durationSeconds: null, state: 'ACTIVE', reason: null },
           { key: 'DEPLOY', plannedAt: null, actualAt: null, durationSeconds: null, state: 'ACTIVE', reason: null },
           { key: 'DEPLOY', plannedAt: null, actualAt: '2026-10-26T10:00:40+09:00', durationSeconds: null, state: 'DONE', reason: null },
           { key: 'DEPLOY', plannedAt: null, actualAt: null, durationSeconds: null, state: 'DONE', reason: null },
@@ -451,7 +497,8 @@ describe('구역 상태별 표시(명세 4절)', () => {
         NOW,
       ).map((s) => [s.label, s.sub]),
       [
-        ['배포', '배포 중'],
+        ['배포', '09:58 시작 · 진행 중'],
+        ['배포', '진행 중'],
         ['배포', '10:00 완료'],
         ['배포', `${EMPTY} 완료`],
         ['배포', '10:01 실패'],
@@ -472,20 +519,38 @@ describe('구역 상태별 표시(명세 4절)', () => {
     // 입장 직전: 준비가 진행 중(계획 시각 지남)
     assert.equal(
       stepViews([{ key: 'PREPARE', plannedAt: '2026-10-26T13:30:00+09:00', actualAt: null, durationSeconds: null, state: 'ACTIVE', reason: null }], new Date('2026-10-26T13:55:00+09:00'))[0].sub,
-      '13:30 진행 중',
+      '13:30 시작 · 진행 중',
     );
   });
-  test('지난 계획 시각인데 완료 기록이 없으면 "기록 없음"(예정 아님)', () => {
+  test('이벤트 진행은 시작 ~ 이벤트 종료, 호스팅 종료 · 집계는 진행 중이면 "종료 처리 중" · "집계 중"', () => {
+    const at = new Date('2026-10-26T15:41:00+09:00');
+    const steps: TrafficStep[] = [
+      { key: 'START', plannedAt: '2026-10-26T15:00:00+09:00', actualAt: '2026-10-26T15:00:00+09:00', endAt: '2026-10-26T15:30:00+09:00', durationSeconds: null, state: 'DONE', reason: null },
+      { key: 'END', plannedAt: '2026-10-26T15:40:00+09:00', actualAt: null, endAt: null, durationSeconds: null, state: 'ACTIVE', reason: null },
+      { key: 'AGGREGATE', plannedAt: null, actualAt: null, endAt: null, durationSeconds: null, state: 'ACTIVE', reason: null },
+      // 다른 날이면 끝 시각에도 날짜
+      { key: 'START', plannedAt: '2026-10-25T23:00:00+09:00', actualAt: '2026-10-25T23:00:00+09:00', endAt: '2026-10-26T01:00:00+09:00', durationSeconds: null, state: 'DONE', reason: null },
+    ];
+    assert.deepEqual(
+      stepViews(steps, at).map((s) => [s.label, s.sub]),
+      [
+        ['이벤트 진행', '15:00~15:30 완료'],
+        ['호스팅 종료', '종료 처리 중'],
+        ['집계', '집계 중'],
+        ['이벤트 진행', '10-25 23:00~10-26 01:00 완료'],
+      ],
+    );
+  });
+  test('지난 계획 시각이어도 시작 기록이 없으면 "HH:mm 예정"("기록 없음"은 쓰지 않음 — 실패처럼 읽힌다)', () => {
     const waiting: TrafficStep[] = [
       { key: 'HOSTING_START', plannedAt: '2026-10-21T16:09:00+09:00', actualAt: null, durationSeconds: null, state: 'WAITING', reason: null },
       { key: 'END', plannedAt: '2026-10-26T15:09:00+09:00', actualAt: null, durationSeconds: null, state: 'WAITING', reason: null },
       { key: 'AGGREGATE', plannedAt: null, actualAt: null, durationSeconds: null, state: 'WAITING', reason: null },
       { key: 'START', plannedAt: '2026-10-26T15:30:00+09:00', actualAt: null, durationSeconds: null, state: 'WAITING', reason: null },
     ];
-    assert.deepEqual(
-      stepViews(waiting, NOW).map((s) => s.sub),
-      ['10-21 16:09 기록 없음', '15:09 기록 없음', '종료 뒤', '15:30 예정'],
-    );
+    const subs = stepViews(waiting, NOW).map((s) => s.sub);
+    assert.deepEqual(subs, ['10-21 16:09 예정', '15:09 예정', '호스팅 종료 뒤', '15:30 예정']);
+    assert.ok(subs.every((sub) => !sub.includes('기록 없음')));
   });
   test('KPI: 입장 직전은 요청 처리 · 대기 인원 –(입장 뒤 표시), 주의 값만 표시', () => {
     const kpi: TrafficKpi = {
@@ -544,6 +609,33 @@ describe('구역 상태별 표시(명세 4절)', () => {
       ['Pod 메모리 최대', '5.2 GB', '요청량의 65%'],
       ['Redis 메모리 최대', '44%', undefined],
       ['Redis 재시작', '0', undefined],
+    ]);
+    // 최대가 0이면 서버가 시각을 비운다 → '–'. Redis 지표가 없으면 재시작도 '–'
+    const quiet = endedKpiTiles({
+      peakRps: { value: 0, at: null },
+      errorRatioAvg: 0, errorRatioMax: 0, p95MaxMs: null, p95AvgMs: null, podsMax: 2, podsLimit: 4,
+      peakWaiting: { value: 0, at: null }, issued: 0, stockTotal: 15, soldOutAt: null,
+      cpuMaxCores: null, cpuRequestCores: null, memoryMaxBytes: null, memoryRequestBytes: null, redisMemoryMax: null, redisRestarts: null,
+    });
+    assert.deepEqual(quiet.filter((t) => ['최대 RPS', '최대 대기 인원', 'Redis 재시작'].includes(t.label)).map((t) => [t.label, t.value, t.sub]), [
+      ['최대 RPS', '0', EMPTY],
+      ['최대 대기 인원', '0', EMPTY],
+      ['Redis 재시작', EMPTY, undefined],
+    ]);
+  });
+  test('Redis 칸: 서버가 재시작을 비우면(Redis 지표 없음) 메모리 · 연결처럼 "–"', () => {
+    const kpi: TrafficKpi = {
+      level: 'OK', reason: '정상', warn: [], summary: null,
+      live: {
+        rps: 1, errorRatio: 0, p95Ms: null, p95IssuanceMs: null, p95TicketMs: null, podsReady: 2, podsMax: 4, podsMin: 2, podsPending: 0, cpuCores: 0.2, cpuRequestCores: 1,
+        memoryBytes: 1, memoryRequestBytes: 2, waiting: 0, stockRemaining: 5, stockTotal: 15, redisMemoryRatio: null, redisMemoryUsedBytes: null, redisMemoryMaxBytes: null,
+        redisOpsPerSec: null, redisRestarts: null, redisConnections: null, redisUp: null,
+      },
+    };
+    assert.deepEqual(liveKpiGroups(kpi, 'LIVE')[3].tiles.map((t) => [t.label, t.value, t.sub]), [
+      ['메모리', EMPTY, undefined],
+      ['처리량', EMPTY, undefined],
+      ['재시작', EMPTY, `연결 ${EMPTY}`],
     ]);
   });
   test('범위 버튼', () => {
@@ -606,6 +698,57 @@ describe('그래프 변환', () => {
     assert.deepEqual(rds.series[1].data, [20, 36]);
     assert.equal(rds.current, '48');
     for (const v of views) assert.ok(v.series.every((s) => s.role === 'primary' || s.role === 'secondary'));
+  });
+  test('트래픽: 커서는 요청 수가 아니라 서빙 커서 전진 속도(입장 번호/초) — 범례 · 툴팁 단위', () => {
+    const traffic = chartViews(charts, markers, false)[0];
+    assert.deepEqual(traffic.series.map((s) => [s.label, s.unit]), [
+      ['API 전체 RPS', 'RPS'],
+      ['커서 전진 (입장 번호/초)', '번호/초'],
+    ]);
+    assert.equal(tooltipValue(0.5, '번호/초'), '0.5 번호/초');
+    assert.equal(tooltipValue(1131.24, 'RPS'), '1,131.24 RPS');
+    assert.equal(tooltipValue(null, 'RPS'), EMPTY);
+    assert.equal(tooltipValue(0), '0');
+  });
+  test('세로 점선: 이벤트 종료 · 호스팅 종료도 범위 안이면', () => {
+    const views = chartViews(charts, { ...markers, eventEndAt: '2026-10-26T14:50:45+09:00', hostingEndAt: '2026-10-26T14:51:00+09:00' }, false);
+    assert.deepEqual(views[0].markers.map((m) => m.label), ['시작', '이벤트 종료', '호스팅 종료']);
+    // 범위 밖(진행 중의 이벤트 종료 예정)은 그리지 않는다
+    assert.deepEqual(chartViews(charts, { ...markers, eventEndAt: '2026-10-26T16:00:00+09:00' }, false)[0].markers.map((m) => m.label), ['시작']);
+  });
+  test('세로 점선 이름이 겹치면 뒤의 이름만 비운다(선은 그대로)', () => {
+    const from = 0;
+    const to = 50 * 60_000;
+    const at = (minute: number, label: string) => ({ x: minute * 60_000, label });
+    // 280px(그림 208px) · 50분: 1분 ≈ 4.2px. 입장(32px) 뒤 5분(21px)의 시작은 숨김, 10분(42px) 뒤 재고 소진은 보임
+    const labels = markerLabels([at(30, '호스팅 종료'), at(0, '입장'), at(5, '시작'), at(10, '재고 소진'), at(20, '이벤트 종료')], from, to, 280);
+    assert.deepEqual(labels.map((m) => m.label), ['입장', '', '재고 소진', '', '호스팅 종료']);
+    assert.deepEqual(labels.map((m) => m.x / 60_000), [0, 5, 10, 20, 30]);
+    // 오른쪽 끝(40분 = 166px)에서 이름(약 67px)이 그래프(232px)를 넘으면 비운다
+    assert.deepEqual(markerLabels([at(40, '호스팅 종료')], from, to, 280).map((m) => m.label), ['']);
+    // 넓으면 다 보인다
+    assert.ok(markerLabels([at(0, '입장'), at(5, '시작')], from, to, 1200).every((m) => m.label));
+  });
+  test('x축 눈금: 폭에 맞춰 눈금 사이 56px 이상, 1분 이상 간격, KST 정각 단위', () => {
+    const from = Date.parse('2026-10-28T09:45:00+09:00');
+    const min = 60_000;
+    const clock = (ticks: number[]) => ticks.map((t) => new Date(t + 9 * 3600_000).toISOString().slice(11, 16));
+    // 3칸 줄(약 280px): 8분 범위도 1분 눈금 대신 2분(겹침 '09:4509:46…' 방지), 짝수 분에 맞춘다
+    assert.deepEqual(clock(timeTicks(from, from + 8 * min, 280)), ['09:46', '09:48', '09:50', '09:52']);
+    // 넓은 그래프(약 520px)는 더 촘촘히
+    assert.deepEqual(clock(timeTicks(from, from + 8 * min, 520)).length, 9);
+    // 50분(입장 −10분 ~ 호스팅 종료 +10분): 280px면 15분 간격
+    assert.deepEqual(clock(timeTicks(from + 30_000, from + 50 * min, 280)), ['10:00', '10:15', '10:30']);
+    for (const width of [240, 280, 330, 520, 900]) {
+      const ticks = timeTicks(from, from + 21 * min, width);
+      const gap = ((width - Y_AXIS_WIDTH) * (ticks[1] - ticks[0])) / (21 * min);
+      assert.ok(gap >= X_TICK_MIN_PX, `${width}px: ${gap}`);
+      assert.ok(ticks.every((t) => (t + 9 * 3600_000) % min === 0));
+    }
+    // 폭을 모르면 300px로, 범위가 없으면 그 점 하나
+    assert.deepEqual(timeTicks(from, from + 21 * min, 0), timeTicks(from, from + 21 * min, 300));
+    assert.deepEqual(timeTicks(from, from, 300), [from]);
+    assert.deepEqual(timeTicks(Number.NaN, from, 300), []);
   });
   test('세로 점선은 범위 안의 것만 · 값이 없으면 empty', () => {
     const traffic = chartViews(charts, markers, false)[0];

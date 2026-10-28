@@ -8,12 +8,13 @@ import com.tetra.ops.event.EntryOpen;
 
 /**
  * OPS-05 목록 · 상태 판정에 쓰는 이벤트 한 건(registry + 테넌트 스키마 event). 시각은 KST.
- * hostingEndAt · stockCount는 테넌트 스키마 값 — 테넌트가 READY가 아니어서 못 읽었으면 null.
+ * endAt(이벤트 종료) · hostingEndAt · stockCount · aggregated는 테넌트 스키마 값 — 테넌트가 READY가 아니어서 못 읽었으면 null · false.
+ * aggregated: 집계 완료(event_result_summary.history_generated_at 있음).
  * failedAt: 지금 실패 상태(DEPLOY_FAILED · HOSTING_FAILED · OPEN_FAILED)로 바뀐 마지막 로그 시각. 최근 7일 밖이거나 로그가 없으면 null.
  */
 record MonitoredEvent(Long eventId, String tenantId, String tenantName, String name, LocalDateTime hostingStartAt,
-		LocalDateTime startAt, LocalDateTime hostingEndAt, EventStatus eventStatus, HostingStatus hostingStatus,
-		Long stockCount, LocalDateTime failedAt) {
+		LocalDateTime startAt, LocalDateTime endAt, LocalDateTime hostingEndAt, EventStatus eventStatus,
+		HostingStatus hostingStatus, Long stockCount, boolean aggregated, LocalDateTime failedAt) {
 
 	LocalDateTime prepareAt() {
 		return EventPhase.prepareAt(startAt);
@@ -32,12 +33,12 @@ record MonitoredEvent(Long eventId, String tenantId, String tenantName, String n
 	}
 
 	MonitoredEvent withFailedAt(LocalDateTime at) {
-		return new MonitoredEvent(eventId, tenantId, tenantName, name, hostingStartAt, startAt, hostingEndAt, eventStatus,
-				hostingStatus, stockCount, at);
+		return new MonitoredEvent(eventId, tenantId, tenantName, name, hostingStartAt, startAt, endAt, hostingEndAt,
+				eventStatus, hostingStatus, stockCount, aggregated, at);
 	}
 
 	EventPhase phase(LocalDateTime now) {
-		return EventPhase.of(startAt, hostingEndAt, eventStatus, hostingStatus, now);
+		return EventPhase.of(startAt, endAt, hostingEndAt, eventStatus, hostingStatus, aggregated, now);
 	}
 
 }

@@ -18,10 +18,11 @@ import com.tetra.ops.monitoring.PrometheusClient.PrometheusException;
 /**
  * 조회 결과 하나를 캐시한다(홈 모니터링 · OPS-05 공통, 2026-10-26 홈 MonitoringService에서 뽑음).
  * - TTL 안에는 마지막 값을 그대로 준다. Pod마다 따로 두는 조회 캐시다 — Pod끼리 값이 몇 초 달라도 되고 공유 상태가 아니다(CLAUDE.md §10).
+ *   값이 더 바뀌지 않는 조회(호스팅이 끝난 이벤트)는 TTL을 길게, 실패 뒤 다시 조회하는 간격(retryAfterFailure)은 짧게 따로 둔다.
  * - single-flight: 같은 시점의 요청은 진행 중인 갱신 하나를 같이 기다린다(조회는 한 번).
  * - 갱신 1회 전체 상한을 넘거나 실패하면 마지막 값을 stale로(asStale), 없으면 unavailable. 둘 다 원인을 받는다 —
  *   출처 장애(Prometheus 서버 문제 · AWS 오류 · 갱신 상한 초과)면 SOURCE, 그 밖(코드 · 가공 오류)이면 INTERNAL.
- *   실패한 뒤 TTL 동안은 다시 조회하지 않는다(외부 장애 때 요청마다 상한까지 기다리지 않게).
+ *   실패한 뒤 retryAfterFailure(기본 TTL) 동안은 다시 조회하지 않는다(외부 장애 때 요청마다 상한까지 기다리지 않게).
  * - 실패 로그는 갱신마다 WARN 한 줄(원인 · 연속 횟수, 쿼리 원문 · 응답 본문 · 자격 증명 없음).
  *   예상 밖 예외(Prometheus · AWS 오류 · 시간 초과가 아닌 것)는 연속 실패 동안 처음 한 번만 스택 트레이스를 붙인다(2026-10-28).
  */
@@ -40,6 +41,8 @@ final class RefreshCache<T> {
 	private final String label;
 
 	private final long ttlNanos;
+
+	private final long retryAfterFailureNanos;
 
 	private final Duration refreshTimeout;
 
@@ -82,8 +85,15 @@ final class RefreshCache<T> {
 	 */
 	RefreshCache(String label, Duration ttl, Duration refreshTimeout, ExecutorService executor, Loader<T> loader,
 			BiFunction<T, StaleReason, T> asStale, Function<StaleReason, T> unavailable) {
+		this(label, ttl, ttl, refreshTimeout, executor, loader, asStale, unavailable);
+	}
+
+	/** @param retryAfterFailure 실패한 뒤 다시 조회하지 않는 시간(성공 값의 TTL과 따로) */
+	RefreshCache(String label, Duration ttl, Duration retryAfterFailure, Duration refreshTimeout, ExecutorService executor,
+			Loader<T> loader, BiFunction<T, StaleReason, T> asStale, Function<StaleReason, T> unavailable) {
 		this.label = label;
 		this.ttlNanos = ttl.toNanos();
+		this.retryAfterFailureNanos = retryAfterFailure.toNanos();
 		this.refreshTimeout = refreshTimeout;
 		this.executor = executor;
 		this.loader = loader;
@@ -103,7 +113,7 @@ final class RefreshCache<T> {
 				refresh = inFlight;
 			}
 			else {
-				if (failedRecently && now - lastFailureNanos < ttlNanos) {
+				if (failedRecently && now - lastFailureNanos < retryAfterFailureNanos) {
 					return fallbackLocked(lastFailureReason);
 				}
 				long deadline = now + refreshTimeout.toNanos();

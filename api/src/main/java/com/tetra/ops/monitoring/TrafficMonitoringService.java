@@ -57,7 +57,8 @@ import jakarta.annotation.PreDestroy;
 /**
  * OPS-05 트래픽 모니터링(명세 docs/ops05). 출처별 캐시(Prometheus · DB 15초, AWS 60초)는 {@link RefreshCache} —
  * single-flight · 갱신 상한 · 실패 시 마지막 값 + stale. 응답은 출처별 asOf · stale을 따로 준다(한쪽이 죽어도 다른 칸은 보인다).
- * 이벤트 상세는 (이벤트 · 상태 · 범위)별 캐시, 2분 안 쓰이면 지운다. 판정은 {@link TrafficRules}.
+ * 이벤트 상세는 (이벤트 · 상태 · 범위)별 캐시, 2분 안 쓰이면 지운다. 호스팅이 끝난 상태(종료 처리 중 · 종료 · 종료 실패)는 범위가
+ * 고정이라 Prometheus · CloudWatch 값을 한 번 받으면 다시 조회하지 않는다(진행 단계 DB만 15초, {@link #CLOSED_TTL}). 판정은 {@link TrafficRules}.
  */
 @Service
 public class TrafficMonitoringService {
@@ -76,6 +77,9 @@ public class TrafficMonitoringService {
 
 	static final List<String> ADDON_GROUPS = List.of("KEDA", "Karpenter", "LBC", "Prometheus", "External Secrets",
 			"ArgoCD");
+
+	/** 호스팅이 끝난 이벤트의 Prometheus · AWS 값 TTL — 범위가 고정이라 사실상 다시 조회하지 않는다(실패 뒤 재시도는 보통 TTL) */
+	static final Duration CLOSED_TTL = Duration.ofDays(1);
 
 	/** 조회 결과 + 출처 기준 시각. asOf가 null이면 한 번도 성공 못 함. staleReason은 stale일 때만 */
 	record Stamped<T>(T value, Instant asOf, boolean stale, StaleReason staleReason) {
@@ -101,7 +105,7 @@ public class TrafficMonitoringService {
 
 	/** 이벤트 Prometheus 캐시 키. 이벤트 시각이 바뀌면 다른 키 */
 	record EventPromKey(long eventId, String tenantId, EventPhase phase, String range, LocalDateTime startAt,
-			LocalDateTime hostingEndAt, LocalDateTime openAt, Long stockTotal) {
+			LocalDateTime endAt, LocalDateTime hostingEndAt, LocalDateTime openAt, Long stockTotal) {
 	}
 
 	record EventAwsKey(long eventId, EventPhase phase, String range, LocalDateTime startAt, LocalDateTime hostingEndAt) {
@@ -167,12 +171,12 @@ public class TrafficMonitoringService {
 					throw new IllegalStateException("트래픽 모니터링 이벤트 DB 조회 실패");
 				}));
 		this.eventPromCache = new KeyedRefreshCache<>(key -> new RefreshCache<>(
-				"트래픽 모니터링 · 이벤트 Prometheus(" + key.eventId() + "번)", ttl, timeout, executor,
-				deadline -> stamp(collectEvent(key, deadline)), Stamped::asStale,
+				"트래픽 모니터링 · 이벤트 Prometheus(" + key.eventId() + "번)", key.phase().closed() ? CLOSED_TTL : ttl, ttl,
+				timeout, executor, deadline -> stamp(collectEvent(key, deadline)), Stamped::asStale,
 				reason -> Stamped.<EventProm>unavailable(null, reason)));
 		this.eventAwsCache = new KeyedRefreshCache<>(key -> new RefreshCache<>(
-				"트래픽 모니터링 · 이벤트 AWS(" + key.eventId() + "번)", awsTtl, awsTimeout, executor,
-				deadline -> stamp(collectEventAws(key)), Stamped::asStale,
+				"트래픽 모니터링 · 이벤트 AWS(" + key.eventId() + "번)", key.phase().closed() ? CLOSED_TTL : awsTtl, awsTtl,
+				awsTimeout, executor, deadline -> stamp(collectEventAws(key)), Stamped::asStale,
 				reason -> Stamped.unavailable(EventAws.unavailable(), reason)));
 		if (!awsCollector.configured()) {
 			log.warn("MONITORING_* AWS 설정이 비어 있어 트래픽 모니터링의 AWS 값(ALB · RDS · ECS · DLQ)은 비워 둡니다");
@@ -214,14 +218,14 @@ public class TrafficMonitoringService {
 				db.failures()
 					.stream()
 					.map(f -> new TrafficPlatformResponse.Failure(Kst.toOffset(f.occurredAt()), f.eventId(), f.tenantId(),
-							f.tenantName(), f.eventName(), f.step(), f.reason()))
+							f.tenantName(), f.eventName(), f.step(), FailureReasons.summarize(f.reason())))
 					.toList());
 	}
 
 	private StatusCell eventCell(List<Judged> open) {
 		if (open.isEmpty()) {
-			// 진행 중 = event_status OPEN(입장 중 포함)
-			return new StatusCell(Area.EVENT, MonitoringLevel.OK, "진행 중(입장 중 포함) 이벤트 없음", 0, null);
+			// 진행 중 = event_status OPEN이고 호스팅 종료 전(입장 중 · 마무리 포함)
+			return new StatusCell(Area.EVENT, MonitoringLevel.OK, "진행 중(입장 중 · 마무리 포함) 이벤트 없음", 0, null);
 		}
 		Judged worst = open.get(0);
 		Judgment j = worst.judgment();
@@ -350,9 +354,10 @@ public class TrafficMonitoringService {
 			.toList();
 		today.forEach(e -> items.add(item(e, Group.TODAY, null, now)));
 		LocalDateTime endedSince = now.minus(ENDED_LIST_WINDOW);
+		// DB 상태가 OPEN이어도 호스팅 종료 뒤(WF4 결과 전)면 최근 종료
 		List<MonitoredEvent> ended = db.events()
 			.stream()
-			.filter(e -> e.eventStatus() != EventStatus.OPEN)
+			.filter(e -> e.eventStatus() != EventStatus.OPEN || e.phase(now).closed())
 			.filter(e -> {
 				LocalDateTime end = endedAt(e, now);
 				return end != null && !end.isBefore(endedSince);
@@ -369,15 +374,16 @@ public class TrafficMonitoringService {
 	}
 
 	/**
-	 * 최근 종료 목록의 기준 시각: 배포 실패는 실패 시각(없으면 입장 예정 시각), 준비 실패는 입장 예정 시각, 종료는 hosting_end_at,
-	 * 호스팅 실패는 hosting_end_at이 지났을 때만 hosting_end_at. 해당 없으면 null(목록 위치는 시각대로)
+	 * 최근 종료 목록의 기준 시각: 배포 실패는 실패 시각(없으면 입장 예정 시각), 준비 실패는 입장 예정 시각,
+	 * 호스팅 종료 뒤(종료 처리 중 · 종료 · 종료 실패)는 hosting_end_at, 호스팅 실패는 hosting_end_at이 지났을 때만 hosting_end_at.
+	 * 해당 없으면 null(목록 위치는 시각대로)
 	 */
 	private static LocalDateTime endedAt(MonitoredEvent e, LocalDateTime now) {
 		return switch (e.phase(now)) {
 			case DEPLOY_FAILED -> e.failedAt() != null ? e.failedAt() : e.entryAt();
 			case HOSTING_FAILED -> e.hostingEndAt() != null && !now.isBefore(e.hostingEndAt()) ? e.hostingEndAt() : null;
 			case PREPARE_FAILED -> e.entryAt();
-			case ENDED -> e.hostingEndAt() != null ? e.hostingEndAt() : e.startAt();
+			case ENDING, ENDED, END_FAILED -> e.hostingEndAt() != null ? e.hostingEndAt() : e.startAt();
 			default -> null;
 		};
 	}
@@ -392,12 +398,16 @@ public class TrafficMonitoringService {
 	private record Judged(MonitoredEvent event, Judgment judgment) {
 	}
 
-	/** 진행 중(OPEN) 이벤트 판정, 나쁜 순 → 시작 늦은 순(상태 요약 이벤트 칸 · 드롭다운 기본 선택이 같이 쓴다) */
+	/**
+	 * 진행 중 이벤트 판정, 나쁜 순 → 시작 늦은 순(상태 요약 이벤트 칸 · 드롭다운 기본 선택이 같이 쓴다).
+	 * 진행 중 = event_status OPEN이고 호스팅 종료 전(입장 중 · 진행 중 · 마무리). 호스팅 종료 뒤에는 WF4가 EXPIRED로 바꾸기 전에도 뺀다
+	 * (이벤트 12: 10:25 호스팅 종료 화면에서도 "진행 중 1"이던 것, 2026-10-28)
+	 */
 	private static List<Judged> openJudged(TrafficCatalog.Snapshot db, Stamped<TrafficPlatformCollector.Metrics> prom,
 			LocalDateTime now) {
 		return db.events()
 			.stream()
-			.filter(e -> e.eventStatus() == EventStatus.OPEN)
+			.filter(e -> e.eventStatus() == EventStatus.OPEN && !e.phase(now).closed())
 			.map(e -> new Judged(e, judge(e, prom.value().signals(e.eventId()), now)))
 			.sorted(Comparator.comparing((Judged j) -> j.judgment().level().severity())
 				.reversed()
@@ -411,7 +421,12 @@ public class TrafficMonitoringService {
 		if (phase == EventPhase.SCHEDULED || phase == EventPhase.PRE_ENTRY) {
 			return TrafficRules.preEntry(signals);
 		}
-		return TrafficRules.event(signals, !now.isBefore(e.startAt()));
+		return TrafficRules.event(signals, cursorExpected(phase));
+	}
+
+	/** 커서가 움직여야 하는 상태: 진행 중(시작 ~ end_at)만. 입장 중은 아직, 마무리는 이벤트가 끝나 멈추는 게 정상 */
+	private static boolean cursorExpected(EventPhase phase) {
+		return phase == EventPhase.LIVE;
 	}
 
 	// ================================================================ GET /monitoring/events/{eventId}
@@ -428,8 +443,9 @@ public class TrafficMonitoringService {
 			.orElseThrow(() -> new ApiException(ErrorCode.EVENT_NOT_FOUND));
 		Event event = detail.event();
 		LocalDateTime now = Kst.now(clock);
-		EventPhase phase = EventPhase.of(event.getStartAt(), event.getHostingEndAt(), event.getEventStatus(),
-				event.getHostingStatus(), now);
+		boolean aggregated = detail.summary() != null && detail.summary().getHistoryGeneratedAt() != null;
+		EventPhase phase = EventPhase.of(event.getStartAt(), event.getEndAt(), event.getHostingEndAt(),
+				event.getEventStatus(), event.getHostingStatus(), aggregated, now);
 		LocalDateTime openAt = detail.logs()
 			.stream()
 			.filter(l -> l.getStatusType() == StatusType.EVENT && "OPEN".equals(l.getNewStatus()))
@@ -442,7 +458,7 @@ public class TrafficMonitoringService {
 		if (phase.hasMetrics()) {
 			prom = platformCollector.configured()
 					? eventPromCache.get(new EventPromKey(eventId, routed.tenantId(), phase, range, event.getStartAt(),
-							event.getHostingEndAt(), openAt, event.getStockCount()))
+							event.getEndAt(), event.getHostingEndAt(), openAt, event.getStockCount()))
 					: Stamped.<EventProm>unavailable(null, StaleReason.SOURCE);
 			aws = awsCollector.configured()
 					? eventAwsCache.get(new EventAwsKey(eventId, phase, range, event.getStartAt(), event.getHostingEndAt()))
@@ -456,7 +472,8 @@ public class TrafficMonitoringService {
 		TrafficEventResponse.Info info = new TrafficEventResponse.Info(eventId, routed.tenantId(), routed.tenant().getName(),
 				event.getName(), phase, event.getEventStatus(), event.getHostingStatus(),
 				Kst.toOffset(EventPhase.prepareAt(event.getStartAt())), Kst.toOffset(EntryOpen.at(event.getStartAt())),
-				Kst.toOffset(event.getStartAt()), Kst.toOffset(event.getHostingEndAt()), event.getStockCount());
+				Kst.toOffset(event.getStartAt()), Kst.toOffset(event.getHostingEndAt()), Kst.toOffset(event.getEndAt()),
+				event.getStockCount());
 		List<TrafficEventResponse.Step> steps = TrafficSteps.build(event, detail.logs(), detail.summary(), phase, now,
 				metrics == null ? null : metrics.prepareSeconds());
 		TrafficEventResponse.Range rangeView = window == null ? null
@@ -471,12 +488,12 @@ public class TrafficMonitoringService {
 	private static Kpi kpi(EventPhase phase, TrafficEventCollector.Metrics m, Event event,
 			TrafficEventReader.Detail detail, LocalDateTime now) {
 		switch (phase) {
-			case PRE_ENTRY, ENTRY_OPEN, LIVE -> {
+			case PRE_ENTRY, ENTRY_OPEN, LIVE, WRAP_UP -> {
 				if (m == null || m.live() == null) {
 					return new Kpi(MonitoringLevel.UNKNOWN, TrafficRules.Judgment.NO_DATA.reason(), List.of(), null, null);
 				}
 				Live live = m.live();
-				Judgment j = phase.entryOpened() ? TrafficRules.event(m.signals(), !now.isBefore(event.getStartAt()))
+				Judgment j = phase.entryOpened() ? TrafficRules.event(m.signals(), cursorExpected(phase))
 						: TrafficRules.preEntry(m.signals());
 				List<String> warn = TrafficRules.kpiWarnings(live.errorRatio(),
 						live.p95Ms() == null ? null : live.p95Ms() / 1000.0, live.podsReady(), live.podsMax(),
@@ -484,13 +501,15 @@ public class TrafficMonitoringService {
 						live.redisUp());
 				return new Kpi(j.level(), j.reason(), warn, live, null);
 			}
-			case ENDED -> {
+			case ENDING, ENDED, END_FAILED -> {
 				if (m == null || m.full() == null) {
 					return new Kpi(null, null, List.of(), null, null);
 				}
 				Long success = detail.summary() == null ? null : detail.summary().getSuccessCount();
-				return new Kpi(null, null, List.of(), null,
-						TrafficEventCollector.summary(m.full(), event.getStockCount(), success));
+				// 최종값은 입장 ~ 이벤트 종료(end_at)만 — 그래프 범위(입장 −10분 ~ 호스팅 종료 +10분)의 웜업 · 정리는 넣지 않는다
+				return new Kpi(null, null, List.of(), null, TrafficEventCollector.summary(m.full(),
+						instant(EntryOpen.at(event.getStartAt())), event.getEndAt() == null ? null : instant(event.getEndAt()),
+						event.getStockCount(), success));
 			}
 			default -> {
 				return null;
@@ -499,7 +518,7 @@ public class TrafficMonitoringService {
 	}
 
 	private static Charts charts(EventPhase phase, PromSeries s, EventAws aws) {
-		boolean ended = phase == EventPhase.ENDED;
+		boolean ended = phase.closed();
 		return new Charts(s.timestamps(),
 				new TrafficEventResponse.Traffic(s.get(TrafficEventCollector.RPS), s.get(TrafficEventCollector.CURSOR)),
 				new TrafficEventResponse.Errors(s.get(TrafficEventCollector.ERROR_RATIO), aws.albErrorRatio(),
@@ -517,7 +536,7 @@ public class TrafficMonitoringService {
 				new TrafficEventResponse.Rds(aws.rdsCpu(), aws.rdsConnections()));
 	}
 
-	/** 진행 중은 마지막 값, 종료는 구간 최대 */
+	/** 진행 중은 마지막 값, 호스팅 종료 뒤는 구간 최대 */
 	private static Double pick(List<Double> values, boolean max) {
 		Double out = null;
 		for (Double v : values) {
@@ -544,12 +563,12 @@ public class TrafficMonitoringService {
 		Instant now = clock.instant();
 		TrafficWindow window = TrafficWindow.of(key.phase(), key.range(), key.startAt(), key.hostingEndAt(), now,
 				TrafficWindow.PROMETHEUS_MIN_STEP);
-		TrafficWindow full = key.phase() == EventPhase.ENDED
-				? TrafficWindow.of(EventPhase.ENDED, "full", key.startAt(), key.hostingEndAt(), now,
+		TrafficWindow full = key.phase().closed()
+				? TrafficWindow.of(key.phase(), "full", key.startAt(), key.hostingEndAt(), now,
 						TrafficWindow.PROMETHEUS_MIN_STEP)
 				: null;
-		Instant prepareAt = key.openAt() != null && (key.phase().entryOpened() || key.phase() == EventPhase.ENDED)
-				? key.openAt().atZone(Kst.ZONE).toInstant() : null;
+		Instant prepareAt = key.openAt() != null && (key.phase().entryOpened() || key.phase().closed())
+				? instant(key.openAt()) : null;
 		TrafficEventCollector.Metrics metrics = eventCollector.collect(new TrafficEventCollector.Request(key.eventId(),
 				key.tenantId(), key.phase(), window, full, prepareAt, key.stockTotal()), deadlineNanos, executor);
 		return new EventProm(window, metrics);
@@ -567,6 +586,10 @@ public class TrafficMonitoringService {
 
 	private static OffsetDateTime offset(Instant instant) {
 		return Kst.toOffset(LocalDateTime.ofInstant(instant, Kst.ZONE));
+	}
+
+	private static Instant instant(LocalDateTime kst) {
+		return kst.atZone(Kst.ZONE).toInstant();
 	}
 
 	@PreDestroy

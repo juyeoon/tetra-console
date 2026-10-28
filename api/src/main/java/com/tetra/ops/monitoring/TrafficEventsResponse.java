@@ -10,19 +10,19 @@ import io.swagger.v3.oas.annotations.media.Schema;
 
 /**
  * GET /api/ops/monitoring/events — 드롭다운 목록 + 기본 선택(명세 3절).
- * 목록 순서: 진행 중(OPEN, 나쁜 순 → 시작 늦은 순) → 오늘 예정(입장 이른 순) → 최근 7일 종료 · 준비 실패(늦은 순).
+ * 목록 순서: 진행 중(OPEN이고 호스팅 종료 전, 나쁜 순 → 시작 늦은 순) → 오늘 예정(입장 이른 순) → 최근 7일 종료 · 준비 실패(늦은 순).
  */
 public record TrafficEventsResponse(
 		@Schema(description = "기본 선택. 진행 중 중 가장 나쁜 것 → 오늘 예정 중 입장 가장 이른 것 → 최근 종료 → 없으면 null") Long defaultEventId,
 		List<Item> items) {
 
 	public enum Group {
-		/** 진행 중(event_status OPEN) */
+		/** 진행 중(event_status OPEN이고 호스팅 종료 전 — 입장 중 · 마무리 포함) */
 		OPEN,
 		/** 오늘(KST) 시작 예정(SCHEDULED). 입장 전(T−90 ~ T−60)도 여기 */
 		TODAY,
-		/** 최근 7일 안에 종료(hosting_end_at) · 준비 실패(입장 예정 시각) · 배포 실패(실패 시각, 없으면 입장 예정 시각) ·
-		 * hosting_end_at이 지난 호스팅 실패 */
+		/** 최근 7일 안에 호스팅 종료(hosting_end_at — 종료 처리 중 · 종료 · 종료 실패) · 준비 실패(입장 예정 시각) ·
+		 * 배포 실패(실패 시각, 없으면 입장 예정 시각) · hosting_end_at이 지난 호스팅 실패 */
 		ENDED
 	}
 
