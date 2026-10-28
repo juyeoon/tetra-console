@@ -81,6 +81,8 @@ class TrafficPlatformCollector {
 
 	private final Clock clock;
 
+	private final FailureStreaks streaks = new FailureStreaks();
+
 	TrafficPlatformCollector(PrometheusClient prometheus, Clock clock) {
 		this.prometheus = prometheus;
 		this.clock = clock;
@@ -93,7 +95,7 @@ class TrafficPlatformCollector {
 	Metrics collect(long deadlineNanos, ExecutorService executor) {
 		Instant now = clock.instant();
 		Grid grid = Grid.of(now.minus(HISTORY_RANGE), now, HISTORY_STEP);
-		PromBatch.Results r = new PromBatch(prometheus, executor, deadlineNanos)
+		PromBatch.Results r = new PromBatch(prometheus, executor, deadlineNanos, "플랫폼", streaks)
 			.instant("cpu", PromQueries.CPU_USAGE, now)
 			.instant("memory", PromQueries.MEMORY_USAGE, now)
 			.range("cpuHistory", PromQueries.CPU_USAGE, grid.start(), grid.end(), grid.step())

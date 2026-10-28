@@ -10,6 +10,7 @@ import MetricChart from './MetricChart';
 import StepTimeline from './StepTimeline';
 import {
   CHART_ROWS,
+  chartsMissingText,
   chartViews,
   endedKpiTiles,
   eventBody,
@@ -169,7 +170,7 @@ function Metrics({ detail, onRange }: { detail: TrafficEventResponse; onRange: (
 
       {detail.charts == null ? (
         <Typography variant="body2" sx={{ color: text.tertiary, mt: 2 }}>
-          그래프 데이터를 받지 못했어요(Prometheus 지연)
+          {chartsMissingText(detail.prometheus)}
         </Typography>
       ) : (
         <Stack spacing={1.5} sx={{ mt: 1.5 }}>

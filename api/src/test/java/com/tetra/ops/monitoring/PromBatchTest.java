@@ -2,9 +2,15 @@ package com.tetra.ops.monitoring;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -15,13 +21,16 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
+import org.springframework.util.StringUtils;
 
 import com.tetra.ops.monitoring.PrometheusClient.PrometheusException;
+import com.tetra.ops.monitoring.PrometheusClient.Sample;
 import com.tetra.ops.support.FakePrometheus;
 
 /**
  * 쿼리 묶음: 4개씩 병렬. Prometheus 자체 문제(연결 거부 · 5xx · 갱신 상한 초과)면 전체 실패,
- * 쿼리 하나의 오류(4xx · 읽기 시간 초과)면 그 항목만 비우고 WARN 한 줄(쿼리 이름만)
+ * 쿼리 하나의 오류(4xx · 읽기 시간 초과)면 그 항목만 비우고 WARN 한 줄(쿼리 이름만).
+ * 쿼리 작업 안의 예상 밖 예외도 그 항목만 비운다(스택 트레이스는 연속 실패의 처음 한 번만)
  */
 @ExtendWith(OutputCaptureExtension.class)
 class PromBatchTest {
@@ -109,6 +118,30 @@ class PromBatchTest {
 		// WARN 한 줄: 쿼리 이름과 짧은 원인만, 쿼리 원문 없음
 		assertThat(output.getOut()).contains("Prometheus 쿼리 실패(broken: HTTP 400) — 그 항목만 비웁니다")
 			.doesNotContain("bad_query_text");
+	}
+
+	@Test
+	void unexpectedErrorInQueryBlanksOnlyThatItem(CapturedOutput output) {
+		PrometheusClient broken = mock(PrometheusClient.class);
+		when(broken.query(eq("q1"), any())).thenReturn(List.of(new Sample(Map.of(), 1.0)));
+		when(broken.query(eq("boom"), any())).thenThrow(new NullPointerException("파싱 버그"));
+		FailureStreaks streaks = new FailureStreaks();
+		for (int i = 0; i < 2; i++) {
+			PromBatch.Results results = new PromBatch(broken, executor,
+					System.nanoTime() + Duration.ofSeconds(5).toNanos(), "이벤트 11번", streaks)
+				.instant("good", "q1", Instant.now())
+				.instant("bad", "boom", Instant.now())
+				.execute();
+			// 갱신 전체가 아니라 그 항목만 비운다
+			assertThat(results.ok("good")).isTrue();
+			assertThat(results.ok("bad")).isFalse();
+			assertThat(results.instant("bad")).isEmpty();
+		}
+		assertThat(output.getOut())
+			.contains("Prometheus 쿼리 처리 실패(이벤트 11번 · bad: NullPointerException) — 그 항목만 비웁니다")
+			.contains("Prometheus 쿼리 처리 실패(이벤트 11번 · bad: NullPointerException · 연속 2번째) — 그 항목만 비웁니다");
+		// 스택 트레이스는 연속 실패의 처음 한 번만
+		assertThat(StringUtils.countOccurrencesOf(output.getOut(), "java.lang.NullPointerException: 파싱 버그")).isEqualTo(1);
 	}
 
 	@Test

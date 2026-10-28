@@ -354,6 +354,8 @@ export type FailureStep = 'DEPLOY' | 'HOSTING_START' | 'PREPARE' | 'END' | 'PROV
 export interface MonitoringSource {
   asOf: string | null;
   stale: boolean;
+  /** stale 원인. SOURCE = 출처 자체 장애(연결 실패 · 5xx · 시간 초과 · 미설정), INTERNAL = 그 밖의 처리 오류. stale이 아니면 null */
+  staleReason: 'SOURCE' | 'INTERNAL' | null;
 }
 
 /** [epoch 밀리초, 값 | null] */

@@ -11,8 +11,11 @@ import static org.hamcrest.Matchers.nullValue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -33,6 +36,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 
 import com.tetra.ops.common.time.Kst;
 import com.tetra.ops.event.EntryOpen;
@@ -58,6 +62,10 @@ class TrafficMonitoringApiTest extends IntegrationTest {
 
 	@MockitoBean
 	AwsMonitoringGateway aws;
+
+	/** 실제 수집 그대로, 한 테스트만 결과 가공 실패를 흉내 낸다 */
+	@MockitoSpyBean
+	TrafficEventCollector eventCollector;
 
 	@DynamicPropertySource
 	static void properties(DynamicPropertyRegistry registry) {
@@ -303,11 +311,13 @@ class TrafficMonitoringApiTest extends IntegrationTest {
 	void prometheusFailureKeepsOtherSourcesAndMarksStale() throws Exception {
 		respondPlatform();
 		mvc.perform(get("/api/ops/monitoring/platform").cookie(operatorCookie()))
-			.andExpect(jsonPath("$.prometheus.stale").value(false));
+			.andExpect(jsonPath("$.prometheus.stale").value(false))
+			.andExpect(jsonPath("$.prometheus.staleReason").value(nullValue()));
 		prometheus.failWith(503);
 		mvc.perform(get("/api/ops/monitoring/platform").cookie(operatorCookie()))
 			.andExpect(status().isOk())
 			.andExpect(jsonPath("$.prometheus.stale").value(true))
+			.andExpect(jsonPath("$.prometheus.staleReason").value("SOURCE"))
 			.andExpect(jsonPath("$.prometheus.asOf").isString())
 			.andExpect(jsonPath("$.nodes.cpu").value(0.4612))
 			.andExpect(jsonPath("$.platform.addons.groups[3].healthy").value(false))
@@ -358,9 +368,29 @@ class TrafficMonitoringApiTest extends IntegrationTest {
 		mvc.perform(get("/api/ops/monitoring/events/7108").cookie(operatorCookie()))
 			.andExpect(status().isOk())
 			.andExpect(jsonPath("$.prometheus.stale").value(true))
+			// 5xx = Prometheus 자체 장애(화면: "Prometheus 응답이 늦어 그래프를 받지 못했어요")
+			.andExpect(jsonPath("$.prometheus.staleReason").value("SOURCE"))
 			.andExpect(jsonPath("$.prometheus.asOf").value(nullValue()))
 			.andExpect(jsonPath("$.kpi.level").value("UNKNOWN"))
 			.andExpect(jsonPath("$.charts").value(nullValue()));
+	}
+
+	@Test
+	void chartsSectionFailureKeepsKpiAndIsNotStale() throws Exception {
+		// 갱신은 성공했는데 그래프 구역만 가공에 실패: 그래프만 비고 KPI는 그대로, stale 아님(화면 "그래프를 만들지 못했어요")
+		live(7120, A, "A 그래프 가공 실패", now.minusMinutes(3));
+		respondPlatform();
+		doAnswer(inv -> {
+			TrafficEventCollector.Metrics m = (TrafficEventCollector.Metrics) inv.callRealMethod();
+			return new TrafficEventCollector.Metrics(m.at(), null, m.full(), m.live(), m.signals(), m.prepareSeconds());
+		}).when(eventCollector).collect(argThat(req -> req != null && req.eventId() == 7120), anyLong(), any());
+		mvc.perform(get("/api/ops/monitoring/events/7120").cookie(operatorCookie()))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.event.phase").value("LIVE"))
+			.andExpect(jsonPath("$.prometheus.stale").value(false))
+			.andExpect(jsonPath("$.prometheus.staleReason").value(nullValue()))
+			.andExpect(jsonPath("$.charts").value(nullValue()))
+			.andExpect(jsonPath("$.kpi.live").isNotEmpty());
 	}
 
 	// ---------------------------------------------------------------- events
@@ -582,11 +612,35 @@ class TrafficMonitoringApiTest extends IntegrationTest {
 			.andExpect(jsonPath("$.steps[5].actualAt").value(nullValue()))
 			// 그래프 · KPI는 진행 중과 같은 모양(Prometheus 조회)
 			.andExpect(jsonPath("$.range.key").value("entry"))
-			.andExpect(jsonPath("$.kpi").isNotEmpty());
+			.andExpect(jsonPath("$.kpi").isNotEmpty())
+			// 발급 · 번호표 요청이 아직 없어 p95가 둘 다 비어도 갱신은 성공(2026-10-28 NPE로 전체가 stale · 그래프 없음이던 것)
+			.andExpect(jsonPath("$.prometheus.stale").value(false))
+			.andExpect(jsonPath("$.prometheus.staleReason").value(nullValue()))
+			.andExpect(jsonPath("$.charts.timestamps").isNotEmpty())
+			.andExpect(jsonPath("$.kpi.live").isNotEmpty())
+			.andExpect(jsonPath("$.kpi.live.p95Ms").value(nullValue()));
 		// 목록: DB 상태 OPEN이라 진행 중 묶음, phase는 입장 중
 		mvc.perform(get("/api/ops/monitoring/events").cookie(operatorCookie()))
 			.andExpect(jsonPath("$.items[?(@.eventId == 7118)].group").value(contains("OPEN")))
 			.andExpect(jsonPath("$.items[?(@.eventId == 7118)].phase").value(contains("ENTRY_OPEN")));
+	}
+
+	@Test
+	void preEntryDrawsChartsWithoutP95() throws Exception {
+		// 입장 3분 전(입장 직전): 요청 처리 · p95 순간값은 조회하지 않는다 — 그래도 갱신은 성공(2026-10-28 NPE로 늘 stale이던 상태)
+		LocalDateTime start = now.plus(EntryOpen.ENTRY_OPEN_LEAD).plusMinutes(3);
+		data.event(7119, A).name("A 입장 직전").approved("HOSTING", "SCHEDULED", "slug7119").startAt(start).insert();
+		approvedLogs(A, 7119, start);
+		respondPlatform();
+		mvc.perform(get("/api/ops/monitoring/events/7119").cookie(operatorCookie()))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.event.phase").value("PRE_ENTRY"))
+			.andExpect(jsonPath("$.prometheus.stale").value(false))
+			.andExpect(jsonPath("$.prometheus.staleReason").value(nullValue()))
+			.andExpect(jsonPath("$.charts.timestamps").isNotEmpty())
+			.andExpect(jsonPath("$.kpi.live").isNotEmpty())
+			.andExpect(jsonPath("$.kpi.live.rps").value(nullValue()))
+			.andExpect(jsonPath("$.kpi.live.p95Ms").value(nullValue()));
 	}
 
 	@Test

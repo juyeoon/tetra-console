@@ -1,10 +1,11 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import type { TrafficCharts, TrafficEventItem, TrafficEventResponse, TrafficEventsResponse, TrafficKpi, TrafficPlatformResponse, TrafficStep } from '../../api/types.ts';
+import type { MonitoringSource, TrafficCharts, TrafficEventItem, TrafficEventResponse, TrafficEventsResponse, TrafficKpi, TrafficPlatformResponse, TrafficStep } from '../../api/types.ts';
 import {
   addonsView,
   barPercent,
   bytesText,
+  chartsMissingText,
   chartViews,
   clockText,
   countText,
@@ -46,8 +47,8 @@ import {
 const NOW = new Date('2026-10-26T15:10:00+09:00');
 
 const platform = (patch: Partial<TrafficPlatformResponse> = {}): TrafficPlatformResponse => ({
-  prometheus: { asOf: '2026-10-26T15:12:14+09:00', stale: false },
-  aws: { asOf: '2026-10-26T15:12:00+09:00', stale: false },
+  prometheus: { asOf: '2026-10-26T15:12:14+09:00', stale: false, staleReason: null },
+  aws: { asOf: '2026-10-26T15:12:00+09:00', stale: false, staleReason: null },
   summary: [
     { area: 'CLUSTER', level: 'OK', reason: '노드 16 Ready', openCount: null, eventId: null },
     { area: 'EVENT', level: 'WARN', reason: '7번 5xx 0.8%', openCount: 3, eventId: 7 },
@@ -85,8 +86,8 @@ const item = (patch: Partial<TrafficEventItem>): TrafficEventItem => ({
 });
 
 const eventResponse = (phase: TrafficEventResponse['event']['phase'], patch: Partial<TrafficEventResponse> = {}): TrafficEventResponse => ({
-  prometheus: { asOf: '2026-10-26T15:10:00+09:00', stale: false },
-  aws: { asOf: '2026-10-26T15:10:00+09:00', stale: false },
+  prometheus: { asOf: '2026-10-26T15:10:00+09:00', stale: false, staleReason: null },
+  aws: { asOf: '2026-10-26T15:10:00+09:00', stale: false, staleReason: null },
   event: {
     eventId: 7,
     tenantId: 'aaaaaaaaaaaa',
@@ -397,6 +398,16 @@ describe('구역 상태별 표시(명세 4절)', () => {
     });
     assert.deepEqual(sectionStatus(deploy), { chips: [{ label: '배포 실패', tone: 'red' }], refresh: '자동 갱신 · 15초', autoRefresh: true });
     assert.equal(stopPollingWhen(eventResponse('HOSTING_FAILED')), false);
+  });
+
+  test('그래프가 없을 때 문구: Prometheus 자체 장애면 응답 지연, 그 밖은 처리 오류', () => {
+    const source = (stale: boolean, staleReason: MonitoringSource['staleReason']): MonitoringSource => ({ asOf: null, stale, staleReason });
+    assert.equal(chartsMissingText(source(true, 'SOURCE')), 'Prometheus 응답이 늦어 그래프를 받지 못했어요');
+    assert.equal(chartsMissingText(source(true, 'INTERNAL')), '그래프를 만들지 못했어요');
+    // 갱신은 됐는데 그래프 구역만 가공에 실패(stale 아님)
+    assert.equal(chartsMissingText(source(false, null)), '그래프를 만들지 못했어요');
+    // staleReason이 없는 이전 서버 응답의 stale은 지연으로
+    assert.equal(chartsMissingText({ asOf: null, stale: true } as MonitoringSource), 'Prometheus 응답이 늦어 그래프를 받지 못했어요');
   });
   test('진행 단계 아래 글자', () => {
     const steps: TrafficStep[] = [
