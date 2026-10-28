@@ -11,8 +11,9 @@ import com.tetra.ops.event.EntryOpen;
 
 /**
  * 이벤트 그래프 범위(명세 1절 D-2 · 4절).
- * - 입장 직전 · 진행 중: entry(입장 −10분 ~ 지금, 기본) · 15m · 1h
- * - 종료: full(입장 −10분 ~ 종료 +10분 고정, 기본) · start(시작 ±10분). 종료 = hosting_end_at
+ * - 입장 직전 · 입장 중 · 진행 중 · 마무리: entry(입장 −10분 ~ 지금, 기본) · 15m · 1h
+ * - 호스팅 종료 뒤(종료 처리 중 · 종료 · 종료 실패): full(입장 −10분 ~ 호스팅 종료 +10분, 기본) · start(시작 ±10분).
+ *   지금 시각으로 자르지 않는다(고정) — 호스팅 종료 직후에는 끝 10분이 아직 미래라 빈 칸으로 그린다
  * 점이 {@link #MAX_POINTS}개를 넘지 않게 step을 정한다(Prometheus 15초 단위, AWS 60초 단위).
  */
 record TrafficWindow(String key, List<String> options, Instant from, Instant to, Duration step) {
@@ -49,12 +50,12 @@ record TrafficWindow(String key, List<String> options, Instant from, Instant to,
 			};
 			return window(key, LIVE_OPTIONS, from, now, minStep);
 		}
-		if (phase == EventPhase.ENDED) {
+		if (phase.closed()) {
 			String key = requested != null && ENDED_OPTIONS.contains(requested) ? requested : "full";
 			if ("start".equals(key)) {
-				return window(key, ENDED_OPTIONS, start.minus(MARGIN), min(start.plus(MARGIN), now), minStep);
+				return window(key, ENDED_OPTIONS, start.minus(MARGIN), start.plus(MARGIN), minStep);
 			}
-			Instant end = hostingEndAt == null ? now : min(instant(hostingEndAt).plus(MARGIN), now);
+			Instant end = hostingEndAt == null ? now : instant(hostingEndAt).plus(MARGIN);
 			return window(key, ENDED_OPTIONS, entry.minus(MARGIN), end, minStep);
 		}
 		return null;
@@ -77,10 +78,6 @@ record TrafficWindow(String key, List<String> options, Instant from, Instant to,
 
 	private static Instant instant(LocalDateTime kst) {
 		return kst.atZone(Kst.ZONE).toInstant();
-	}
-
-	private static Instant min(Instant a, Instant b) {
-		return a.isBefore(b) ? a : b;
 	}
 
 }

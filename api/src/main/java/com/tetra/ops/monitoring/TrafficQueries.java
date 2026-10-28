@@ -1,5 +1,7 @@
 package com.tetra.ops.monitoring;
 
+import java.time.Duration;
+
 import com.tetra.ops.tenancy.TenantIds;
 
 /**
@@ -58,20 +60,34 @@ final class TrafficQueries {
 	static final String ADDON_STATEFULSETS_DESIRED = """
 			kube_statefulset_replicas{namespace="argocd",statefulset="argocd-application-controller"}""";
 
+	// ---- 요청 처리 공통 ----
+
+	/**
+	 * 요청 수 · 5xx에서 빼는 uri: 액추에이터와 발급 API health. issuance-api 기동 웜업이 Pod마다 health · cursor를 300번씩 자기 자신에게
+	 * 불러 입장 전 RPS가 크게 잡혔다(이벤트 12: 입장 전 57.9 RPS가 최대 RPS, 2026-10-28). cursor는 실제 요청과 같은 uri라 뺄 수 없다
+	 */
+	static final String EXCLUDED_URI = "/actuator.*|/api/issuance/health";
+
+	/** p95를 재는 uri: 발급 /coupons/claim, 번호표 /ticket(Spring uri 템플릿, PromQL 문자열 안에서 \\{ 로 이스케이프) */
+	static final String P95_URI = "uri=~\"/api/issuance/events/\\\\{eventId\\\\}/(coupons/claim|ticket)\"";
+
+	/** KPI · 상태 요약 p95 창. 이 동안 요청이 없으면 값 없음(화면 "–") */
+	static final Duration P95_WINDOW = Duration.ofMinutes(1);
+
 	// ---- A 상태 요약 · 드롭다운: 이벤트별 판정 재료(모든 이벤트 한 번에, event_id별) ----
 
-	static final String RPS_BY_EVENT = """
-			sum by (event_id) (rate(http_server_requests_seconds_count{uri!~"/actuator.*"}[1m]))""";
+	static final String RPS_BY_EVENT = "sum by (event_id) (rate(http_server_requests_seconds_count{uri!~\"%s\"}[1m]))"
+		.formatted(EXCLUDED_URI);
 
 	static final String ERROR_RPS_BY_EVENT = """
-			sum by (event_id) (rate(http_server_requests_seconds_count{uri!~"/actuator.*",status=~"5.."}[1m]))""";
+			sum by (event_id) (rate(http_server_requests_seconds_count{uri!~"%s",status=~"5.."}[1m]))"""
+		.formatted(EXCLUDED_URI);
 
-	/** 발급 · 번호표 중 큰 p95(초) */
-	static final String P95_BY_EVENT = """
-			max by (event_id) (histogram_quantile(0.95, sum by (event_id, le, uri) \
-			(rate(http_server_requests_seconds_bucket{uri=~"/api/issuance/events/\\\\{eventId\\\\}/(coupons/claim|ticket)"}[1m]))))""";
+	/** 발급 · 번호표 중 큰 p95(초). 버킷 증가량은 {@link #bucketIncrease}(구간 안에서 새로 생긴 시리즈 포함) */
+	static final String P95_BY_EVENT = "max by (event_id) (histogram_quantile(0.95, sum by (event_id, le, uri) ("
+			+ bucketIncrease(P95_URI, P95_WINDOW) + ")))";
 
-	/** 최근 1분 커서 변화 횟수. 게이지는 모든 Pod가 같은 값을 내므로 max(새 Pod는 표본이 적다) */
+	/** 최근 1분 서빙 커서 변화 횟수(커서 정지 판정). 게이지는 모든 Pod가 같은 값을 내므로 max(새 Pod는 표본이 적다) */
 	static final String CURSOR_CHANGES_BY_EVENT = "max by (event_id) (changes(tetra_event_cursor[1m]))";
 
 	/** 대기 인원 ≈ 마지막 번호표 − 서빙 커서 */
@@ -103,6 +119,31 @@ final class TrafficQueries {
 
 	static EventQueries forEvent(String tenantId, long eventId) {
 		return new EventQueries(tenantId, eventId);
+	}
+
+	/**
+	 * 구간(window) 동안 늘어난 http_server_requests_seconds_bucket. 구간 시작에 없던 시리즈는 increase 대신 지금 값(0부터 늘어난 양)을 쓴다.
+	 * Micrometer 타이머 시리즈는 그 uri의 첫 요청 때 생기는데, rate · increase는 시리즈가 생길 때 이미 붙어 있던 값을 세지 못한다.
+	 * 그래서 첫 요청들이 한 스크레이프(15초) 안에 몰리면 증가 0 → histogram_quantile NaN → p95가 비었다
+	 * (이벤트 12: 10:00~10:01 발급 5건은 안 그려지고 10:05 발급 10건은 그려짐, 2026-10-28). KEDA가 늘린 새 Pod의 첫 요청도 같다.
+	 * 구간 시작에 있었는지는 offset으로 본다(그 시각 기준 5분 lookback 안에 점이 있으면 있던 시리즈).
+	 */
+	static String bucketIncrease(String selector, Duration window) {
+		String bucket = "http_server_requests_seconds_bucket{" + selector + "}";
+		String w = promDuration(window);
+		String born = "(" + bucket + " unless " + bucket + " offset " + w + ")";
+		return "(increase(" + bucket + "[" + w + "]) unless " + born + ") or " + born;
+	}
+
+	/** 그래프 p95 창 = max(1분, step). step이 1분보다 크면 점 사이 요청을 건너뛰지 않게 넓힌다 */
+	static Duration p95RangeWindow(Duration step) {
+		return step.compareTo(P95_WINDOW) > 0 ? step : P95_WINDOW;
+	}
+
+	/** PromQL 기간: 60초 배수는 "Nm", 아니면 "Ns" */
+	static String promDuration(Duration d) {
+		long seconds = d.toSeconds();
+		return seconds % 60 == 0 ? (seconds / 60) + "m" : seconds + "s";
 	}
 
 	/**
@@ -138,26 +179,33 @@ final class TrafficQueries {
 
 		// ---- 요청 처리 ----
 
+		/** 초당 요청(액추에이터 · health 제외, {@link TrafficQueries#EXCLUDED_URI}) */
 		String rps() {
-			return "sum(rate(http_server_requests_seconds_count{event_id=\"%s\",uri!~\"/actuator.*\"}[1m]))".formatted(e);
+			return "sum(rate(http_server_requests_seconds_count{event_id=\"%s\",uri!~\"%s\"}[1m]))".formatted(e, EXCLUDED_URI);
 		}
 
 		String errorRps() {
-			return "sum(rate(http_server_requests_seconds_count{event_id=\"%s\",uri!~\"/actuator.*\",status=~\"5..\"}[1m]))"
-				.formatted(e);
+			return "sum(rate(http_server_requests_seconds_count{event_id=\"%s\",uri!~\"%s\",status=~\"5..\"}[1m]))"
+				.formatted(e, EXCLUDED_URI);
 		}
 
-		/** uri별 p95(초). 발급 /coupons/claim, 번호표 /ticket */
+		/** uri별 p95(초), 최근 1분(KPI 순간값). 발급 /coupons/claim, 번호표 /ticket */
 		String p95ByUri() {
-			return """
-					histogram_quantile(0.95, sum by (le, uri) (rate(http_server_requests_seconds_bucket\
-					{event_id="%s",uri=~"/api/issuance/events/\\\\{eventId\\\\}/(coupons/claim|ticket)"}[1m])))"""
-				.formatted(e);
+			return p95ByUri(P95_WINDOW);
+		}
+
+		/** uri별 p95(초), 창 window(그래프는 {@link TrafficQueries#p95RangeWindow}) */
+		String p95ByUri(Duration window) {
+			return "histogram_quantile(0.95, sum by (le, uri) ("
+					+ bucketIncrease("event_id=\"" + e + "\"," + P95_URI, window) + "))";
 		}
 
 		// ---- 진행(issuance-api EventStateGauges, 모든 Pod가 같은 값 → max) ----
 
-		/** 커서 도달/초 — 게이지라 rate가 아니라 deriv */
+		/**
+		 * 커서 전진 속도(번호/초) — 서빙 커서 tetra_event_cursor(이 번호표까지 입장)의 1분 기울기. 요청 수가 아니다.
+		 * 커서는 요청이 올 때 창마다 step씩 오르므로(issuance-api CursorStore) 대기열에서 입장시키는 속도다. 게이지라 rate가 아니라 deriv
+		 */
 		String cursorPerSec() {
 			return "max(deriv(tetra_event_cursor{event_id=\"%s\"}[1m]))".formatted(e);
 		}

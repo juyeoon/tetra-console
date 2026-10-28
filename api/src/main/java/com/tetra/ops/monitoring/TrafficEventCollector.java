@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ExecutorService;
+import java.util.function.LongUnaryOperator;
 import java.util.function.Supplier;
 
 import org.slf4j.Logger;
@@ -29,8 +30,8 @@ import com.tetra.ops.monitoring.TrafficRules.EventSignals;
 /**
  * OPS-05 이벤트 하나의 Prometheus 갱신 1회(C 준비 시간 · D KPI · 그래프). 상태별로 조회하는 것이 다르다(명세 4절):
  * - 입장 직전: 그래프 + Pod · 재고 · Redis · 자원 순간값(요청 처리 · 대기 인원은 조회하지 않음)
- * - 진행 중: 그래프 + KPI 순간값 전부
- * - 종료: 그래프 + 전체 구간(full) 그래프(최종값 계산용, 범위가 full이면 같은 것)
+ * - 입장 중 · 진행 중 · 마무리: 그래프 + KPI 순간값 전부
+ * - 호스팅 종료 뒤(종료 처리 중 · 종료 · 종료 실패): 그래프 + 전체 구간(full) 그래프(최종값 계산용, 범위가 full이면 같은 것)
  * 쿼리는 {@link PromBatch}(4개씩 병렬). Prometheus 자체 문제면 갱신 전체 실패, 쿼리 하나의 오류면 그 항목만 null.
  * 결과 가공은 구역(그래프 · 전체 구간 · KPI · 준비 시간)마다 따로 — 한 구역에서 예외가 나면 그 구역만 null, 나머지는 응답(2026-10-28).
  */
@@ -80,7 +81,7 @@ class TrafficEventCollector {
 	static final String REDIS_RESTARTS = "redisRestarts";
 
 	/**
-	 * @param full 종료 상태의 전체 구간(최종값용). window와 같으면 한 번만 조회. 다른 상태는 null
+	 * @param full 호스팅 종료 뒤 상태의 전체 구간(최종값용). window와 같으면 한 번만 조회. 다른 상태는 null
 	 * @param prepareEvalAt 준비 시간을 잴 시각(입장 = OPEN 로그). null이면 재지 않음
 	 * @param stockTotal event.stock_count
 	 */
@@ -94,6 +95,20 @@ class TrafficEventCollector {
 		List<Double> get(String name) {
 			List<Double> v = values.get(name);
 			return v != null ? v : Collections.nCopies(timestamps.size(), null);
+		}
+
+		/** from ~ to(양 끝 포함) 점만. null인 끝은 자르지 않는다 */
+		PromSeries between(Instant from, Instant to) {
+			List<Integer> keep = new ArrayList<>();
+			for (int i = 0; i < timestamps.size(); i++) {
+				long t = timestamps.get(i);
+				if ((from == null || t >= from.toEpochMilli()) && (to == null || t <= to.toEpochMilli())) {
+					keep.add(i);
+				}
+			}
+			Map<String, List<Double>> cut = new LinkedHashMap<>();
+			values.forEach((name, v) -> cut.put(name, keep.stream().map(v::get).toList()));
+			return new PromSeries(keep.stream().map(timestamps::get).toList(), cut);
 		}
 
 	}
@@ -211,7 +226,7 @@ class TrafficEventCollector {
 	private static void addRanges(PromBatch batch, String prefix, EventQueries q, Grid g) {
 		batch.range(prefix + RPS, q.rps(), g.start(), g.end(), g.step())
 			.range(prefix + ERROR_RPS, q.errorRps(), g.start(), g.end(), g.step())
-			.range(prefix + "p95", q.p95ByUri(), g.start(), g.end(), g.step())
+			.range(prefix + "p95", q.p95ByUri(TrafficQueries.p95RangeWindow(g.step())), g.start(), g.end(), g.step())
 			.range(prefix + CURSOR, q.cursorPerSec(), g.start(), g.end(), g.step())
 			.range(prefix + WAITING, q.waiting(), g.start(), g.end(), g.step())
 			.range(prefix + STOCK, q.stock(), g.start(), g.end(), g.step())
@@ -299,6 +314,10 @@ class TrafficEventCollector {
 		Double exporterUp = PromValues.single(r.instant("exporterUp"));
 		Boolean up = redisUp == null && exporterUp == null ? null
 				: !((redisUp != null && redisUp == 0) || (exporterUp != null && exporterUp == 0));
+		Double ops = PromValues.single(r.instant("redisOps"));
+		Double clients = PromValues.single(r.instant("redisClients"));
+		// 재시작 수는 kube-state-metrics 값이라 Redis 지표(redis-exporter)가 없어도 0으로 나온다 — 그때는 다른 Redis 칸처럼 비운다
+		boolean redisMetrics = used != null || max != null || ops != null || clients != null || redisUp != null;
 		return new Live(rps, errorRatio, p95, p95Issuance, p95Ticket,
 				PromValues.count(PromValues.single(r.instant("ready")), ksm && r.ok("ready")),
 				PromValues.toInt(PromValues.single(r.instant("hpaMax"))),
@@ -310,18 +329,22 @@ class TrafficEventCollector {
 				waiting == null ? null : Math.max(0, Math.round(waiting)),
 				PromValues.toLong(PromValues.single(r.instant("stock"))), stockTotal,
 				used == null || max == null || max <= 0 ? null : PromValues.round(used / max, 4), used, max,
-				PromValues.round(PromValues.single(r.instant("redisOps")), 1),
-				PromValues.toLong(PromValues.single(r.instant("redisRestarts"))),
-				PromValues.toLong(PromValues.single(r.instant("redisClients"))), up);
+				PromValues.round(ops, 1),
+				redisMetrics ? PromValues.toLong(PromValues.single(r.instant("redisRestarts"))) : null,
+				PromValues.toLong(clients), up);
 	}
 
 	/**
-	 * 종료된 이벤트 최종값(전체 구간 시리즈 + 결과 요약). 발급 = success_count, 없으면 재고 − 최소 남은 재고.
-	 * 품절 시각 = 남은 재고가 처음 0이 된 격자 시각.
+	 * 호스팅이 끝난 이벤트의 최종값(전체 구간 시리즈 + 결과 요약). 집계 구간은 입장 ~ 이벤트 종료(end_at) — 그래프 범위(입장 −10분 ~
+	 * 호스팅 종료 +10분)보다 좁다. 입장 전 웜업(이벤트 12: 입장 전 57.9 RPS가 최대 RPS로 잡힘, 2026-10-28) · 종료 뒤 정리는 넣지 않는다.
+	 * 발급 = success_count, 없으면 재고 − 최소 남은 재고. 최대값이 0이면 시각 없음(화면 "–").
+	 * 시각은 1분 구간의 시작(결과 탭 분당 집계 · 분 단위 표시와 같게) — {@link #rateWindowMinute} · {@link #minuteOf} · {@link #changedMinute}.
+	 * @param from 입장, to 이벤트 종료(end_at). null인 끝은 자르지 않는다
 	 */
-	static Summary summary(PromSeries s, Long stockTotal, Long successCount) {
+	static Summary summary(PromSeries series, Instant from, Instant to, Long stockTotal, Long successCount) {
+		PromSeries s = series.between(from, to);
 		List<Long> t = s.timestamps();
-		Peak peakRps = peak(t, s.get(RPS));
+		Peak peakRps = peak(t, s.get(RPS), TrafficEventCollector::rateWindowMinute);
 		double rpsSum = 0;
 		double errorSum = 0;
 		boolean anyRps = false;
@@ -346,19 +369,40 @@ class TrafficEventCollector {
 		for (int i = 0; i < t.size(); i++) {
 			Double stock = s.get(STOCK).get(i);
 			if (stock != null && stock <= 0) {
-				soldOutAt = t.get(i);
+				soldOutAt = changedMinute(t.get(i));
 				break;
 			}
 		}
+		Double redisMemoryMax = max(s.get(REDIS_MEMORY));
 		return new Summary(peakRps, errorAvg, max(s.get(ERROR_RATIO)), PromValues.toLong(max(p95All)),
 				PromValues.toLong(avg(s.get(P95_ISSUANCE))), PromValues.toInt(max(s.get(READY))),
-				PromValues.toInt(max(s.get(HPA_MAX))), peak(t, s.get(WAITING)), issued, stockTotal,
-				soldOutAt == null ? null : offset(soldOutAt),
+				PromValues.toInt(max(s.get(HPA_MAX))), peak(t, s.get(WAITING), TrafficEventCollector::minuteOf), issued,
+				stockTotal, soldOutAt == null ? null : offset(soldOutAt),
 				max(s.get(CPU)), max(s.get(CPU_REQUEST)), max(s.get(MEMORY)), max(s.get(MEMORY_REQUEST)),
-				max(s.get(REDIS_MEMORY)), PromValues.toLong(max(s.get(REDIS_RESTARTS))));
+				redisMemoryMax,
+				// Redis 지표(redis-exporter)가 없으면 재시작도 모름(kube-state-metrics 값 0을 쓰지 않음)
+				redisMemoryMax == null ? null : PromValues.toLong(max(s.get(REDIS_RESTARTS))));
 	}
 
-	private static Peak peak(List<Long> times, List<Double> values) {
+	private static final long MINUTE_MILLIS = 60_000;
+
+	/** rate[1m] 값(t 시각 = t − 1분 ~ t의 1분 창)의 1분 구간 시작: 창 시작이 든 분 */
+	static long rateWindowMinute(long epochMillis) {
+		return minuteOf(epochMillis - MINUTE_MILLIS);
+	}
+
+	/** 게이지 값(그 시각의 상태)이 든 분 */
+	static long minuteOf(long epochMillis) {
+		return Math.floorDiv(epochMillis, MINUTE_MILLIS) * MINUTE_MILLIS;
+	}
+
+	/** 처음 바뀐 값으로 보인 점 t: 바뀐 순간은 앞 점 ~ t 사이라 t 직전(t − 1ms)이 든 분(정각 점이면 앞 분) */
+	static long changedMinute(long epochMillis) {
+		return minuteOf(epochMillis - 1);
+	}
+
+	/** 최대값과 그 시각(minute로 1분 구간 시작). 값이 없으면 둘 다 null, 최대가 0이면 시각 null */
+	private static Peak peak(List<Long> times, List<Double> values, LongUnaryOperator minute) {
 		Double best = null;
 		Long at = null;
 		for (int i = 0; i < times.size(); i++) {
@@ -368,8 +412,10 @@ class TrafficEventCollector {
 				at = times.get(i);
 			}
 		}
-		return best == null ? new Peak(null, null)
-				: new Peak(best, offset(at));
+		if (best == null) {
+			return new Peak(null, null);
+		}
+		return new Peak(best, best == 0 ? null : offset(minute.applyAsLong(at)));
 	}
 
 	private static OffsetDateTime offset(long epochMillis) {

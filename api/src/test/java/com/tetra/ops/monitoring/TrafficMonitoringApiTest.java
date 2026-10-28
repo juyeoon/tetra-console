@@ -15,7 +15,10 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -55,6 +58,8 @@ import com.tetra.ops.support.IntegrationTest;
  * - 7104 A 종료(EXPIRED · ENDED), 시작 2일 전 — 결과 요약 있음
  * - 7105 B 준비 실패(OPEN_FAILED), 시작 1일 전 — URGENT 알림 + OPEN_FAILED 로그
  * - 7106 A 예정(SCHEDULED), 시작 2일 뒤(오늘 예정이 아님)
+ * 호스팅이 끝난 상태(종료 처리 중 · 종료 · 종료 실패)의 Prometheus · AWS 값은 TTL 0이어도 다시 조회하지 않는다(CLOSED_TTL) —
+ * 그 상태를 보는 테스트는 저마다 다른 이벤트를 쓴다.
  */
 class TrafficMonitoringApiTest extends IntegrationTest {
 
@@ -444,7 +449,8 @@ class TrafficMonitoringApiTest extends IntegrationTest {
 			// 최근 종료(늦은 순)의 맨 앞: hosting_end_at now−1분
 			.andExpect(jsonPath("$.items[*].eventId").value(contains(7101, 7102, 7109, 7105, 7104)))
 			.andExpect(jsonPath("$.items[2].group").value("ENDED"))
-			.andExpect(jsonPath("$.items[2].phase").value("ENDED"));
+			// 호스팅 종료는 지났고 WF4 결과 · 집계가 없음 = 종료 처리 중(2026-10-28 상태 정리)
+			.andExpect(jsonPath("$.items[2].phase").value("ENDING"));
 	}
 
 	@Test
@@ -492,13 +498,18 @@ class TrafficMonitoringApiTest extends IntegrationTest {
 		mvc.perform(get("/api/ops/monitoring/platform").cookie(operatorCookie()))
 			.andExpect(jsonPath("$.summary[1].area").value("EVENT"))
 			.andExpect(jsonPath("$.summary[1].openCount").value(0))
-			.andExpect(jsonPath("$.summary[1].reason").value("진행 중(입장 중 포함) 이벤트 없음"));
+			.andExpect(jsonPath("$.summary[1].reason").value("진행 중(입장 중 · 마무리 포함) 이벤트 없음"));
 	}
 
 	// ---------------------------------------------------------------- event detail
 
 	private void respondLiveEvent() {
-		TrafficQueries.EventQueries q = TrafficQueries.forEvent(A, 7101);
+		respondEvent(A, 7101);
+	}
+
+	/** 진행 중 이벤트 값 한 벌(7101과 같은 값) */
+	private void respondEvent(String tenantId, long eventId) {
+		TrafficQueries.EventQueries q = TrafficQueries.forEvent(tenantId, eventId);
 		both(TrafficQueries.KUBE_STATE_METRICS_UP, "3");
 		both(q.rps(), "1131.24");
 		both(q.errorRps(), "13.57");
@@ -569,6 +580,7 @@ class TrafficMonitoringApiTest extends IntegrationTest {
 			.andExpect(jsonPath("$.kpi.live.stockTotal").value(10000))
 			.andExpect(jsonPath("$.kpi.live.redisMemoryRatio").value(0.38))
 			.andExpect(jsonPath("$.kpi.live.redisUp").value(true))
+			.andExpect(jsonPath("$.kpi.live.redisRestarts").value(0))
 			.andExpect(jsonPath("$.kpi.summary").value(nullValue()))
 			// TEST-LEAD: 서비스 값 80분 → 30초
 			// // 범위 · 그래프: 입장 −10분 ~ 지금(80분 → 30초 간격)
@@ -632,6 +644,8 @@ class TrafficMonitoringApiTest extends IntegrationTest {
 		data.event(7119, A).name("A 입장 직전").approved("HOSTING", "SCHEDULED", "slug7119").startAt(start).insert();
 		approvedLogs(A, 7119, start);
 		respondPlatform();
+		// redis-exporter 지표는 없고 재시작(kube-state-metrics)만 0 → 재시작도 비운다(메모리 · 연결처럼 "–")
+		both(TrafficQueries.forEvent(A, 7119).redisRestarts(), "0");
 		mvc.perform(get("/api/ops/monitoring/events/7119").cookie(operatorCookie()))
 			.andExpect(status().isOk())
 			.andExpect(jsonPath("$.event.phase").value("PRE_ENTRY"))
@@ -640,7 +654,12 @@ class TrafficMonitoringApiTest extends IntegrationTest {
 			.andExpect(jsonPath("$.charts.timestamps").isNotEmpty())
 			.andExpect(jsonPath("$.kpi.live").isNotEmpty())
 			.andExpect(jsonPath("$.kpi.live.rps").value(nullValue()))
-			.andExpect(jsonPath("$.kpi.live.p95Ms").value(nullValue()));
+			.andExpect(jsonPath("$.kpi.live.p95Ms").value(nullValue()))
+			.andExpect(jsonPath("$.kpi.live.redisMemoryRatio").value(nullValue()))
+			.andExpect(jsonPath("$.kpi.live.redisRestarts").value(nullValue()))
+			// 준비가 진행 중(계획 시각 지남, OPEN 전), 입장은 예정 — 진행 중은 하나뿐
+			.andExpect(jsonPath("$.steps[3].state").value("ACTIVE"))
+			.andExpect(jsonPath("$.steps[4].state").value("WAITING"));
 	}
 
 	@Test
@@ -658,8 +677,10 @@ class TrafficMonitoringApiTest extends IntegrationTest {
 	void endedEventSummary() throws Exception {
 		TrafficQueries.EventQueries q = TrafficQueries.forEvent(A, 7104);
 		both(TrafficQueries.KUBE_STATE_METRICS_UP, "3");
-		prometheus.respond(q.rps(), r -> matrix(r, "{}", i -> i == 10 ? "1820" : "100"));
+		// 0번 점(입장 −10분)은 입장 전 웜업 — 최종값에 넣지 않는다
+		prometheus.respond(q.rps(), r -> matrix(r, "{}", i -> i == 10 ? "1820" : i == 0 ? "99999" : "100"));
 		both(q.errorRps(), "0.3");
+		both(q.waiting(), "0");
 		prometheus.respond(q.stock(), r -> matrix(r, "{}", i -> Long.toString(Math.max(0, 10000 - i * 100))));
 		both(q.hpaMax(), "12");
 		prometheus.respond(q.apiReady(), r -> matrix(r, "{}", i -> i < 5 ? "6" : "10"));
@@ -669,9 +690,18 @@ class TrafficMonitoringApiTest extends IntegrationTest {
 			.andExpect(jsonPath("$.steps[*].state")
 				.value(contains("DONE", "DONE", "DONE", "DONE", "DONE", "DONE", "DONE", "DONE")))
 			.andExpect(jsonPath("$.steps[6].actualAt").value(iso(now.minusDays(2).plusHours(5))))
+			// 이벤트 진행: 시작 ~ end_at(시작 +3시간)
+			.andExpect(jsonPath("$.steps[5].actualAt").value(iso(now.minusDays(2))))
+			.andExpect(jsonPath("$.steps[5].endAt").value(iso(now.minusDays(2).plusHours(3))))
+			.andExpect(jsonPath("$.event.eventEndAt").value(iso(now.minusDays(2).plusHours(3))))
 			.andExpect(jsonPath("$.kpi.live").value(nullValue()))
 			.andExpect(jsonPath("$.kpi.summary.peakRps.value").value(1820.0))
-			.andExpect(jsonPath("$.kpi.summary.errorRatioAvg").value(closeTo(0.00281, 0.00001)))
+			.andExpect(jsonPath("$.kpi.summary.peakRps.at").isString())
+			// 평균도 입장 ~ 이벤트 종료(end_at = 시작 +3시간)만: 0.3 × n ÷ (100 × (n − 1) + 1820)
+			.andExpect(jsonPath("$.kpi.summary.errorRatioAvg").value(closeTo(0.0027, 0.00005)))
+			// 대기 인원 최대 0 → 시각 없음
+			.andExpect(jsonPath("$.kpi.summary.peakWaiting.value").value(0.0))
+			.andExpect(jsonPath("$.kpi.summary.peakWaiting.at").value(nullValue()))
 			.andExpect(jsonPath("$.kpi.summary.podsMax").value(10))
 			.andExpect(jsonPath("$.kpi.summary.podsLimit").value(12))
 			// 발급은 결과 요약 success_count 우선
@@ -767,6 +797,133 @@ class TrafficMonitoringApiTest extends IntegrationTest {
 		mvc.perform(get("/api/ops/monitoring/events/7114").cookie(operatorCookie()))
 			.andExpect(jsonPath("$.steps[6].key").value("END"))
 			.andExpect(jsonPath("$.steps[6].state").value("DONE"));
+	}
+
+	/** 시작 · 종료 시각을 바꾼 진행 중 이벤트(DB OPEN · HOSTING) */
+	private void liveWithEnds(long eventId, LocalDateTime start, LocalDateTime endAt, LocalDateTime hostingEndAt) {
+		live(eventId, A, "A " + eventId, start);
+		data.jdbc().update("UPDATE t_%s.event SET end_at = ?, hosting_end_at = ? WHERE event_id = ?".formatted(A), endAt,
+				hostingEndAt, eventId);
+	}
+
+	/** WF4 결과: registry · 테넌트 event 상태 + 상태 로그 */
+	private void hostingResult(long eventId, String hostingStatus, String eventStatus, LocalDateTime at, String detail) {
+		data.jdbc().update("UPDATE tetra_platform.event_registry SET hosting_status = ?, event_status = ? WHERE event_id = ?",
+				hostingStatus, eventStatus, eventId);
+		data.jdbc().update("UPDATE t_%s.event SET hosting_status = ?, event_status = ? WHERE event_id = ?".formatted(A),
+				hostingStatus, eventStatus, eventId);
+		data.statusLog(A, eventId, "HOSTING", "HOSTING", hostingStatus, at, detail);
+	}
+
+	@Test
+	void wrapUpKeepsLiveValuesAndCountsAsOpen() throws Exception {
+		// 이벤트 종료(end_at) 2분 지남, 호스팅 종료는 8분 뒤: 마무리 — KPI · 그래프는 진행 중처럼, 이벤트 종료 점선
+		liveWithEnds(7121, now.minusMinutes(20), now.minusMinutes(2), now.plusMinutes(8));
+		respondPlatform();
+		respondEvent(A, 7121);
+		// 커서가 멈췄지만 이벤트가 끝나 정상 — 진행 중이면 "커서 1분 정지"(위험)
+		both(TrafficQueries.forEvent(A, 7121).cursorChanges(), "0");
+		mvc.perform(get("/api/ops/monitoring/events/7121").cookie(operatorCookie()))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.event.phase").value("WRAP_UP"))
+			.andExpect(jsonPath("$.event.eventEndAt").value(iso(now.minusMinutes(2))))
+			.andExpect(jsonPath("$.kpi.live.rps").value(1131.2))
+			.andExpect(jsonPath("$.kpi.level").value("WARN"))
+			.andExpect(jsonPath("$.kpi.reason").value("5xx 1.2%"))
+			.andExpect(jsonPath("$.range.key").value("entry"))
+			.andExpect(jsonPath("$.range.options").value(contains("entry", "15m", "1h")))
+			.andExpect(jsonPath("$.charts.timestamps").isNotEmpty())
+			// 이벤트 진행은 끝(시작 ~ end_at), 호스팅 종료는 예정 — 기다리는 구간이라 진행 중 단계 없음
+			.andExpect(jsonPath("$.steps[*].state")
+				.value(contains("DONE", "DONE", "DONE", "DONE", "DONE", "DONE", "WAITING", "WAITING")))
+			.andExpect(jsonPath("$.steps[5].actualAt").value(iso(now.minusMinutes(20))))
+			.andExpect(jsonPath("$.steps[5].endAt").value(iso(now.minusMinutes(2))))
+			.andExpect(jsonPath("$.steps[6].plannedAt").value(iso(now.plusMinutes(8))));
+		// 상태 요약 · 목록: 진행 중 묶음에 센다(7101 · 7102 · 7121)
+		mvc.perform(get("/api/ops/monitoring/platform").cookie(operatorCookie()))
+			.andExpect(jsonPath("$.summary[1].openCount").value(3));
+		mvc.perform(get("/api/ops/monitoring/events").cookie(operatorCookie()))
+			.andExpect(jsonPath("$.items[?(@.eventId == 7121)].group").value(contains("OPEN")))
+			.andExpect(jsonPath("$.items[?(@.eventId == 7121)].phase").value(contains("WRAP_UP")));
+	}
+
+	@Test
+	void afterHostingEndFreezesMetricsAndRefreshesStepsOnly() throws Exception {
+		// 호스팅 종료 1분 지남, DB는 아직 OPEN · HOSTING(WF4 결과 전): 종료 처리 중
+		LocalDateTime start = now.minusMinutes(40);
+		LocalDateTime endAt = now.minusMinutes(15);
+		LocalDateTime hostingEnd = now.minusMinutes(1);
+		liveWithEnds(7122, start, endAt, hostingEnd);
+		respondPlatform();
+		respondEvent(A, 7122);
+		mvc.perform(get("/api/ops/monitoring/events/7122").cookie(operatorCookie()))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.event.phase").value("ENDING"))
+			// 호스팅 종료(WF4) 진행 중 = "종료 처리 중", 집계는 아직
+			.andExpect(jsonPath("$.steps[*].state")
+				.value(contains("DONE", "DONE", "DONE", "DONE", "DONE", "DONE", "ACTIVE", "WAITING")))
+			// 최종값 · 범위 고정: 입장 −10분 ~ 호스팅 종료 +10분(아직 미래여도 지금으로 자르지 않음)
+			.andExpect(jsonPath("$.kpi.live").value(nullValue()))
+			.andExpect(jsonPath("$.kpi.summary.peakRps.value").value(1131.24))
+			.andExpect(jsonPath("$.range.key").value("full"))
+			.andExpect(jsonPath("$.range.options").value(contains("full", "start")))
+			.andExpect(jsonPath("$.range.from").value(iso(EntryOpen.at(start).minusMinutes(10))))
+			.andExpect(jsonPath("$.range.to").value(iso(hostingEnd.plusMinutes(10))));
+
+		// 상태 요약 · 목록: DB가 아직 OPEN이어도 호스팅 종료 뒤는 진행 중에서 빼고 최근 종료로(이벤트 12의 "진행 중 1")
+		mvc.perform(get("/api/ops/monitoring/platform").cookie(operatorCookie()))
+			.andExpect(jsonPath("$.summary[1].openCount").value(2));
+		mvc.perform(get("/api/ops/monitoring/events").cookie(operatorCookie()))
+			.andExpect(jsonPath("$.items[?(@.eventId == 7122)].group").value(contains("ENDED")))
+			.andExpect(jsonPath("$.items[?(@.eventId == 7122)].phase").value(contains("ENDING")))
+			.andExpect(jsonPath("$.items[?(@.eventId == 7122)].endAt").value(contains(iso(hostingEnd))));
+		int queried = prometheus.requests().size();
+		clearInvocations(aws);
+
+		// 다시 불러도(15초 갱신) Prometheus · CloudWatch는 다시 조회하지 않고 진행 단계(DB)만 새로: WF4 성공 → 집계 중
+		hostingResult(7122, "ENDED", "EXPIRED", now, null);
+		mvc.perform(get("/api/ops/monitoring/events/7122").cookie(operatorCookie()))
+			.andExpect(jsonPath("$.event.phase").value("ENDING"))
+			.andExpect(jsonPath("$.steps[*].state")
+				.value(contains("DONE", "DONE", "DONE", "DONE", "DONE", "DONE", "DONE", "ACTIVE")))
+			.andExpect(jsonPath("$.steps[6].actualAt").value(iso(now)))
+			.andExpect(jsonPath("$.kpi.summary.peakRps.value").value(1131.24));
+		assertThat(prometheus.requests()).hasSize(queried);
+		verify(aws, never()).metricData(anyList(), any(), any());
+
+		// 집계 완료 = 종료(진행 단계 모두 끝)
+		data.jdbc().update("""
+				INSERT INTO t_%s.event_result_summary (event_id, tenant_id, session_count, ticket_count, peak_concurrent,
+				    metrics_finalized_at, total_stock, success_count, soldout_count, history_generated_at)
+				VALUES (7122, ?, 10, 10, 5, ?, 10000, 15, 0, ?)""".formatted(A), A, now, now);
+		mvc.perform(get("/api/ops/monitoring/events/7122").cookie(operatorCookie()))
+			.andExpect(jsonPath("$.event.phase").value("ENDED"))
+			.andExpect(jsonPath("$.steps[*].state")
+				.value(contains("DONE", "DONE", "DONE", "DONE", "DONE", "DONE", "DONE", "DONE")))
+			.andExpect(jsonPath("$.kpi.summary.issued").value(15));
+	}
+
+	@Test
+	void hostingEndFailureIsFinalWithoutAggregation() throws Exception {
+		LocalDateTime hostingEnd = now.minusMinutes(5);
+		liveWithEnds(7123, now.minusMinutes(40), now.minusMinutes(15), hostingEnd);
+		hostingResult(7123, "END_FAILED", "OPEN", now.minusMinutes(3), "FAILED: States.TaskFailed / "
+				+ "{\"errorMessage\":\"namespace delete timed out\",\"stackTrace\":[\"at x\"],\"token\":\"abc123\"}");
+		respondPlatform();
+		respondEvent(A, 7123);
+		mvc.perform(get("/api/ops/monitoring/events/7123").cookie(operatorCookie()))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.event.phase").value("END_FAILED"))
+			.andExpect(jsonPath("$.steps[*].state")
+				.value(contains("DONE", "DONE", "DONE", "DONE", "DONE", "DONE", "FAILED", "SKIPPED")))
+			// 실패 사유는 JSON 원문 대신 요약(비밀값 가림)
+			.andExpect(jsonPath("$.steps[6].reason").value("FAILED: States.TaskFailed · namespace delete timed out"))
+			.andExpect(jsonPath("$.kpi.summary").isNotEmpty())
+			.andExpect(jsonPath("$.range.key").value("full"));
+		mvc.perform(get("/api/ops/monitoring/platform").cookie(operatorCookie()))
+			.andExpect(jsonPath("$.failures[0].eventId").value(7123))
+			.andExpect(jsonPath("$.failures[0].step").value("END"))
+			.andExpect(jsonPath("$.failures[0].reason").value("FAILED: States.TaskFailed · namespace delete timed out"));
 	}
 
 	@Test

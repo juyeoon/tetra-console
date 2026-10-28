@@ -12,16 +12,18 @@ import io.swagger.v3.oas.annotations.media.Schema;
 /**
  * GET /api/ops/monitoring/events/{eventId}?range= — OPS-05 C(진행 단계) · D(KPI · 그래프). 구역 모습은 event.phase(명세 4절):
  * SCHEDULED · 실패(PREPARE_FAILED · DEPLOY_FAILED · HOSTING_FAILED)는 kpi · range · charts가 null(Prometheus를 조회하지 않음), PRE_ENTRY는 kpi.live 일부만,
- * ENTRY_OPEN(입장 중) · LIVE(진행 중)는 kpi.live 전부, ENDED는 kpi.summary(최종값).
+ * ENTRY_OPEN(입장 중) · LIVE(진행 중) · WRAP_UP(마무리)는 kpi.live 전부, ENDING(종료 처리 중) · ENDED · END_FAILED는 kpi.summary(최종값).
  */
 public record TrafficEventResponse(MonitoringSource prometheus,
 		@Schema(description = "ALB · RDS 그래프(60초 단위, 60초 캐시)") MonitoringSource aws, Info event, List<Step> steps,
 		Kpi kpi, Range range, Charts charts) {
 
-	/** endAt = hosting_end_at(WF4). prepareAt = 시작 − 90분, entryAt = 시작 − 60분 */
+	/** endAt = hosting_end_at(WF4), eventEndAt = 이벤트 종료(end_at). prepareAt = 시작 − 90분, entryAt = 시작 − 60분 */
 	public record Info(Long eventId, String tenantId, String tenantName, String name, EventPhase phase,
 			EventStatus eventStatus, HostingStatus hostingStatus, OffsetDateTime prepareAt, OffsetDateTime entryAt,
-			OffsetDateTime startAt, OffsetDateTime endAt, Long stockCount) {
+			OffsetDateTime startAt, @Schema(description = "호스팅 종료(hosting_end_at, WF4)") OffsetDateTime endAt,
+			@Schema(description = "이벤트 종료(end_at) — 마무리 시작 · 최종 KPI 구간 끝") OffsetDateTime eventEndAt,
+			Long stockCount) {
 	}
 
 	public enum StepKey {
@@ -35,9 +37,9 @@ public record TrafficEventResponse(MonitoringSource prometheus,
 		PREPARE,
 		/** 입장(T−60, OPEN) */
 		ENTRY,
-		/** 이벤트 시작 */
+		/** 이벤트 진행(시작 ~ end_at) */
 		START,
-		/** 종료(WF4, hosting_end_at) */
+		/** 호스팅 종료(WF4, hosting_end_at) */
 		END,
 		/** 집계(발급 이력 저장) */
 		AGGREGATE
@@ -46,9 +48,9 @@ public record TrafficEventResponse(MonitoringSource prometheus,
 	public enum StepState {
 		/** 끝남 */
 		DONE,
-		/** 지금 단계(강조). 입장 직전 · 입장 중 · 진행 중에만 하나, 배포(PENDING)는 상태와 상관없이 */
+		/** 지금 실제로 진행 중(빈 점 + 굵게). 앞 단계가 끝나고 다음 단계가 시작하기 전(기다리는 구간)에는 없다 */
 		ACTIVE,
-		/** 아직 */
+		/** 아직(회색 점 + 점선) — 계획 시각이 지났어도 시작 기록이 없으면 여기 */
 		WAITING,
 		/** 실패(빨강) — reason에 사유 */
 		FAILED,
@@ -57,11 +59,13 @@ public record TrafficEventResponse(MonitoringSource prometheus,
 	}
 
 	/**
-	 * plannedAt: 계획 시각(승인 · 배포 · 집계는 null). actualAt: 상태 로그 · 결과 요약 시각(시작은 시작 시각).
-	 * durationSeconds: 준비만 — api · Redis Pod 시작 → Ready(Prometheus), 못 구하면 null
+	 * plannedAt: 계획 시각(승인 · 배포 · 집계는 null). actualAt: 끝난 단계는 상태 로그 · 결과 요약 시각(이벤트 진행은 시작 시각),
+	 * 진행 중인 단계는 시작한 시각(배포 = 승인, 입장 = OPEN 로그, 이벤트 진행 = 시작, 그 밖은 null → plannedAt).
+	 * endAt: 이벤트 진행만 — 이벤트 종료(end_at). durationSeconds: 준비만 — api · Redis Pod 시작 → Ready(Prometheus), 못 구하면 null.
+	 * reason: 실패 사유 요약(앞부분 · 비밀값 가림, {@link FailureReasons})
 	 */
-	public record Step(StepKey key, OffsetDateTime plannedAt, OffsetDateTime actualAt, Long durationSeconds,
-			StepState state, String reason) {
+	public record Step(StepKey key, OffsetDateTime plannedAt, OffsetDateTime actualAt, OffsetDateTime endAt,
+			Long durationSeconds, StepState state, String reason) {
 	}
 
 	/** warn = 주의 값인 KPI 키(errorRatio · p95 · pods · redisMemory · redisRestarts · redisUp) */
@@ -80,8 +84,9 @@ public record TrafficEventResponse(MonitoringSource prometheus,
 	}
 
 	/**
-	 * 종료된 이벤트 최종값(입장 −10분 ~ 종료 +10분 전체 구간). issued = 결과 요약 success_count(없으면 재고 − 최소 남은 재고).
-	 * errorRatioAvg = 구간 5xx 합 ÷ 요청 합
+	 * 호스팅이 끝난 이벤트 최종값. 집계 구간 = 입장 ~ 이벤트 종료(end_at), 그래프(입장 −10분 ~ 호스팅 종료 +10분)보다 좁다.
+	 * issued = 결과 요약 success_count(없으면 재고 − 최소 남은 재고). errorRatioAvg = 구간 5xx 합 ÷ 요청 합.
+	 * 시각(peak*.at · soldOutAt)은 1분 구간의 시작, 최대값이 0이면 at null. Redis 지표가 없으면 redisRestarts null
 	 */
 	public record Summary(Peak peakRps, Double errorRatioAvg, Double errorRatioMax, Long p95MaxMs, Long p95AvgMs,
 			Integer podsMax, Integer podsLimit, Peak peakWaiting, Long issued, Long stockTotal,
@@ -93,8 +98,8 @@ public record TrafficEventResponse(MonitoringSource prometheus,
 	}
 
 	/**
-	 * key: 진행 중 · 입장 직전 entry(입장 −10분 ~ 지금, 기본) · 15m · 1h, 종료 full(입장 −10분 ~ 종료 +10분, 기본) · start(시작 ±10분).
-	 * options = 이 상태에서 고를 수 있는 key
+	 * key: 입장 직전 ~ 마무리 entry(입장 −10분 ~ 지금, 기본) · 15m · 1h, 호스팅 종료 뒤 full(입장 −10분 ~ 호스팅 종료 +10분 고정, 기본) ·
+	 * start(시작 ±10분). options = 이 상태에서 고를 수 있는 key
 	 */
 	public record Range(String key, List<String> options, OffsetDateTime from, OffsetDateTime to, int stepSeconds,
 			@Schema(description = "그래프 세로 점선") OffsetDateTime entryAt,
@@ -109,7 +114,7 @@ public record TrafficEventResponse(MonitoringSource prometheus,
 			Progress progress, Redis redis, Resources resources, Rds rds) {
 	}
 
-	/** rps = API 전체 초당 요청, cursorPerSec = 커서 도달/초 */
+	/** rps = API 초당 요청(health · 액추에이터 제외), cursorPerSec = 서빙 커서 전진 속도(번호/초, 요청 수 아님) */
 	public record Traffic(List<Double> rps, List<Double> cursorPerSec) {
 	}
 

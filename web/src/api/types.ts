@@ -345,8 +345,22 @@ export interface MonitoringOverviewResponse {
 /** 상태(명세 2절). UNKNOWN = 판단할 데이터가 없음(조회 실패 · 미설정) */
 export type MonitoringLevel = 'OK' | 'WARN' | 'DANGER' | 'UNKNOWN';
 
-/** 이벤트 구역 상태(명세 4절). ENTRY_OPEN = 입장 ~ 시작 전(발급 전), LIVE = 시작 ~ 종료. 종료 = hosting_end_at(WF4). 실패는 배포 → 호스팅 → 준비 순으로 먼저 본다 */
-export type EventPhase = 'SCHEDULED' | 'PRE_ENTRY' | 'ENTRY_OPEN' | 'LIVE' | 'ENDED' | 'PREPARE_FAILED' | 'DEPLOY_FAILED' | 'HOSTING_FAILED';
+/**
+ * 이벤트 구역 상태(명세 4절). ENTRY_OPEN = 입장 ~ 시작 전(발급 전), LIVE = 시작 ~ 이벤트 종료(end_at), WRAP_UP(마무리) = end_at ~ 호스팅 종료(hosting_end_at),
+ * ENDING(종료 처리 중) = 호스팅 종료 ~ 집계 완료, ENDED = 집계 완료, END_FAILED = WF4 실패. 실패는 배포 → 호스팅 → 준비 → WF4 순으로 먼저 본다
+ */
+export type EventPhase =
+  | 'SCHEDULED'
+  | 'PRE_ENTRY'
+  | 'ENTRY_OPEN'
+  | 'LIVE'
+  | 'WRAP_UP'
+  | 'ENDING'
+  | 'ENDED'
+  | 'END_FAILED'
+  | 'PREPARE_FAILED'
+  | 'DEPLOY_FAILED'
+  | 'HOSTING_FAILED';
 
 export type FailureStep = 'DEPLOY' | 'HOSTING_START' | 'PREPARE' | 'END' | 'PROVISIONING' | 'MAIL' | 'OTHER';
 
@@ -485,10 +499,14 @@ export type TrafficStepState = 'DONE' | 'ACTIVE' | 'WAITING' | 'FAILED' | 'SKIPP
 export interface TrafficStep {
   key: TrafficStepKey;
   plannedAt: string | null;
+  /** 끝난 단계는 끝난 시각(이벤트 진행은 시작 시각), 진행 중인 단계는 시작한 시각(모르면 null) */
   actualAt: string | null;
+  /** 이벤트 진행(START)만 — 이벤트 종료(end_at) */
+  endAt: string | null;
   /** 준비만 — Pod 시작 → Ready */
   durationSeconds: number | null;
   state: TrafficStepState;
+  /** 실패 사유 요약(앞부분 · 비밀값 가림) */
   reason: string | null;
 }
 
@@ -526,7 +544,7 @@ export interface TrafficPeak {
   at: string | null;
 }
 
-/** 종료된 이벤트 최종값(전체 구간) */
+/** 호스팅이 끝난 이벤트 최종값(입장 ~ 이벤트 종료). 시각은 1분 구간의 시작, 최대가 0이면 at null */
 export interface TrafficSummaryKpi {
   peakRps: TrafficPeak;
   errorRatioAvg: number | null;
@@ -548,7 +566,7 @@ export interface TrafficSummaryKpi {
 }
 
 export interface TrafficKpi {
-  /** 진행 중 · 입장 직전만(종료는 null) */
+  /** 입장 직전 ~ 마무리만(호스팅 종료 뒤는 null) */
   level: MonitoringLevel | null;
   reason: string | null;
   /** 주의 값인 KPI 키: errorRatio · p95 · pods · redisMemory · redisRestarts · redisUp */
@@ -573,6 +591,7 @@ export interface TrafficRange {
 /** Prometheus 값은 timestamps와 같은 길이 배열, AWS 값(errors.alb · eventTarget · rds)은 점 목록 */
 export interface TrafficCharts {
   timestamps: number[];
+  /** rps = 초당 요청(health 제외), cursorPerSec = 서빙 커서 전진 속도(입장 번호/초 — 요청 수 아님) */
   traffic: { rps: (number | null)[]; cursorPerSec: (number | null)[] };
   /** 0~1. eventTarget은 화면에서 쓰지 않음(참고용) */
   errors: { app: (number | null)[]; alb: MonitoringPoint[]; eventTarget: MonitoringPoint[] };
@@ -602,7 +621,10 @@ export interface TrafficEventResponse {
     prepareAt: string;
     entryAt: string;
     startAt: string;
+    /** 호스팅 종료(hosting_end_at, WF4) */
     endAt: string | null;
+    /** 이벤트 종료(end_at) */
+    eventEndAt: string | null;
     stockCount: number | null;
   };
   steps: TrafficStep[];

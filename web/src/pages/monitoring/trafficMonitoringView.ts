@@ -387,21 +387,28 @@ export function selectedEventId(param: string | null | undefined, events: Traffi
 }
 
 /**
- * 이벤트 상태 — 이벤트 구역 배지와 드롭다운 항목이 같이 쓴다(서버 phase 기준: hosting_end_at이 지났으면 DB 상태가 OPEN이어도 '종료').
- * 실패는 배포 → 호스팅 → 준비 순으로 시각 · 종료보다 먼저 본다(호스팅 실패는 hosting_end_at이 지나도 '호스팅 실패').
+ * 이벤트 상태 — 이벤트 구역 배지와 드롭다운 항목이 같이 쓴다(서버 phase 기준: hosting_end_at이 지났으면 DB 상태가 OPEN이어도 '종료 처리 중').
+ * 종료 시각은 둘: 이벤트 종료(end_at) 뒤 '마무리', 호스팅 종료(hosting_end_at) 뒤 '종료 처리 중' → 집계 완료 '종료'.
+ * 실패는 배포 → 호스팅 → 준비 → WF4 순으로 시각보다 먼저 본다(호스팅 실패는 hosting_end_at이 지나도 '호스팅 실패').
  */
 export const PHASE_META: Record<EventPhase, { label: string; tone: Tone }> = {
   SCHEDULED: { label: '예정', tone: 'grey' },
   PRE_ENTRY: { label: '입장 직전', tone: 'blue' },
   ENTRY_OPEN: { label: '입장 중', tone: 'blue' },
   LIVE: { label: '진행 중', tone: 'blue' },
+  WRAP_UP: { label: '마무리', tone: 'blue' },
+  ENDING: { label: '종료 처리 중', tone: 'grey' },
   ENDED: { label: '종료', tone: 'grey' },
+  END_FAILED: { label: '종료·집계 실패', tone: 'red' },
   PREPARE_FAILED: { label: '준비 실패', tone: 'red' },
   DEPLOY_FAILED: { label: '배포 실패', tone: 'red' },
   HOSTING_FAILED: { label: '호스팅 실패', tone: 'red' },
 };
 
-/** 상태 옆 기준 시각: 예정 · 입장 중 → 시작, 입장 직전 · 준비 실패 → 입장, 종료 → hosting_end_at, 배포 · 호스팅 실패 → 실패 시각, 진행 중 → 없음 */
+/**
+ * 상태 옆 기준 시각: 예정 · 입장 중 → 시작, 입장 직전 · 준비 실패 → 입장, 마무리 → 호스팅 종료 예정, 호스팅 종료 뒤 → hosting_end_at,
+ * 배포 · 호스팅 실패 → 실패 시각, 진행 중 → 없음
+ */
 function phaseTime(phase: EventPhase, e: { entryAt: string; startAt: string; endAt: string | null; failedAt: string | null }, now: Date): string | null {
   switch (phase) {
     case 'SCHEDULED':
@@ -411,7 +418,11 @@ function phaseTime(phase: EventPhase, e: { entryAt: string; startAt: string; end
       return `${clockText(e.entryAt, now)} 입장`;
     case 'PREPARE_FAILED':
       return clockText(e.entryAt, now);
+    case 'WRAP_UP':
+      return e.endAt ? `${clockText(e.endAt, now)} 호스팅 종료` : null;
+    case 'ENDING':
     case 'ENDED':
+    case 'END_FAILED':
       return e.endAt ? clockText(e.endAt, now) : null;
     case 'DEPLOY_FAILED':
     case 'HOSTING_FAILED':
@@ -422,8 +433,8 @@ function phaseTime(phase: EventPhase, e: { entryAt: string; startAt: string; end
 }
 
 /**
- * 드롭다운 항목 끝 상태: '진행 중' · '예정 · 15:00 시작' · '입장 직전 · 14:00 입장' · '입장 중 · 15:00 시작' · '종료 · 10-24 15:40' · '준비 실패 · 10-25 14:00' ·
- * '배포 실패 · 10-26 14:05' · '호스팅 실패 · 13:50'
+ * 드롭다운 항목 끝 상태: '진행 중' · '예정 · 15:00 시작' · '입장 직전 · 14:00 입장' · '입장 중 · 15:00 시작' · '마무리 · 15:40 호스팅 종료' ·
+ * '종료 처리 중 · 15:40' · '종료 · 10-24 15:40' · '종료·집계 실패 · 15:40' · '준비 실패 · 10-25 14:00' · '배포 실패 · 10-26 14:05' · '호스팅 실패 · 13:50'
  */
 export function eventStatusText(item: Pick<TrafficEventItem, 'phase' | 'entryAt' | 'startAt' | 'endAt' | 'failedAt'>, now: Date): string {
   const time = phaseTime(item.phase, item, now);
@@ -449,32 +460,53 @@ export function eventOptions(events: TrafficEventsResponse | undefined, selected
 
 export const NO_EVENT_TEXT = '최근 7일 이벤트 없음';
 
-/** 진행 중 묶음(event_status OPEN) 이름. 입장 ~ 시작 전(상태 '입장 중')도 들어 있다 */
-export const OPEN_GROUP_TEXT = '진행 중(입장 중 포함)';
+/** 진행 중 묶음(event_status OPEN이고 호스팅 종료 전) 이름. 입장 ~ 시작 전(입장 중) · 이벤트 종료 ~ 호스팅 종료(마무리)도 들어 있다 */
+export const OPEN_GROUP_TEXT = '진행 중(입장 중 · 마무리 포함)';
 export const LIST_ORDER_TEXT = `목록 순서: ${OPEN_GROUP_TEXT} → 오늘 예정 → 최근 종료(7일)`;
 
 // ---------------------------------------------------------------- C 구역 상태 · 진행 단계
 
 export interface SectionStatusView {
-  /** 이벤트 상태(드롭다운과 같은 PHASE_META) + 입장 직전 · 입장 중 · 진행 중이면 판정(정상 · 주의 · 위험 · 확인 불가) */
+  /** 이벤트 상태(드롭다운과 같은 PHASE_META) + 입장 직전 ~ 마무리면 판정(정상 · 주의 · 위험 · 확인 불가) */
   chips: { label: string; tone: Tone }[];
   refresh: string;
-  /** 종료면 false — 다시 부르지 않음 */
+  /** 종료 · 종료 실패면 false — 다시 부르지 않음 */
   autoRefresh: boolean;
 }
 
-/** 이벤트 구역 오른쪽 위: 고른 이벤트의 상태 칩 + 갱신 문구(명세 4절 '갱신') */
+/** 실시간 KPI · 판정이 있는 상태(입장 직전 · 입장 중 · 진행 중 · 마무리) */
+const LIVE_PHASES: readonly EventPhase[] = ['PRE_ENTRY', 'ENTRY_OPEN', 'LIVE', 'WRAP_UP'];
+
+/** 호스팅 종료 뒤(종료 처리 중 · 종료 · 종료 실패): 최종값 · 그래프 범위 고정 */
+const CLOSED_PHASES: readonly EventPhase[] = ['ENDING', 'ENDED', 'END_FAILED'];
+
+export const isClosedPhase = (phase: EventPhase) => CLOSED_PHASES.includes(phase);
+
+/** 자동 갱신을 끄는 상태: 집계까지 끝났거나(종료) WF4가 실패(종료 실패) — 더 바뀌지 않는다 */
+const STOPPED_PHASES: readonly EventPhase[] = ['ENDED', 'END_FAILED'];
+
+/**
+ * 이벤트 구역 오른쪽 위: 고른 이벤트의 상태 칩 + 갱신 문구(명세 4절 '갱신').
+ * 종료 처리 중은 WF4 · 집계 진행을 보려고 15초마다 부르되 서버가 Prometheus · CloudWatch를 다시 조회하지 않는다('진행 단계만')
+ */
 export function sectionStatus(event: TrafficEventResponse | undefined): SectionStatusView {
   const refresh = `자동 갱신 · ${POLL_MS / 1000}초`;
   if (!event) return { chips: [], refresh, autoRefresh: true };
   const phase = event.event.phase;
   const chips = [PHASE_META[phase]];
-  if (phase === 'PRE_ENTRY' || phase === 'ENTRY_OPEN' || phase === 'LIVE') chips.push(LEVEL_META[event.kpi?.level ?? 'UNKNOWN']);
-  return phase === 'ENDED' ? { chips, refresh: '자동 갱신 꺼짐', autoRefresh: false } : { chips, refresh, autoRefresh: true };
+  if (LIVE_PHASES.includes(phase)) chips.push(LEVEL_META[event.kpi?.level ?? 'UNKNOWN']);
+  if (STOPPED_PHASES.includes(phase)) return { chips, refresh: '자동 갱신 꺼짐', autoRefresh: false };
+  return { chips, refresh: phase === 'ENDING' ? `${refresh} · 진행 단계만` : refresh, autoRefresh: true };
 }
 
-/** 종료된 이벤트는 값이 바뀌지 않아 다시 부르지 않는다 */
-export const stopPollingWhen = (event: TrafficEventResponse) => event.event.phase === 'ENDED';
+/** 종료 · 종료 실패는 값이 바뀌지 않아 다시 부르지 않는다(종료 처리 중은 계속 — 집계가 끝나면 종료로 바뀐다) */
+export const stopPollingWhen = (event: TrafficEventResponse) => STOPPED_PHASES.includes(event.event.phase);
+
+/** 그래프 머리글 갱신 문구. 호스팅 종료 뒤는 범위 · 값 고정 */
+export function chartRefreshText(event: TrafficEventResponse): string {
+  const base = isClosedPhase(event.event.phase) ? '호스팅 종료 뒤 값 고정' : '앱 지표 15초 · ALB·RDS 60초 갱신';
+  return event.prometheus.stale ? `${base} · 데이터 지연됨` : base;
+}
 
 const STEP_LABEL: Record<TrafficStep['key'], string> = {
   APPROVE: '승인',
@@ -485,8 +517,8 @@ const STEP_LABEL: Record<TrafficStep['key'], string> = {
   // ENTRY: '입장 (T−60)',
   PREPARE: '준비 (T−15)', // TEST-LEAD
   ENTRY: '입장 (T−5)', // TEST-LEAD
-  START: '이벤트 시작',
-  END: '종료',
+  START: '이벤트 진행',
+  END: '호스팅 종료',
   AGGREGATE: '집계',
 };
 
@@ -505,8 +537,11 @@ export interface StepView {
 }
 
 /**
- * 8단계 아래 글자: '13:30 완료 · 3분 20초' · '13:30 진행 중' · '14:55 시작 · 진행 중'(입장 · 시작) · '15:40 예정' · '16:09 기록 없음'(계획 시각이 지났는데 완료 기록이 없음) ·
- * '배포 중' · '종료 뒤' · '10-25 13:31 실패' · '진행 안 됨'(앞 단계 실패). 시각은 오늘이 아니면 날짜 포함(clockText)
+ * 8단계 아래 글자(2026-10-28 정리). 시각은 오늘이 아니면 날짜 포함(clockText), 좁으면 두 줄로 다 보인다(StepTimeline).
+ * - 끝남(채운 점 · 실선): '13:30 완료' · '13:30 완료 · 3분 20초'(준비) · '15:00~15:40 완료'(이벤트 진행 = 시작 ~ 이벤트 종료)
+ * - 진행 중(빈 점 · 굵게, 지금 실제로 돌고 있는 단계만): '14:55 시작 · 진행 중' · '종료 처리 중'(호스팅 종료) · '집계 중'
+ * - 아직(회색 점 · 점선): '15:40 예정' — 계획 시각이 지났어도 같다('기록 없음'은 쓰지 않는다, 실패처럼 읽힌다). 계획이 없는 집계는 '호스팅 종료 뒤'
+ * - '10-25 13:31 실패' · '진행 안 됨'(앞 단계 실패)
  */
 export function stepViews(steps: TrafficStep[] | undefined, now: Date): StepView[] {
   const when = (iso: string) => clockText(iso, now);
@@ -514,19 +549,27 @@ export function stepViews(steps: TrafficStep[] | undefined, now: Date): StepView
     let sub: string;
     switch (s.state) {
       case 'DONE': {
+        if (s.key === 'START' && s.actualAt && s.endAt) {
+          // 같은 날이면 끝 시각은 'HH:mm'만, 날짜가 넘어가면 끝에도 날짜
+          const end = kstDay(s.endAt) === kstDay(s.actualAt) ? formatTime(s.endAt) : formatMonthDayTime(s.endAt).replace('.', '-');
+          sub = `${when(s.actualAt)}~${end} 완료`;
+          break;
+        }
         const d = durationText(s.durationSeconds);
         sub = `${s.actualAt ? when(s.actualAt) : EMPTY} 완료${d ? ` · ${d}` : ''}`;
         break;
       }
       case 'ACTIVE': {
-        if (s.key === 'DEPLOY') {
-          sub = '배포 중';
+        if (s.key === 'END') {
+          sub = '종료 처리 중';
+          break;
+        }
+        if (s.key === 'AGGREGATE') {
+          sub = '집계 중';
           break;
         }
         const t = s.actualAt ?? s.plannedAt;
-        // 입장 · 시작은 시작한 시각을 붙인다(입장 = OPEN 로그, 시작 = 시작 시각)
-        const running = s.key === 'ENTRY' || s.key === 'START' ? '시작 · 진행 중' : '진행 중';
-        sub = t ? `${when(t)} ${now.getTime() >= Date.parse(t) ? running : '예정'}` : '진행 중';
+        sub = t ? `${when(t)} 시작 · 진행 중` : '진행 중';
         break;
       }
       case 'FAILED': {
@@ -538,11 +581,7 @@ export function stepViews(steps: TrafficStep[] | undefined, now: Date): StepView
         sub = '진행 안 됨';
         break;
       default:
-        sub = s.plannedAt
-          ? `${when(s.plannedAt)} ${now.getTime() > Date.parse(s.plannedAt) ? '기록 없음' : '예정'}`
-          : s.key === 'AGGREGATE'
-            ? '종료 뒤'
-            : EMPTY;
+        sub = s.plannedAt ? `${when(s.plannedAt)} 예정` : s.key === 'AGGREGATE' ? '호스팅 종료 뒤' : EMPTY;
     }
     return { key: s.key, label: STEP_LABEL[s.key] ?? s.key, state: s.state, sub };
   });
@@ -680,9 +719,10 @@ export function liveKpiGroups(kpi: TrafficKpi | null | undefined, phase: EventPh
   ];
 }
 
-const peakAt = (at: string | null) => (at ? formatTime(at) : undefined);
+/** 최대값 시각(1분 구간의 시작, 서버가 맞춘다). 최대가 0이거나 모르면 '–' */
+const peakAt = (at: string | null) => (at ? formatTime(at) : EMPTY);
 
-/** 종료된 이벤트 최종값(최대 · 평균 · 발급 총량) */
+/** 호스팅이 끝난 이벤트 최종값(최대 · 평균 · 발급 총량). 집계 구간은 입장 ~ 이벤트 종료(그래프 범위보다 좁다) */
 export function endedKpiTiles(summary: TrafficSummaryKpi | null | undefined): KpiTile[] {
   const s = summary;
   return [
@@ -709,6 +749,8 @@ export interface ChartSeriesView {
   label: string;
   role: SeriesRole;
   data: (number | null)[];
+  /** 툴팁 값 뒤 단위(예: '번호/초'). 없으면 숫자만 */
+  unit?: string;
 }
 
 export interface ChartView {
@@ -724,7 +766,7 @@ export interface ChartView {
   thresholds: { y: number; label: string }[];
   /** 그 밖의 가로 점선(Pod 최소 · 최대) */
   guides: { y: number; label: string }[];
-  /** 세로 점선(입장 · 시작 · 종료) — 범위 안의 것만 */
+  /** 세로 점선(입장 · 시작 · 재고 소진 · 이벤트 종료 · 호스팅 종료) — 범위 안의 것만 */
   markers: { x: number; label: string }[];
   yMax?: number;
   /** 값이 하나도 없음 */
@@ -753,11 +795,12 @@ const percentSeries = (values: (number | null)[]) => values.map((v) => toPercent
 
 const allEmpty = (series: ChartSeriesView[]) => series.every((s) => s.data.every((v) => !isNum(v)));
 
-/** 그래프 세로 점선 후보 */
+/** 그래프 세로 점선 후보. eventEndAt = 이벤트 종료(end_at, 마무리부터 보임), hostingEndAt = 호스팅 종료(hosting_end_at) */
 export interface ChartMarkers {
   entryAt: string | null;
   startAt: string | null;
-  endAt?: string | null;
+  eventEndAt?: string | null;
+  hostingEndAt?: string | null;
   soldOutAt?: string | null;
 }
 
@@ -769,7 +812,8 @@ function markersIn(x: number[], m: ChartMarkers): { x: number; label: string }[]
     [m.entryAt, '입장'],
     [m.startAt, '시작'],
     [m.soldOutAt, '재고 소진'],
-    [m.endAt, '종료'],
+    [m.eventEndAt, '이벤트 종료'],
+    [m.hostingEndAt, '호스팅 종료'],
   ];
   return candidates
     .filter((c): c is [string, string] => !!c[0])
@@ -798,9 +842,10 @@ export function chartViews(charts: TrafficCharts, markers: ChartMarkers, awsStal
   const t = charts.timestamps;
   const mk = (x: number[]) => markersIn(x, markers);
 
+  // 커서 = 서빙 커서(이 번호표까지 입장). 1초에 몇 번호씩 앞으로 가는지(입장시키는 속도)이지 요청 수가 아니다
   const traffic: ChartSeriesView[] = [
-    { id: 'rps', label: 'API 전체 RPS', role: 'primary', data: charts.traffic.rps },
-    { id: 'cursor', label: '커서 도달 / 초', role: 'secondary', data: charts.traffic.cursorPerSec },
+    { id: 'rps', label: 'API 전체 RPS', role: 'primary', data: charts.traffic.rps, unit: 'RPS' },
+    { id: 'cursor', label: '커서 전진 (입장 번호/초)', role: 'secondary', data: charts.traffic.cursorPerSec, unit: '번호/초' },
   ];
 
   const errorsMerged = mergeOnTime(t, [percentSeries(charts.errors.app)], [charts.errors.alb.map(([time, v]) => [time, toPercent(v)] as MonitoringPoint)]);
@@ -905,3 +950,65 @@ export function chartViews(charts: TrafficCharts, markers: ChartMarkers, awsStal
 
 /** 그래프 줄 나눔: 트래픽 · 에러 · 지연 / Pod · 진행 / Redis · RDS */
 export const CHART_ROWS = [['traffic', 'errors', 'latency'], ['pods', 'progress'], ['redis', 'rds']] as const;
+
+/** x축 눈금 사이 최소 폭(px) — 'HH:mm' 글자(약 32px) + 여백 */
+export const X_TICK_MIN_PX = 56;
+
+/** y축 폭(MetricChart와 같은 값) */
+export const Y_AXIS_WIDTH = 48;
+
+/** 폭을 아직 모를 때(첫 그림) 가정하는 그래프 폭 */
+const DEFAULT_CHART_WIDTH = 300;
+
+/** 눈금 간격 후보(분) */
+const TICK_STEP_MINUTES = [1, 2, 5, 10, 15, 30, 60, 120, 180, 360, 720, 1440];
+
+const KST_OFFSET_MS = 9 * 3600_000;
+
+/**
+ * x축 눈금(epoch 밀리초) — 그래프 폭에 맞춰 눈금 사이가 X_TICK_MIN_PX 이상인 가장 촘촘한 간격(1분 이상, 글자가 'HH:mm'),
+ * KST 정각 단위로 맞춘다. 3칸 줄(트래픽 · 에러 · 지연)은 좁아 눈금 수를 고정(4)하면 짧은 범위에서 1분 눈금이 겹쳤다('09:4509:46…', 2026-10-28)
+ */
+export function timeTicks(from: number, to: number, width: number): number[] {
+  if (!Number.isFinite(from) || !Number.isFinite(to)) return [];
+  if (to <= from) return [from];
+  const plot = Math.max(1, (width > 0 ? width : DEFAULT_CHART_WIDTH) - Y_AXIS_WIDTH);
+  const maxSteps = Math.max(1, Math.floor(plot / X_TICK_MIN_PX));
+  const minutes = TICK_STEP_MINUTES.find((m) => (to - from) / (m * 60_000) <= maxSteps) ?? TICK_STEP_MINUTES[TICK_STEP_MINUTES.length - 1];
+  const step = minutes * 60_000;
+  const ticks: number[] = [];
+  for (let t = Math.ceil((from + KST_OFFSET_MS) / step) * step - KST_OFFSET_MS; t <= to; t += step) ticks.push(t);
+  return ticks;
+}
+
+/** 세로 점선 이름 폭 추정(px, 캡션 글자): 한글 12, 그 밖 7 */
+const markerLabelWidth = (label: string) => [...label].reduce((w, c) => w + (/[가-힣]/.test(c) ? 12 : 7), 0);
+
+/** 그래프 오른쪽 여백(MetricChart margin.right) — 점선 이름은 여기까지 넘칠 수 있다 */
+const CHART_RIGHT_MARGIN = 24;
+
+/**
+ * 세로 점선 이름이 앞 이름과 겹치거나 그래프 오른쪽 끝을 넘으면 이름만 비운다(선은 그대로). 이름은 선 오른쪽에 붙는다.
+ * 이벤트 종료 · 호스팅 종료 점선이 더해져 좁은 그래프에서 '입장시작재고 소진…'처럼 겹치던 것(2026-10-28)
+ */
+export function markerLabels(markers: { x: number; label: string }[], from: number, to: number, width: number): { x: number; label: string }[] {
+  const plot = Math.max(1, (width > 0 ? width : DEFAULT_CHART_WIDTH) - Y_AXIS_WIDTH);
+  const drawing = Math.max(1, plot - CHART_RIGHT_MARGIN);
+  let free = -Infinity;
+  return [...markers]
+    .sort((a, b) => a.x - b.x)
+    .map((m) => {
+      const px = to > from ? ((m.x - from) / (to - from)) * drawing : 0;
+      const end = px + markerLabelWidth(m.label) + 8;
+      if (px < free || end > plot) return { ...m, label: '' };
+      free = end;
+      return m;
+    });
+}
+
+/** 툴팁 값: 없으면 '–', 있으면 숫자(+ 단위) */
+export function tooltipValue(v: number | null | undefined, unit?: string): string {
+  if (!isNum(v)) return EMPTY;
+  const text = v.toLocaleString('ko-KR', { maximumFractionDigits: 3 });
+  return unit ? `${text} ${unit}` : text;
+}
