@@ -74,6 +74,12 @@ final class TrafficQueries {
 	/** KPI · 상태 요약 p95 창. 이 동안 요청이 없으면 값 없음(화면 "–") */
 	static final Duration P95_WINDOW = Duration.ofMinutes(1);
 
+	/** 그래프 창(p95 · 입장 · 입장 허용)의 최소. 그래프 간격이 더 크면 간격을 쓴다({@link #rangeWindow}) */
+	static final Duration MIN_RANGE_WINDOW = Duration.ofMinutes(1);
+
+	/** 식(선택자가 아닌 것)의 기울기를 구할 때 subquery 간격 = 앱 지표 스크레이프 간격(ServiceMonitor 15초) */
+	static final String SUBQUERY_STEP = "15s";
+
 	// ---- A 상태 요약 · 드롭다운: 이벤트별 판정 재료(모든 이벤트 한 번에, event_id별) ----
 
 	static final String RPS_BY_EVENT = "sum by (event_id) (rate(http_server_requests_seconds_count{uri!~\"%s\"}[1m]))"
@@ -90,9 +96,9 @@ final class TrafficQueries {
 	/** 최근 1분 서빙 커서 변화 횟수(커서 정지 판정). 게이지는 모든 Pod가 같은 값을 내므로 max(새 Pod는 표본이 적다) */
 	static final String CURSOR_CHANGES_BY_EVENT = "max by (event_id) (changes(tetra_event_cursor[1m]))";
 
-	/** 대기 인원 ≈ 마지막 번호표 − 서빙 커서 */
+	/** 대기 인원 ≈ 번호표 끝 − 서빙 커서, 0 하한(커서는 입장 허용 위치라 번호표 끝보다 앞설 수 있다) */
 	static final String WAITING_BY_EVENT = """
-			max by (event_id) (tetra_event_ticket_last) - on(event_id) max by (event_id) (tetra_event_cursor)""";
+			clamp_min(max by (event_id) (tetra_event_ticket_last) - on(event_id) max by (event_id) (tetra_event_cursor), 0)""";
 
 	static final String STOCK_BY_EVENT = "max by (event_id) (tetra_event_stock_remaining)";
 
@@ -135,9 +141,9 @@ final class TrafficQueries {
 		return "(increase(" + bucket + "[" + w + "]) unless " + born + ") or " + born;
 	}
 
-	/** 그래프 p95 창 = max(1분, step). step이 1분보다 크면 점 사이 요청을 건너뛰지 않게 넓힌다 */
-	static Duration p95RangeWindow(Duration step) {
-		return step.compareTo(P95_WINDOW) > 0 ? step : P95_WINDOW;
+	/** 그래프 창 = max(1분, step) — p95 · 입장 · 입장 허용. step이 1분보다 크면 점 사이 요청 · 변화를 건너뛰지 않게 넓힌다 */
+	static Duration rangeWindow(Duration step) {
+		return step.compareTo(MIN_RANGE_WINDOW) > 0 ? step : MIN_RANGE_WINDOW;
 	}
 
 	/** PromQL 기간: 60초 배수는 "Nm", 아니면 "Ns" */
@@ -194,7 +200,7 @@ final class TrafficQueries {
 			return p95ByUri(P95_WINDOW);
 		}
 
-		/** uri별 p95(초), 창 window(그래프는 {@link TrafficQueries#p95RangeWindow}) */
+		/** uri별 p95(초), 창 window(그래프는 {@link TrafficQueries#rangeWindow}) */
 		String p95ByUri(Duration window) {
 			return "histogram_quantile(0.95, sum by (le, uri) ("
 					+ bucketIncrease("event_id=\"" + e + "\"," + P95_URI, window) + "))";
@@ -202,20 +208,47 @@ final class TrafficQueries {
 
 		// ---- 진행(issuance-api EventStateGauges, 모든 Pod가 같은 값 → max) ----
 
+		private String cursor() {
+			return "max(tetra_event_cursor{event_id=\"%s\"})".formatted(e);
+		}
+
+		private String ticketLast() {
+			return "max(tetra_event_ticket_last{event_id=\"%s\"})".formatted(e);
+		}
+
 		/**
-		 * 커서 전진 속도(번호/초) — 서빙 커서 tetra_event_cursor(이 번호표까지 입장)의 1분 기울기. 요청 수가 아니다.
-		 * 커서는 요청이 올 때 창마다 step씩 오르므로(issuance-api CursorStore) 대기열에서 입장시키는 속도다. 게이지라 rate가 아니라 deriv
+		 * 입장이 허용된 번호표 수 = min(서빙 커서, 번호표 끝). 커서는 입장 허용 위치라 번호표 끝보다 앞설 수 있다
+		 * (테스트 13: 번호표 끝 21, 커서 6,300, 2026-10-28). PromQL에는 두 벡터의 min이 없어 비교 필터로 작은 쪽을 남긴다 —
+		 * 둘 중 하나라도 없거나 NaN이면 결과 없음(번호표 끝만으로 채우지 않는다)
 		 */
-		String cursorPerSec() {
-			return "max(deriv(tetra_event_cursor{event_id=\"%s\"}[1m]))".formatted(e);
+		private String admitted() {
+			return "(" + cursor() + " <= " + ticketLast() + ") or (" + ticketLast() + " < " + cursor() + ")";
+		}
+
+		/**
+		 * 입장(명/초, 추정) — 입장이 허용된 번호표 수의 window 기울기. 번호표를 받은 뒤 떠난 사람도 들어간다.
+		 * 식이라 subquery로 점을 만든다({@link TrafficQueries#SUBQUERY_STEP}). 그래프 창은 {@link TrafficQueries#rangeWindow}
+		 */
+		String admittedPerSec(Duration window) {
+			return "deriv((" + admitted() + ")[" + promDuration(window) + ":" + SUBQUERY_STEP + "])";
+		}
+
+		/**
+		 * 입장 허용(커서 전진, 번호/초) — 서빙 커서 tetra_event_cursor의 window 기울기. 요청 수가 아니다.
+		 * 커서는 폴링 요청이 올 때 창마다 step씩 오르는 입장 허용 위치라(issuance-api CursorStore) 번호표 끝보다 앞설 수 있다 —
+		 * 실제 입장은 {@link #admittedPerSec}. 게이지라 rate가 아니라 deriv
+		 */
+		String cursorPerSec(Duration window) {
+			return "max(deriv(tetra_event_cursor{event_id=\"%s\"}[%s]))".formatted(e, promDuration(window));
 		}
 
 		String cursorChanges() {
 			return "max(changes(tetra_event_cursor{event_id=\"%s\"}[1m]))".formatted(e);
 		}
 
+		/** 대기 인원 ≈ 번호표 끝 − 서빙 커서, 0 하한(커서가 앞서면 대기 없음). 가공에서도 0 하한을 한 번 더 건다 */
 		String waiting() {
-			return "max(tetra_event_ticket_last{event_id=\"%s\"}) - max(tetra_event_cursor{event_id=\"%s\"})".formatted(e, e);
+			return "clamp_min(" + ticketLast() + " - " + cursor() + ", 0)";
 		}
 
 		String stock() {

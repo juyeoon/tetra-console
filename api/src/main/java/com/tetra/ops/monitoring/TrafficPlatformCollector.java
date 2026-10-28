@@ -204,7 +204,7 @@ class TrafficPlatformCollector {
 		}
 	}
 
-	/** event_id별 판정 재료. HPA는 이름(keda-hpa-issuance-<id>)에서 id를 얻는다 */
+	/** event_id별 판정 재료. HPA는 이름(keda-hpa-issuance-<id>)에서 id를 얻는다. 대기 인원 0 하한은 쿼리(clamp_min)에 있고 여기서는 안전장치 */
 	private static Map<Long, EventSignals> events(PromBatch.Results r) {
 		Map<Long, Double> rps = byEvent(r.instant("rps"), "event_id");
 		Map<Long, Double> errorRps = byEvent(r.instant("errorRps"), "event_id");

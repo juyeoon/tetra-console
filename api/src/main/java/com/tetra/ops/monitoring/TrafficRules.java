@@ -150,6 +150,11 @@ final class TrafficRules {
 		return new Judgment(MonitoringLevel.OK, "정상");
 	}
 
+	/**
+	 * 커서 1분 정지: 커서 변화 0 · 대기 인원(번호표 끝 − 커서, 0 하한) > 0 · 재고 > 0.
+	 * 대기가 있으면 커서 < 번호표 끝이라 입장 수 = 커서 — 그래서 입장 그래프 식이 아니라 커서 변화로 본다.
+	 * 커서가 번호표 끝보다 앞서 있으면(테스트 13) 대기 0이라 정지가 아니다
+	 */
 	static boolean cursorStalled(EventSignals s) {
 		return s.cursorChanges() != null && s.cursorChanges() == 0 && s.waiting() != null && s.waiting() > 0
 				&& s.stock() != null && s.stock() > 0;

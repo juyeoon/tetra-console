@@ -253,3 +253,11 @@
 - 사이드바: position fixed · inset 0이라 실제 화면에서는 끝까지 채워짐(스크롤 맨 아래에서 높이 = 뷰포트 확인). 끊겨 보인 것은 전체 페이지 캡처가 fixed 요소를 첫 화면 높이로만 그리는 탓 — 수정 없음
 - 테스트: trafficMonitoringView.test.ts 34개(5xx 기준 상수 일치, 배지 · 드롭다운 같은 상태 이름, clockText, 기록 없음), web 144개 · tsc · build 통과. API TrafficRulesTest · TrafficMonitoringApiTest 기대값 1% 기준으로(모니터링 62개 통과)
 - 파일: api/src/main/java/com/tetra/ops/monitoring/TrafficRules.java, api/src/test/java/com/tetra/ops/monitoring/{TrafficRulesTest, TrafficMonitoringApiTest}.java, ../web/src/pages/monitoring/{trafficMonitoringView.ts, trafficMonitoringView.test.ts, EventSection.tsx, TrafficMonitoringPage.tsx}
+
+## 2026-10-28 KST — OPS-05 입장 그래프(실제 입장 속도) · 대기 인원 0 하한(api · web)
+- 배경: 커서(tetra_event_cursor)는 실제 입장 수가 아니라 입장 허용 위치라 번호표 끝보다 앞설 수 있다(테스트 13: 번호표 끝 21, 커서 6,300 — 커서 전진 최대 54번호/초, 실제 입장 0.17명/초).
+- 한 일: 트래픽 그래프는 API 전체 RPS만. 새 "입장" 그래프(진행 옆, 2줄째 Pod · 진행 · 입장): 실선 입장(명/초, 추정) = deriv(((C <= T) or (T < C))[W:15s]) — min(서빙 커서, 번호표 끝)의 기울기, 점선 입장 허용(커서 전진, 번호/초) = max(deriv(tetra_event_cursor[W])). W = max(1분, 그래프 간격) — p95와 같은 TrafficQueries.rangeWindow(p95RangeWindow에서 이름 바꿈). 툴팁 아래 "입장: 번호표를 받은 뒤 떠난 사람도 포함된 추정치". 대기 인원 쿼리 clamp_min(…, 0)(이벤트 · 상태 요약), 가공의 Math.max(0)는 안전장치로 유지. 응답 charts.traffic.cursorPerSec → charts.admission.{admittedPerSec, cursorPerSec}.
+- 테스트: TrafficQueriesTest(입장 · 입장 허용 쿼리, 창 75초 · 2분 · 30초, 대기 0 하한), TrafficMonitoringApiTest(admission 응답, 종료 이벤트 간격 > 1분이면 창 = 간격), web(8개 순서 · 줄 나눔, 범례 두 줄 · 점선 · 툴팁 안내). API 316개 · web 156개 · tsc · build 통과. 헤드리스(테스트 13 Prometheus 값)로 줄 배치 · 점선 · 범례 · 툴팁 확인.
+- 파일: api/src/main/java/com/tetra/ops/monitoring/{TrafficQueries, TrafficEventCollector, TrafficEventResponse, TrafficMonitoringService, TrafficRules, TrafficPlatformCollector}.java, api/src/test/java/com/tetra/ops/monitoring/{TrafficQueriesTest, TrafficMonitoringApiTest, TrafficRulesTest}.java, ../web/src/api/types.ts, ../web/src/pages/monitoring/{trafficMonitoringView.ts, trafficMonitoringView.test.ts, MetricChart.tsx, EventSection.tsx}
+- 문서: docs/ops05/OPS-05_명세.md(D-1 · D-2 · 상태 요약 기준 · 5-1 표 · 지표 설명), 시안 서비스톤 범례 이름, CLAUDE.md §7.17
+- 남은 것: 세로선 라벨 겹침(C3), 홈 health 제외 · 이벤트 9 지연 판정은 다음 작업

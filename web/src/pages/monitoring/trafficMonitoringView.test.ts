@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 import type { MonitoringSource, TrafficCharts, TrafficEventItem, TrafficEventResponse, TrafficEventsResponse, TrafficKpi, TrafficPlatformResponse, TrafficStep } from '../../api/types.ts';
 import {
   addonsView,
+  ADMITTED_NOTE,
   barPercent,
+  CHART_ROWS,
   bytesText,
   chartRefreshText,
   chartsMissingText,
@@ -656,20 +658,25 @@ describe('그래프 변환', () => {
   const t0 = Date.parse('2026-10-26T14:50:00+09:00');
   const charts: TrafficCharts = {
     timestamps: [t0, t0 + 30_000, t0 + 60_000],
-    traffic: { rps: [100, null, 1131.24], cursorPerSec: [0, 0, 20] },
+    traffic: { rps: [100, null, 1131.24] },
     errors: { app: [0, 0.008, 0.01], alb: [[t0, 0.002], [t0 + 90_000, 0.004]], eventTarget: [[t0, 0.9]] },
     latency: { issuance: [180, 190, 200], ticket: [null, null, null] },
     pods: { ready: [6, 6, 8], pending: [0, 0, 2], min: 6, max: 12 },
     progress: { waiting: [0, 1200, 2400], stock: [5000, 5000, 3100] },
+    // 테스트 13 모양: 커서가 번호표 끝보다 앞서 입장 허용(커서 전진)은 크고 입장은 번호표 발급 속도
+    admission: { admittedPerSec: [0, 0.11, 0.17], cursorPerSec: [0, 34, 54] },
     redis: { memory: [0.3, 0.35, 0.38], cpu: [0.1, 0.2, 0.6], restarts: [0, 0, 0] },
     resources: { cpu: [1, 2, 3], memory: [1, 2, 3], cpuRequest: [4, 4, 4], memoryRequest: [8, 8, 8] },
     rds: { cpu: [[t0, 30], [t0 + 60_000, 48]], connections: [[t0, 20], [t0 + 60_000, 36]] },
   };
   const markers = { entryAt: '2026-10-26T14:00:00+09:00', startAt: '2026-10-26T14:50:30+09:00' };
 
-  test('7개 순서와 줄 나눔', () => {
+  test('8개 순서와 줄 나눔 — 입장은 진행 옆', () => {
     const views = chartViews(charts, markers, false);
-    assert.deepEqual(views.map((v) => v.key), ['traffic', 'errors', 'latency', 'pods', 'progress', 'redis', 'rds']);
+    assert.deepEqual(views.map((v) => v.key), ['traffic', 'errors', 'latency', 'pods', 'progress', 'admission', 'redis', 'rds']);
+    assert.deepEqual(CHART_ROWS, [['traffic', 'errors', 'latency'], ['pods', 'progress', 'admission'], ['redis', 'rds']]);
+    // 줄 나눔에 모든 그래프가 한 번씩
+    assert.deepEqual(CHART_ROWS.flat().slice().sort(), views.map((v) => v.key).sort());
   });
   test('에러: 앱 5xx + ALB 5xx(%), eventTarget은 쓰지 않음, AWS 점은 시각 합집합으로', () => {
     const errors = chartViews(charts, markers, true).find((v) => v.key === 'errors')!;
@@ -699,12 +706,37 @@ describe('그래프 변환', () => {
     assert.equal(rds.current, '48');
     for (const v of views) assert.ok(v.series.every((s) => s.role === 'primary' || s.role === 'secondary'));
   });
-  test('트래픽: 커서는 요청 수가 아니라 서빙 커서 전진 속도(입장 번호/초) — 범례 · 툴팁 단위', () => {
+  test('트래픽은 API 전체 RPS만', () => {
     const traffic = chartViews(charts, markers, false)[0];
-    assert.deepEqual(traffic.series.map((s) => [s.label, s.unit]), [
-      ['API 전체 RPS', 'RPS'],
-      ['커서 전진 (입장 번호/초)', '번호/초'],
+    assert.deepEqual(traffic.series.map((s) => [s.label, s.unit]), [['API 전체 RPS', 'RPS']]);
+    assert.equal(traffic.tooltipNote, undefined);
+  });
+  test('입장: 실선 입장(명/초, 추정) · 점선 입장 허용(커서 전진) — 범례 두 줄, 툴팁 단위 · 추정 안내', () => {
+    const views = chartViews(charts, { ...markers, eventEndAt: '2026-10-26T14:50:45+09:00' }, false);
+    const admission = views.find((v) => v.key === 'admission')!;
+    assert.equal(admission.title, '입장');
+    assert.deepEqual(admission.series.map((s) => [s.label, s.unit, s.role, s.dashed ?? false]), [
+      ['입장 (명/초, 추정)', '명/초', 'primary', false],
+      ['입장 허용 (커서 전진, 번호/초)', '번호/초', 'secondary', true],
     ]);
+    assert.deepEqual(admission.series[0].data, [0, 0.11, 0.17]);
+    assert.deepEqual(admission.series[1].data, [0, 34, 54]);
+    assert.equal(admission.tooltipNote, ADMITTED_NOTE);
+    assert.equal(ADMITTED_NOTE, '입장: 번호표를 받은 뒤 떠난 사람도 포함된 추정치');
+    assert.deepEqual([admission.current, admission.currentUnit], ['0.2', '명/초']);
+    // 세로 점선 · x축은 다른 Prometheus 그래프와 같은 규칙(같은 격자 · 같은 점선)
+    const progress = views.find((v) => v.key === 'progress')!;
+    assert.deepEqual(admission.x, progress.x);
+    assert.deepEqual(admission.markers, progress.markers);
+    assert.deepEqual(admission.markers.map((m) => m.label), ['시작', '이벤트 종료']);
+    assert.equal(admission.empty, false);
+    assert.equal(chartViews({ ...charts, admission: { admittedPerSec: [null, null, null], cursorPerSec: [null, null, null] } }, markers, false).find((v) => v.key === 'admission')!.empty, true);
+    // 다른 그래프에는 점선 시리즈 · 툴팁 안내가 없다
+    for (const v of views.filter((x) => x.key !== 'admission')) {
+      assert.ok(v.series.every((s) => !s.dashed), v.key);
+      assert.equal(v.tooltipNote, undefined, v.key);
+    }
+    assert.equal(tooltipValue(0.17, '명/초'), '0.17 명/초');
     assert.equal(tooltipValue(0.5, '번호/초'), '0.5 번호/초');
     assert.equal(tooltipValue(1131.24, 'RPS'), '1,131.24 RPS');
     assert.equal(tooltipValue(null, 'RPS'), EMPTY);
