@@ -591,14 +591,20 @@ export interface TrafficRange {
 /** Prometheus 값은 timestamps와 같은 길이 배열, AWS 값(errors.alb · eventTarget · rds)은 점 목록 */
 export interface TrafficCharts {
   timestamps: number[];
-  /** rps = 초당 요청(health 제외), cursorPerSec = 서빙 커서 전진 속도(입장 번호/초 — 요청 수 아님) */
-  traffic: { rps: (number | null)[]; cursorPerSec: (number | null)[] };
+  /** rps = 초당 요청(health 제외) */
+  traffic: { rps: (number | null)[] };
   /** 0~1. eventTarget은 화면에서 쓰지 않음(참고용) */
   errors: { app: (number | null)[]; alb: MonitoringPoint[]; eventTarget: MonitoringPoint[] };
   /** ms */
   latency: { issuance: (number | null)[]; ticket: (number | null)[] };
   pods: { ready: (number | null)[]; pending: (number | null)[]; min: number | null; max: number | null };
+  /** waiting = 번호표 끝 − 서빙 커서(0 하한) */
   progress: { waiting: (number | null)[]; stock: (number | null)[] };
+  /**
+   * 입장 그래프(요청 수 아님). admittedPerSec = 입장(명/초, 추정) — min(서빙 커서, 번호표 끝)의 기울기, 번호표를 받은 뒤 떠난 사람도 포함.
+   * cursorPerSec = 입장 허용(커서 전진, 번호/초) — 번호표 끝보다 앞설 수 있다
+   */
+  admission: { admittedPerSec: (number | null)[]; cursorPerSec: (number | null)[] };
   /** 0~1 */
   redis: { memory: (number | null)[]; cpu: (number | null)[]; restarts: (number | null)[] };
   resources: { cpu: (number | null)[]; memory: (number | null)[]; cpuRequest: (number | null)[]; memoryRequest: (number | null)[] };

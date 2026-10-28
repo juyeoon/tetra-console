@@ -111,11 +111,11 @@ public record TrafficEventResponse(MonitoringSource prometheus,
 	 * AWS 값(errors.alb · errors.eventTarget · rds)은 60초(긴 범위는 더 큰) 간격이라 [epoch 밀리초, 값] 점 목록.
 	 */
 	public record Charts(List<Long> timestamps, Traffic traffic, Errors errors, Latency latency, Pods pods,
-			Progress progress, Redis redis, Resources resources, Rds rds) {
+			Progress progress, Admission admission, Redis redis, Resources resources, Rds rds) {
 	}
 
-	/** rps = API 초당 요청(health · 액추에이터 제외), cursorPerSec = 서빙 커서 전진 속도(번호/초, 요청 수 아님) */
-	public record Traffic(List<Double> rps, List<Double> cursorPerSec) {
+	/** rps = API 초당 요청(health · 액추에이터 제외) */
+	public record Traffic(List<Double> rps) {
 	}
 
 	/**
@@ -135,7 +135,16 @@ public record TrafficEventResponse(MonitoringSource prometheus,
 	public record Pods(List<Double> ready, List<Double> pending, Integer min, Integer max) {
 	}
 
+	/** waiting = 번호표 끝 − 서빙 커서(0 하한), stock = 남은 재고 */
 	public record Progress(List<Double> waiting, List<Double> stock) {
+	}
+
+	/**
+	 * 입장 그래프. admittedPerSec = 입장(명/초, 추정) — min(서빙 커서, 번호표 끝)의 기울기, 번호표를 받은 뒤 떠난 사람도 포함.
+	 * cursorPerSec = 입장 허용(커서 전진, 번호/초) — 서빙 커서의 기울기, 번호표 끝보다 앞설 수 있다. 둘 다 요청 수가 아니다.
+	 * 창은 max(1분, stepSeconds)
+	 */
+	public record Admission(List<Double> admittedPerSec, List<Double> cursorPerSec) {
 	}
 
 	/** memory · cpu 0~1. restarts = 재시작 누적(그래프에는 안 그림, 종료 최종값용) */

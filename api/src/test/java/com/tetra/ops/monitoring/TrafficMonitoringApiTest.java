@@ -24,6 +24,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -519,6 +520,9 @@ class TrafficMonitoringApiTest extends IntegrationTest {
 						[{"metric":{"uri":"/api/issuance/events/{eventId}/coupons/claim"},"value":[1,"0.18"]},
 						 {"metric":{"uri":"/api/issuance/events/{eventId}/ticket"},"value":[1,"0.12"]}]""");
 		both(q.cursorChanges(), "3");
+		// 15초 간격 그래프라 입장 · 입장 허용 창은 1분
+		both(q.admittedPerSec(TrafficQueries.MIN_RANGE_WINDOW), "0.17");
+		both(q.cursorPerSec(TrafficQueries.MIN_RANGE_WINDOW), "54");
 		both(q.waiting(), "2400");
 		both(q.stock(), "3100");
 		both(q.apiReady(), "8");
@@ -591,6 +595,10 @@ class TrafficMonitoringApiTest extends IntegrationTest {
 			// .andExpect(jsonPath("$.range.stepSeconds").value(30))
 			.andExpect(jsonPath("$.range.stepSeconds").value(15)) // TEST-LEAD
 			.andExpect(jsonPath("$.charts.traffic.rps[0]").value(1131.24))
+			// 트래픽 그래프는 RPS만, 입장 · 입장 허용은 입장 그래프
+			.andExpect(jsonPath("$.charts.traffic.cursorPerSec").doesNotExist())
+			.andExpect(jsonPath("$.charts.admission.admittedPerSec[0]").value(0.17))
+			.andExpect(jsonPath("$.charts.admission.cursorPerSec[0]").value(54.0))
 			.andExpect(jsonPath("$.charts.errors.app[0]").value(0.012))
 			.andExpect(jsonPath("$.charts.latency.issuance[0]").value(180.0))
 			.andExpect(jsonPath("$.charts.latency.ticket").value(everyItem(nullValue())))
@@ -676,6 +684,15 @@ class TrafficMonitoringApiTest extends IntegrationTest {
 	@Test
 	void endedEventSummary() throws Exception {
 		TrafficQueries.EventQueries q = TrafficQueries.forEvent(A, 7104);
+		// 전체 구간(입장 −10분 ~ 호스팅 종료 +10분, 5시간 넘음 ÷ 300점)은 간격이 1분보다 크다 → p95 · 입장 · 입장 허용 창 = 간격
+		LocalDateTime start = now.minusDays(2);
+		Duration step = TrafficWindow.step(
+				Duration.between(EntryOpen.at(start).minusMinutes(10), start.plusHours(5).plusMinutes(10)),
+				Duration.ofSeconds(15));
+		assertThat(step).isGreaterThan(Duration.ofMinutes(1));
+		assertThat(TrafficQueries.rangeWindow(step)).isEqualTo(step);
+		both(q.admittedPerSec(step), "0.17");
+		both(q.cursorPerSec(step), "54");
 		both(TrafficQueries.KUBE_STATE_METRICS_UP, "3");
 		// 0번 점(입장 −10분)은 입장 전 웜업 — 최종값에 넣지 않는다
 		prometheus.respond(q.rps(), r -> matrix(r, "{}", i -> i == 10 ? "1820" : i == 0 ? "99999" : "100"));
@@ -713,7 +730,12 @@ class TrafficMonitoringApiTest extends IntegrationTest {
 			// TEST-LEAD: 서비스 값 70(입장 −60 · −10)
 			// .andExpect(jsonPath("$.range.from").value(iso(now.minusDays(2).minusMinutes(70))))
 			.andExpect(jsonPath("$.range.from").value(iso(now.minusDays(2).minusMinutes(15)))) // TEST-LEAD
-			.andExpect(jsonPath("$.range.to").value(iso(now.minusDays(2).plusHours(5).plusMinutes(10))));
+			.andExpect(jsonPath("$.range.to").value(iso(now.minusDays(2).plusHours(5).plusMinutes(10))))
+			.andExpect(jsonPath("$.range.stepSeconds").value((int) step.toSeconds()))
+			.andExpect(jsonPath("$.charts.admission.admittedPerSec[0]").value(0.17))
+			.andExpect(jsonPath("$.charts.admission.cursorPerSec[0]").value(54.0));
+		assertThat(prometheus.requests()).extracting(FakePrometheus.Request::query)
+			.contains(q.admittedPerSec(step), q.cursorPerSec(step), q.p95ByUri(step));
 		mvc.perform(get("/api/ops/monitoring/events/7104").param("range", "start").cookie(operatorCookie()))
 			.andExpect(jsonPath("$.range.key").value("start"))
 			.andExpect(jsonPath("$.range.stepSeconds").value(15))

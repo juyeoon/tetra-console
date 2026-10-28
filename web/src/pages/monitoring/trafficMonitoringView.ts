@@ -739,7 +739,7 @@ export function endedKpiTiles(summary: TrafficSummaryKpi | null | undefined): Kp
   ];
 }
 
-// ---------------------------------------------------------------- D-2 그래프 7개
+// ---------------------------------------------------------------- D-2 그래프 8개
 
 /** 주 지표 남색(primary), 보조 지표 연보라(secondary). 이벤트 그래프에는 빨강을 쓰지 않는다(Pending도 보조색) */
 export type SeriesRole = 'primary' | 'secondary';
@@ -751,6 +751,8 @@ export interface ChartSeriesView {
   data: (number | null)[];
   /** 툴팁 값 뒤 단위(예: '번호/초'). 없으면 숫자만 */
   unit?: string;
+  /** 점선(보조선) — 그래프 선과 범례 모두 */
+  dashed?: boolean;
 }
 
 export interface ChartView {
@@ -773,6 +775,8 @@ export interface ChartView {
   empty: boolean;
   /** AWS 값 지연(ALB · RDS 그래프만) */
   delayed: boolean;
+  /** 툴팁 아래 안내 한 줄(입장 그래프의 추정 안내). 없으면 기본 툴팁 */
+  tooltipNote?: string;
 }
 
 /** Prometheus 격자 + AWS 점(60초)을 시각 합집합 하나로 맞춘다(빈 자리는 null, 그래프는 선을 잇는다) */
@@ -834,18 +838,23 @@ export function yMaxFor(series: ChartSeriesView[], lines: { y: number }[]): numb
 
 const numText = (v: number | null, digits = 0) => (isNum(v) ? v.toLocaleString('ko-KR', { maximumFractionDigits: digits }) : EMPTY);
 
+/** 입장 그래프 툴팁 안내 — 입장(명/초)은 입장이 허용된 번호표 수의 기울기라 떠난 사람도 들어간다 */
+export const ADMITTED_NOTE = '입장: 번호표를 받은 뒤 떠난 사람도 포함된 추정치';
+
 /**
- * 그래프 7개(3줄: 트래픽 · 에러 · 지연 / Pod · 진행 / Redis · RDS). 에러는 앱 5xx(이 이벤트) + ALB 5xx(전체 이벤트 합) —
+ * 그래프 8개(3줄: 트래픽 · 에러 · 지연 / Pod · 진행 · 입장 / Redis · RDS). 에러는 앱 5xx(이 이벤트) + ALB 5xx(전체 이벤트 합) —
  * errors.eventTarget은 쓰지 않는다. 비율은 %로 바꿔 그린다.
  */
 export function chartViews(charts: TrafficCharts, markers: ChartMarkers, awsStale: boolean): ChartView[] {
   const t = charts.timestamps;
   const mk = (x: number[]) => markersIn(x, markers);
 
-  // 커서 = 서빙 커서(이 번호표까지 입장). 1초에 몇 번호씩 앞으로 가는지(입장시키는 속도)이지 요청 수가 아니다
-  const traffic: ChartSeriesView[] = [
-    { id: 'rps', label: 'API 전체 RPS', role: 'primary', data: charts.traffic.rps, unit: 'RPS' },
-    { id: 'cursor', label: '커서 전진 (입장 번호/초)', role: 'secondary', data: charts.traffic.cursorPerSec, unit: '번호/초' },
+  const traffic: ChartSeriesView[] = [{ id: 'rps', label: 'API 전체 RPS', role: 'primary', data: charts.traffic.rps, unit: 'RPS' }];
+
+  // 둘 다 요청 수가 아니다. 입장 = min(서빙 커서, 번호표 끝)의 기울기(실선), 입장 허용 = 서빙 커서 전진(점선, 번호표 끝보다 앞설 수 있음)
+  const admission: ChartSeriesView[] = [
+    { id: 'admitted', label: '입장 (명/초, 추정)', role: 'primary', data: charts.admission.admittedPerSec, unit: '명/초' },
+    { id: 'cursor', label: '입장 허용 (커서 전진, 번호/초)', role: 'secondary', data: charts.admission.cursorPerSec, unit: '번호/초', dashed: true },
   ];
 
   const errorsMerged = mergeOnTime(t, [percentSeries(charts.errors.app)], [charts.errors.alb.map(([time, v]) => [time, toPercent(v)] as MonitoringPoint)]);
@@ -924,6 +933,16 @@ export function chartViews(charts: TrafficCharts, markers: ChartMarkers, awsStal
     view({ key: 'pods', title: 'Pod', unit: '개수', current: `${numText(readyNow)} / ${numText(charts.pods.max)}`, currentUnit: '', x: t, series: pods, guides }),
     view({ key: 'progress', title: '진행', unit: '명 · 개', current: numText(lastValue(charts.progress.waiting)), currentUnit: '명 대기', x: t, series: progress }),
     view({
+      key: 'admission',
+      title: '입장',
+      unit: '명/초 · 번호/초',
+      current: numText(lastValue(charts.admission.admittedPerSec), 1),
+      currentUnit: '명/초',
+      x: t,
+      series: admission,
+      tooltipNote: ADMITTED_NOTE,
+    }),
+    view({
       key: 'redis',
       title: 'Redis',
       unit: '메모리 % · CPU %',
@@ -948,8 +967,8 @@ export function chartViews(charts: TrafficCharts, markers: ChartMarkers, awsStal
   ];
 }
 
-/** 그래프 줄 나눔: 트래픽 · 에러 · 지연 / Pod · 진행 / Redis · RDS */
-export const CHART_ROWS = [['traffic', 'errors', 'latency'], ['pods', 'progress'], ['redis', 'rds']] as const;
+/** 그래프 줄 나눔: 트래픽 · 에러 · 지연 / Pod · 진행 · 입장 / Redis · RDS */
+export const CHART_ROWS = [['traffic', 'errors', 'latency'], ['pods', 'progress', 'admission'], ['redis', 'rds']] as const;
 
 /** x축 눈금 사이 최소 폭(px) — 'HH:mm' 글자(약 32px) + 여백 */
 export const X_TICK_MIN_PX = 56;

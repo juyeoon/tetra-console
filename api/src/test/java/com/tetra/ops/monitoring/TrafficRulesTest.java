@@ -69,6 +69,7 @@ class TrafficRulesTest {
 		EventSignals stalled = new EventSignals(1000.0, 0.0, 0.1, 0.0, 100.0, 50.0, 1.0, 1.0, 6, 12);
 		assertThat(event(stalled)).isEqualTo(new Judgment(MonitoringLevel.DANGER, "커서 1분 정지"));
 		// 시작 전에는 커서가 안 움직이는 게 정상, 대기 · 재고가 없으면 정지가 아님
+		// (커서가 번호표 끝보다 앞서면 대기 0 — 테스트 13: 번호표 끝 21, 커서 6,300)
 		assertThat(TrafficRules.event(stalled, false).level()).isEqualTo(MonitoringLevel.OK);
 		assertThat(event(new EventSignals(1000.0, 0.0, 0.1, 0.0, 0.0, 50.0, 1.0, 1.0, 6, 12)).level())
 			.isEqualTo(MonitoringLevel.OK);

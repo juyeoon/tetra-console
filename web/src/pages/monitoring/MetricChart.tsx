@@ -1,7 +1,8 @@
-import { useLayoutEffect, useRef, useState } from 'react';
+import { createContext, useContext, useLayoutEffect, useRef, useState } from 'react';
 import { Box, Stack, Typography } from '@mui/material';
 import { LineChart } from '@mui/x-charts/LineChart';
 import { ChartsReferenceLine } from '@mui/x-charts/ChartsReferenceLine';
+import { ChartsAxisTooltipContent, ChartsTooltipContainer, useAxesTooltip, type ChartsTooltipProps } from '@mui/x-charts/ChartsTooltip';
 import StatusChip from '@/components/common/StatusChip';
 import { chartColors, font, line, radius, text, tones } from '@/theme/theme';
 import { formatClock, formatClockMinute } from '@/utils/datetime';
@@ -26,8 +27,37 @@ function LegendItem({ label, color, dashed }: { label: string; color: string; da
   );
 }
 
+/** 점선 시리즈(보조선)의 선 모양 — 기준선(5 4) · 세로 점선(3 3)보다 길게 */
+const SERIES_DASH = '6 4';
+
+/** 툴팁 아래 안내(ChartView.tooltipNote). 툴팁은 Portal에 그려지지만 context는 그대로 이어진다 */
+const TooltipNoteContext = createContext<string | undefined>(undefined);
+
+/** 기본 축 툴팁(머리 시각 · 값 표) + 아래 안내 한 줄. 바탕 · 테두리는 기본 툴팁과 같게 둘러싼다 */
+function NoteTooltipContent() {
+  const note = useContext(TooltipNoteContext);
+  const data = useAxesTooltip();
+  if (data === null) return null;
+  return (
+    <Box sx={{ bgcolor: 'background.paper', color: 'text.primary', border: 1, borderColor: 'divider', borderRadius: 1 }}>
+      <ChartsAxisTooltipContent sx={{ border: 'none', bgcolor: 'transparent' }} />
+      <Typography variant="caption" component="p" sx={{ px: 1.5, pb: 1, maxWidth: 320, wordBreak: 'keep-all', color: text.tertiary }}>
+        {note}
+      </Typography>
+    </Box>
+  );
+}
+
+function NoteTooltip(props: ChartsTooltipProps) {
+  return (
+    <ChartsTooltipContainer {...props}>
+      <NoteTooltipContent />
+    </ChartsTooltipContainer>
+  );
+}
+
 type MetricChartProps = Pick<ChartView, 'title' | 'unit' | 'x' | 'series' | 'thresholds' | 'guides' | 'markers' | 'empty' | 'delayed'> &
-  Partial<Pick<ChartView, 'current' | 'currentUnit' | 'yMax'>> & { height?: number };
+  Partial<Pick<ChartView, 'current' | 'currentUnit' | 'yMax' | 'tooltipNote'>> & { height?: number };
 
 /** 요소 폭(px). 크기가 바뀌면 다시 잰다 — x축 눈금 수를 폭에 맞추는 데 쓴다 */
 function useWidth<T extends HTMLElement>() {
@@ -48,7 +78,7 @@ function useWidth<T extends HTMLElement>() {
 /**
  * 머리글(제목 · 단위 · 오른쪽 현재 값) + 선 그래프(축 눈금, 기준 점선, 입장 · 시작 세로 점선) + 범례.
  * x축 눈금은 그래프 폭에 맞춰 직접 정한다(timeTicks — 좁은 3칸 줄에서 겹치지 않게), 축은 데이터 범위 그대로(strict).
- * 툴팁 머리는 'HH:mm:ss'(15초 점), 값이 없으면 '–'
+ * 툴팁 머리는 'HH:mm:ss'(15초 점), 값이 없으면 '–'. tooltipNote가 있으면 툴팁 아래에 안내 한 줄, dashed 시리즈는 점선
  */
 export default function MetricChart({
   title,
@@ -63,6 +93,7 @@ export default function MetricChart({
   yMax,
   empty,
   delayed,
+  tooltipNote,
   height = 180,
 }: MetricChartProps) {
   const [plotRef, width] = useWidth<HTMLDivElement>();
@@ -98,62 +129,67 @@ export default function MetricChart({
             </Typography>
           </Stack>
         ) : (
-          <LineChart
-            height={height}
-            hideLegend
-            skipAnimation
-            grid={{ horizontal: true }}
-            margin={{ top: 12, right: 24, bottom: 0, left: 0 }}
-            xAxis={[
-              {
-                scaleType: 'time',
-                data: x,
-                domainLimit: 'strict',
-                tickInterval: timeTicks(x[0], x[x.length - 1], width),
-                valueFormatter: (v: number, context) => (context.location === 'tick' ? formatClockMinute(v) : formatClock(v)),
-              },
-            ]}
-            yAxis={[{ width: Y_AXIS_WIDTH, min: 0, max: yMax, tickNumber: 3, valueFormatter: (v: number) => v.toLocaleString('ko-KR') }]}
-            series={series.map((s) => ({
-              id: s.id,
-              data: s.data,
-              label: s.label,
-              color: ROLE_COLOR[s.role],
-              showMark: false,
-              connectNulls: true,
-              curve: 'monotoneX' as const,
-              valueFormatter: (v: number | null) => tooltipValue(v, s.unit),
-            }))}
-            sx={{
-              '& .MuiChartsAxis-line, & .MuiChartsAxis-tick': { stroke: 'transparent !important' },
-              '& .MuiChartsAxis-tickLabel': { fill: `${text.tertiary} !important`, fontSize: `${font.size.caption} !important` },
-              '& .MuiChartsGrid-line': { stroke: line.soft },
-              '& .MuiLineElement-root': { strokeWidth: 2 },
-            }}
-          >
-            {thresholds.map((t) => (
-              <ChartsReferenceLine key={`t-${t.y}`} y={t.y} lineStyle={{ stroke: THRESHOLD_COLOR, strokeDasharray: '5 4', strokeWidth: 1.5 }} />
-            ))}
-            {guides.map((g) => (
-              <ChartsReferenceLine key={`g-${g.label}`} y={g.y} lineStyle={{ stroke: GUIDE_COLOR, strokeDasharray: '4 4', strokeWidth: 1 }} />
-            ))}
-            {markerLabels(markers, x[0], x[x.length - 1], width).map((m) => (
-              <ChartsReferenceLine
-                key={`m-${m.x}`}
-                x={m.x}
-                label={m.label || undefined}
-                labelAlign="start"
-                lineStyle={{ stroke: GUIDE_COLOR, strokeDasharray: '3 3', strokeWidth: 1 }}
-                labelStyle={{ fill: text.tertiary, fontSize: font.size.caption }}
-              />
-            ))}
-          </LineChart>
+          <TooltipNoteContext.Provider value={tooltipNote}>
+            <LineChart
+              height={height}
+              hideLegend
+              skipAnimation
+              slots={tooltipNote ? { tooltip: NoteTooltip } : undefined}
+              grid={{ horizontal: true }}
+              margin={{ top: 12, right: 24, bottom: 0, left: 0 }}
+              xAxis={[
+                {
+                  scaleType: 'time',
+                  data: x,
+                  domainLimit: 'strict',
+                  tickInterval: timeTicks(x[0], x[x.length - 1], width),
+                  valueFormatter: (v: number, context) => (context.location === 'tick' ? formatClockMinute(v) : formatClock(v)),
+                },
+              ]}
+              yAxis={[{ width: Y_AXIS_WIDTH, min: 0, max: yMax, tickNumber: 3, valueFormatter: (v: number) => v.toLocaleString('ko-KR') }]}
+              series={series.map((s) => ({
+                id: s.id,
+                data: s.data,
+                label: s.label,
+                color: ROLE_COLOR[s.role],
+                showMark: false,
+                connectNulls: true,
+                curve: 'monotoneX' as const,
+                valueFormatter: (v: number | null) => tooltipValue(v, s.unit),
+              }))}
+              sx={{
+                '& .MuiChartsAxis-line, & .MuiChartsAxis-tick': { stroke: 'transparent !important' },
+                '& .MuiChartsAxis-tickLabel': { fill: `${text.tertiary} !important`, fontSize: `${font.size.caption} !important` },
+                '& .MuiChartsGrid-line': { stroke: line.soft },
+                '& .MuiLineElement-root': { strokeWidth: 2 },
+                // 보조선: x-charts가 선마다 붙이는 MuiLineElement-series-<id>
+                ...Object.fromEntries(series.filter((s) => s.dashed).map((s) => [`& .MuiLineElement-series-${s.id}`, { strokeDasharray: SERIES_DASH }])),
+              }}
+            >
+              {thresholds.map((t) => (
+                <ChartsReferenceLine key={`t-${t.y}`} y={t.y} lineStyle={{ stroke: THRESHOLD_COLOR, strokeDasharray: '5 4', strokeWidth: 1.5 }} />
+              ))}
+              {guides.map((g) => (
+                <ChartsReferenceLine key={`g-${g.label}`} y={g.y} lineStyle={{ stroke: GUIDE_COLOR, strokeDasharray: '4 4', strokeWidth: 1 }} />
+              ))}
+              {markerLabels(markers, x[0], x[x.length - 1], width).map((m) => (
+                <ChartsReferenceLine
+                  key={`m-${m.x}`}
+                  x={m.x}
+                  label={m.label || undefined}
+                  labelAlign="start"
+                  lineStyle={{ stroke: GUIDE_COLOR, strokeDasharray: '3 3', strokeWidth: 1 }}
+                  labelStyle={{ fill: text.tertiary, fontSize: font.size.caption }}
+                />
+              ))}
+            </LineChart>
+          </TooltipNoteContext.Provider>
         )}
       </Box>
 
       <Stack direction="row" flexWrap="wrap" columnGap={1.5} rowGap={0.5} sx={{ mt: 1 }}>
         {series.map((s) => (
-          <LegendItem key={s.id} label={s.label} color={ROLE_COLOR[s.role]} />
+          <LegendItem key={s.id} label={s.label} color={ROLE_COLOR[s.role]} dashed={s.dashed} />
         ))}
         {thresholds.map((t) => (
           <LegendItem key={`t-${t.label}`} label={t.label} color={THRESHOLD_COLOR} dashed />

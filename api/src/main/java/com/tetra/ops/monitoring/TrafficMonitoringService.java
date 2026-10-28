@@ -520,7 +520,7 @@ public class TrafficMonitoringService {
 	private static Charts charts(EventPhase phase, PromSeries s, EventAws aws) {
 		boolean ended = phase.closed();
 		return new Charts(s.timestamps(),
-				new TrafficEventResponse.Traffic(s.get(TrafficEventCollector.RPS), s.get(TrafficEventCollector.CURSOR)),
+				new TrafficEventResponse.Traffic(s.get(TrafficEventCollector.RPS)),
 				new TrafficEventResponse.Errors(s.get(TrafficEventCollector.ERROR_RATIO), aws.albErrorRatio(),
 						aws.eventTargetErrorRatio()),
 				new TrafficEventResponse.Latency(s.get(TrafficEventCollector.P95_ISSUANCE),
@@ -529,6 +529,8 @@ public class TrafficMonitoringService {
 						PromValues.toInt(pick(s.get(TrafficEventCollector.HPA_MIN), ended)),
 						PromValues.toInt(pick(s.get(TrafficEventCollector.HPA_MAX), ended))),
 				new TrafficEventResponse.Progress(s.get(TrafficEventCollector.WAITING), s.get(TrafficEventCollector.STOCK)),
+				new TrafficEventResponse.Admission(s.get(TrafficEventCollector.ADMITTED),
+						s.get(TrafficEventCollector.CURSOR)),
 				new TrafficEventResponse.Redis(s.get(TrafficEventCollector.REDIS_MEMORY),
 						s.get(TrafficEventCollector.REDIS_CPU), s.get(TrafficEventCollector.REDIS_RESTARTS)),
 				new TrafficEventResponse.Resources(s.get(TrafficEventCollector.CPU), s.get(TrafficEventCollector.MEMORY),

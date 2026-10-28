@@ -63,7 +63,7 @@ function Notice({ title, description, tone, action }: { title: string; descripti
   );
 }
 
-/** C · D 이벤트 구역 — 드롭다운 · 진행 단계 8개 · (상태에 따라) KPI · 그래프 7개 */
+/** C · D 이벤트 구역 — 드롭다운 · 진행 단계 8개 · (상태에 따라) KPI · 그래프 8개 */
 export default function EventSection({ options, selected, onSelect, detail, failed, listLoading, onRange, now }: EventSectionProps) {
   const status = sectionStatus(detail);
   const noEvents = !listLoading && options.length === 0;

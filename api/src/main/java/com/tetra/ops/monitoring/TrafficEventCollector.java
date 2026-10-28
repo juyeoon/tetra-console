@@ -1,6 +1,7 @@
 package com.tetra.ops.monitoring;
 
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
@@ -51,6 +52,8 @@ class TrafficEventCollector {
 	static final String P95_ISSUANCE = "p95Issuance";
 
 	static final String P95_TICKET = "p95Ticket";
+
+	static final String ADMITTED = "admittedPerSec";
 
 	static final String CURSOR = "cursorPerSec";
 
@@ -223,11 +226,14 @@ class TrafficEventCollector {
 		return v == null || v < 0 ? null : Math.round(v);
 	}
 
+	/** p95 · 입장 · 입장 허용 창은 max(1분, 그래프 간격)({@link TrafficQueries#rangeWindow}) */
 	private static void addRanges(PromBatch batch, String prefix, EventQueries q, Grid g) {
+		Duration window = TrafficQueries.rangeWindow(g.step());
 		batch.range(prefix + RPS, q.rps(), g.start(), g.end(), g.step())
 			.range(prefix + ERROR_RPS, q.errorRps(), g.start(), g.end(), g.step())
-			.range(prefix + "p95", q.p95ByUri(TrafficQueries.p95RangeWindow(g.step())), g.start(), g.end(), g.step())
-			.range(prefix + CURSOR, q.cursorPerSec(), g.start(), g.end(), g.step())
+			.range(prefix + "p95", q.p95ByUri(window), g.start(), g.end(), g.step())
+			.range(prefix + ADMITTED, q.admittedPerSec(window), g.start(), g.end(), g.step())
+			.range(prefix + CURSOR, q.cursorPerSec(window), g.start(), g.end(), g.step())
 			.range(prefix + WAITING, q.waiting(), g.start(), g.end(), g.step())
 			.range(prefix + STOCK, q.stock(), g.start(), g.end(), g.step())
 			.range(prefix + READY, q.apiReady(), g.start(), g.end(), g.step())
@@ -259,7 +265,9 @@ class TrafficEventCollector {
 		v.put(ERROR_RATIO, ratio);
 		v.put(P95_ISSUANCE, ms(PromValues.onGrid(r.range(prefix + "p95"), "uri", "claim", times)));
 		v.put(P95_TICKET, ms(PromValues.onGrid(r.range(prefix + "p95"), "uri", "ticket", times)));
+		v.put(ADMITTED, round(PromValues.onGrid(r.range(prefix + ADMITTED), times, false), 2));
 		v.put(CURSOR, round(PromValues.onGrid(r.range(prefix + CURSOR), times, false), 2));
+		// 쿼리가 이미 0 하한(clamp_min) — 여기 0 하한은 안전장치
 		v.put(WAITING, PromValues.map(PromValues.onGrid(r.range(prefix + WAITING), times, false),
 				x -> Math.max(0, Math.round(x))));
 		v.put(STOCK, PromValues.map(PromValues.onGrid(r.range(prefix + STOCK), times, false), Math::round));
@@ -307,6 +315,7 @@ class TrafficEventCollector {
 			}
 		}
 		Long p95 = larger(p95Issuance, p95Ticket);
+		// 쿼리가 이미 0 하한(clamp_min) — 아래 0 하한은 안전장치
 		Double waiting = live ? PromValues.single(r.instant("waiting")) : null;
 		Double used = PromValues.single(r.instant("redisUsed"));
 		Double max = PromValues.single(r.instant("redisMax"));

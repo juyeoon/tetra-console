@@ -22,7 +22,7 @@ class TrafficQueriesTest {
 		assertThat(q.hpaMax()).isEqualTo("max(kube_horizontalpodautoscaler_spec_max_replicas"
 				+ "{namespace=\"tenant-aaaaaaaaaaaa\",horizontalpodautoscaler=\"keda-hpa-issuance-7\"})");
 		assertThat(q.waiting()).isEqualTo(
-				"max(tetra_event_ticket_last{event_id=\"7\"}) - max(tetra_event_cursor{event_id=\"7\"})");
+				"clamp_min(max(tetra_event_ticket_last{event_id=\"7\"}) - max(tetra_event_cursor{event_id=\"7\"}), 0)");
 		assertThat(q.prepareSeconds()).contains("label_tetra_io_component=~\"api|redis\"");
 
 		for (String bad : List.of("aaaaaaaaaaa", "AAAAAAAAAAAA", "aaaaaaaaaaa\"", "aaaa|.*|aaaa")) {
@@ -64,11 +64,35 @@ class TrafficQueriesTest {
 			.contains("unless http_server_requests_seconds_bucket{uri=~");
 
 		// 그래프 창 = max(1분, step): step이 1분보다 크면 점 사이 요청을 건너뛰지 않게 넓힌다
-		assertThat(TrafficQueries.p95RangeWindow(Duration.ofSeconds(15))).isEqualTo(Duration.ofMinutes(1));
-		assertThat(TrafficQueries.p95RangeWindow(Duration.ofSeconds(75))).isEqualTo(Duration.ofSeconds(75));
+		assertThat(TrafficQueries.rangeWindow(Duration.ofSeconds(15))).isEqualTo(Duration.ofMinutes(1));
+		assertThat(TrafficQueries.rangeWindow(Duration.ofSeconds(75))).isEqualTo(Duration.ofSeconds(75));
 		assertThat(TrafficQueries.forEvent("aaaaaaaaaaaa", 7).p95ByUri(Duration.ofSeconds(75)))
 			.contains("[75s]) unless").contains(" offset 75s)");
 		assertThat(TrafficQueries.forEvent("aaaaaaaaaaaa", 7).p95ByUri(Duration.ofMinutes(2))).contains("[2m]) unless");
+	}
+
+	@Test
+	void admissionIsMinOfCursorAndTicketLast() {
+		// 입장 = min(커서, 번호표 끝)의 기울기. 커서는 입장 허용 위치라 번호표 끝보다 앞설 수 있다(테스트 13: 21 / 6,300)
+		TrafficQueries.EventQueries q = TrafficQueries.forEvent("aaaaaaaaaaaa", 7);
+		String c = "max(tetra_event_cursor{event_id=\"7\"})";
+		String t = "max(tetra_event_ticket_last{event_id=\"7\"})";
+		assertThat(q.admittedPerSec(Duration.ofMinutes(1)))
+			.isEqualTo("deriv(((" + c + " <= " + t + ") or (" + t + " < " + c + "))[1m:15s])");
+		// 입장 허용(커서 전진)은 지금까지의 커서 기울기 그대로
+		assertThat(q.cursorPerSec(Duration.ofMinutes(1))).isEqualTo("max(deriv(tetra_event_cursor{event_id=\"7\"}[1m]))");
+
+		// 두 선 모두 창 = max(1분, 그래프 간격): 간격 > 1분이면 간격, 그보다 작으면 1분
+		Duration step = Duration.ofSeconds(75);
+		assertThat(q.admittedPerSec(TrafficQueries.rangeWindow(step))).endsWith("))[75s:15s])");
+		assertThat(q.cursorPerSec(TrafficQueries.rangeWindow(step)))
+			.isEqualTo("max(deriv(tetra_event_cursor{event_id=\"7\"}[75s]))");
+		assertThat(q.admittedPerSec(TrafficQueries.rangeWindow(Duration.ofMinutes(2)))).endsWith("))[2m:15s])");
+		assertThat(q.cursorPerSec(TrafficQueries.rangeWindow(Duration.ofSeconds(30)))).contains("[1m]))");
+
+		// 대기 인원 0 하한(커서가 앞서면 대기 없음) — 상태 요약 판정 재료도 같은 식
+		assertThat(TrafficQueries.WAITING_BY_EVENT).isEqualTo("clamp_min(max by (event_id) (tetra_event_ticket_last)"
+				+ " - on(event_id) max by (event_id) (tetra_event_cursor), 0)");
 	}
 
 	@Test
