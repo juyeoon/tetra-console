@@ -31,6 +31,7 @@ import com.tetra.ops.monitoring.PrometheusClient.Series;
  *   → 갱신 전체 실패(마지막 값 + stale)
  * - 그 쿼리만의 오류(4xx · 읽기 시간 초과 · 형식 오류)면 그 항목만 비우고({@link Results#ok} = false, 결과 없음) WARN 한 줄
  *   (쿼리 이름과 짧은 원인만 — 쿼리 원문 · 응답 본문 없음). 나머지는 새 값. 비운 항목은 null로 다루고 판정은 UNKNOWN
+ * - 쿼리 작업 안의 예상 밖 예외(코드 버그 등, 2026-10-28)도 그 항목만 비운다. WARN에 스택 트레이스는 연속 실패의 처음 한 번만({@link FailureStreaks})
  */
 final class PromBatch {
 
@@ -44,12 +45,25 @@ final class PromBatch {
 
 	private final long deadlineNanos;
 
+	/** 로그용 범위(예: "이벤트 11번"). null이면 쿼리 이름만 */
+	private final String scope;
+
+	private final FailureStreaks streaks;
+
 	private final Map<String, Callable<Object>> tasks = new LinkedHashMap<>();
 
 	PromBatch(PrometheusClient prometheus, ExecutorService executor, long deadlineNanos) {
+		this(prometheus, executor, deadlineNanos, null, new FailureStreaks());
+	}
+
+	/** @param streaks 갱신마다 같은 것(연속 실패를 센다) */
+	PromBatch(PrometheusClient prometheus, ExecutorService executor, long deadlineNanos, String scope,
+			FailureStreaks streaks) {
 		this.prometheus = prometheus;
 		this.executor = executor;
 		this.deadlineNanos = deadlineNanos;
+		this.scope = scope;
+		this.streaks = streaks;
 	}
 
 	PromBatch instant(String name, String promql, Instant at) {
@@ -132,8 +146,10 @@ final class PromBatch {
 		Map<String, Object> values = new LinkedHashMap<>();
 		Set<String> failed = new LinkedHashSet<>();
 		for (Map.Entry<String, Future<Object>> future : futures.entrySet()) {
+			String where = scope == null ? future.getKey() : scope + " · " + future.getKey();
 			try {
 				values.put(future.getKey(), future.getValue().get(Math.max(0, remainingNanos()), TimeUnit.NANOSECONDS));
+				streaks.succeeded(where);
 			}
 			catch (TimeoutException ex) {
 				cancel(futures.values());
@@ -142,7 +158,13 @@ final class PromBatch {
 			catch (ExecutionException ex) {
 				if (ex.getCause() instanceof PrometheusException p && !p.serverFailure()) {
 					failed.add(future.getKey());
-					log.warn("Prometheus 쿼리 실패({}: {}) — 그 항목만 비웁니다", future.getKey(), p.getMessage());
+					log.warn("Prometheus 쿼리 실패({}: {}) — 그 항목만 비웁니다", where, p.getMessage());
+					continue;
+				}
+				if (ex.getCause() instanceof RuntimeException unexpected && !(unexpected instanceof PrometheusException)) {
+					failed.add(future.getKey());
+					streaks.warn(log, where, "Prometheus 쿼리 처리 실패", where + ": " + unexpected.getClass().getSimpleName(),
+							"그 항목만 비웁니다", unexpected);
 					continue;
 				}
 				cancel(futures.values());

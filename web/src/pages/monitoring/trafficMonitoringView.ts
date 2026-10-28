@@ -2,6 +2,7 @@ import type {
   EventPhase,
   MonitoringLevel,
   MonitoringPoint,
+  MonitoringSource,
   TrafficCharts,
   TrafficEventItem,
   TrafficEventResponse,
@@ -582,6 +583,17 @@ export function eventBody(event: TrafficEventResponse): EventBody {
     };
   }
   return { kind: 'metrics' };
+}
+
+/**
+ * 그래프(charts)가 없을 때 문구 — prometheus.staleReason으로 나눈다.
+ * Prometheus 자체 장애(연결 · 5xx · 시간 초과 · 미설정)면 응답 지연, 그 밖(갱신은 됐는데 그래프 가공 실패 포함)은 처리 오류.
+ * staleReason이 없는 응답(이전 서버)의 stale은 지연으로 본다
+ */
+export function chartsMissingText(prometheus: MonitoringSource | undefined): string {
+  return prometheus?.stale && prometheus.staleReason !== 'INTERNAL'
+    ? 'Prometheus 응답이 늦어 그래프를 받지 못했어요'
+    : '그래프를 만들지 못했어요';
 }
 
 // ---------------------------------------------------------------- D 범위 버튼 · KPI

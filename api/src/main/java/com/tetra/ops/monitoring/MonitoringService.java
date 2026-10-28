@@ -31,7 +31,7 @@ public class MonitoringService {
 		this.collector = collector;
 		TetraProperties.Monitoring monitoring = properties.monitoring();
 		this.cache = new RefreshCache<>("홈 모니터링 · Prometheus", monitoring.cacheTtl(), monitoring.refreshTimeout(),
-				executor, collector::collect, MonitoringOverview::asStale, collector::unavailable);
+				executor, collector::collect, (last, reason) -> last.asStale(), reason -> collector.unavailable());
 		if (!collector.configured()) {
 			log.warn("PROMETHEUS_URL이 비어 있어 홈 모니터링 카드는 값 없이(stale) 응답합니다");
 		}

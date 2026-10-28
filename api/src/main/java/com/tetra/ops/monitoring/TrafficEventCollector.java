@@ -11,7 +11,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ExecutorService;
+import java.util.function.Supplier;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import com.tetra.ops.common.time.Kst;
@@ -29,9 +32,12 @@ import com.tetra.ops.monitoring.TrafficRules.EventSignals;
  * - 진행 중: 그래프 + KPI 순간값 전부
  * - 종료: 그래프 + 전체 구간(full) 그래프(최종값 계산용, 범위가 full이면 같은 것)
  * 쿼리는 {@link PromBatch}(4개씩 병렬). Prometheus 자체 문제면 갱신 전체 실패, 쿼리 하나의 오류면 그 항목만 null.
+ * 결과 가공은 구역(그래프 · 전체 구간 · KPI · 준비 시간)마다 따로 — 한 구역에서 예외가 나면 그 구역만 null, 나머지는 응답(2026-10-28).
  */
 @Component
 class TrafficEventCollector {
+
+	private static final Logger log = LoggerFactory.getLogger(TrafficEventCollector.class);
 
 	// ---- 그래프 시리즈 이름(모두 같은 격자) ----
 
@@ -92,13 +98,19 @@ class TrafficEventCollector {
 
 	}
 
-	/** live · signals는 입장 직전 · 진행 중만 */
+	/** live · signals는 입장 직전 · 진행 중만. 가공에 실패한 구역은 null */
 	record Metrics(Instant at, PromSeries charts, PromSeries full, Live live, EventSignals signals, Long prepareSeconds) {
+	}
+
+	/** KPI 구역(순간값) */
+	private record Instants(Live live, EventSignals signals) {
 	}
 
 	private final PrometheusClient prometheus;
 
 	private final Clock clock;
+
+	private final FailureStreaks streaks = new FailureStreaks();
 
 	TrafficEventCollector(PrometheusClient prometheus, Clock clock) {
 		this.prometheus = prometheus;
@@ -107,14 +119,15 @@ class TrafficEventCollector {
 
 	Metrics collect(Request req, long deadlineNanos, ExecutorService executor) {
 		Instant now = clock.instant();
+		String scope = "이벤트 " + req.eventId() + "번";
 		EventQueries q = TrafficQueries.forEvent(req.tenantId(), req.eventId());
-		PromBatch batch = new PromBatch(prometheus, executor, deadlineNanos);
+		PromBatch batch = new PromBatch(prometheus, executor, deadlineNanos, scope, streaks);
 		batch.instant("ksm", TrafficQueries.KUBE_STATE_METRICS_UP, now);
 		Grid grid = Grid.of(req.window().from(), req.window().to(), req.window().step());
 		addRanges(batch, "c.", q, grid);
-		Grid fullGrid = null;
-		if (req.full() != null && !req.full().equals(req.window())) {
-			fullGrid = Grid.of(req.full().from(), req.full().to(), req.full().step());
+		Grid fullGrid = req.full() != null && !req.full().equals(req.window())
+				? Grid.of(req.full().from(), req.full().to(), req.full().step()) : null;
+		if (fullGrid != null) {
 			addRanges(batch, "f.", q, fullGrid);
 		}
 		boolean live = req.phase().entryOpened();
@@ -150,30 +163,49 @@ class TrafficEventCollector {
 		PromBatch.Results r = batch.execute();
 
 		boolean ksm = !r.instant("ksm").isEmpty() && PromValues.single(r.instant("ksm")) != null;
-		PromSeries charts = series(r, "c.", grid, ksm);
-		PromSeries full = fullGrid == null ? (req.full() == null ? null : charts) : series(r, "f.", fullGrid, ksm);
-		Live liveKpi = null;
-		EventSignals signals = null;
-		if (instants) {
-			liveKpi = live(r, live, ksm, req.stockTotal());
-			// 판정 재료가 하나라도 쿼리 오류면 complete = false(위험이 안 보이면 UNKNOWN). 5xx 오류면 rps도 비운다
-			boolean complete = r.allOk("ksm", "stock", "ready", "hpaMax", "redisUp", "exporterUp")
-					&& (!live || r.allOk("rps", "errorRps", "p95", "cursorChanges", "waiting"));
-			signals = new EventSignals(live && r.ok("errorRps") ? liveKpi.rps() : null,
-					live ? PromValues.single(r.instant("errorRps")) : null,
-					liveKpi.p95Ms() == null ? null : liveKpi.p95Ms() / 1000.0,
-					live ? PromValues.single(r.instant("cursorChanges")) : null,
-					liveKpi.waiting() == null ? null : liveKpi.waiting().doubleValue(),
-					liveKpi.stockRemaining() == null ? null : liveKpi.stockRemaining().doubleValue(),
-					PromValues.single(r.instant("redisUp")), PromValues.single(r.instant("exporterUp")),
-					liveKpi.podsReady(), liveKpi.podsMax(), complete);
+		PromSeries charts = section(scope, "그래프", () -> series(r, "c.", grid, ksm));
+		PromSeries full = fullGrid == null ? (req.full() == null ? null : charts)
+				: section(scope, "전체 구간", () -> series(r, "f.", fullGrid, ksm));
+		Instants kpi = instants ? section(scope, "KPI", () -> instantValues(r, live, ksm, req.stockTotal())) : null;
+		Long prepareSeconds = r.has("prepare") ? section(scope, "준비 시간", () -> prepareSeconds(r)) : null;
+		return new Metrics(now, charts, full, kpi == null ? null : kpi.live(), kpi == null ? null : kpi.signals(),
+				prepareSeconds);
+	}
+
+	/** 가공 구역 하나. 예외가 나면 그 구역만 null(WARN — 스택 트레이스는 연속 실패의 처음 한 번만) */
+	<T> T section(String scope, String name, Supplier<T> build) {
+		String where = scope + " · " + name;
+		try {
+			T value = build.get();
+			streaks.succeeded(where);
+			return value;
 		}
-		Long prepareSeconds = null;
-		if (r.has("prepare")) {
-			Double v = PromValues.single(r.instant("prepare"));
-			prepareSeconds = v == null || v < 0 ? null : Math.round(v);
+		catch (RuntimeException ex) {
+			streaks.warn(log, where, "트래픽 모니터링 · 결과 가공 실패", where + ": " + ex.getClass().getSimpleName(),
+					"그 구역만 비웁니다", ex);
+			return null;
 		}
-		return new Metrics(now, charts, full, liveKpi, signals, prepareSeconds);
+	}
+
+	private static Instants instantValues(PromBatch.Results r, boolean live, boolean ksm, Long stockTotal) {
+		Live liveKpi = live(r, live, ksm, stockTotal);
+		// 판정 재료가 하나라도 쿼리 오류면 complete = false(위험이 안 보이면 UNKNOWN). 5xx 오류면 rps도 비운다
+		boolean complete = r.allOk("ksm", "stock", "ready", "hpaMax", "redisUp", "exporterUp")
+				&& (!live || r.allOk("rps", "errorRps", "p95", "cursorChanges", "waiting"));
+		EventSignals signals = new EventSignals(live && r.ok("errorRps") ? liveKpi.rps() : null,
+				live ? PromValues.single(r.instant("errorRps")) : null,
+				liveKpi.p95Ms() == null ? null : liveKpi.p95Ms() / 1000.0,
+				live ? PromValues.single(r.instant("cursorChanges")) : null,
+				liveKpi.waiting() == null ? null : liveKpi.waiting().doubleValue(),
+				liveKpi.stockRemaining() == null ? null : liveKpi.stockRemaining().doubleValue(),
+				PromValues.single(r.instant("redisUp")), PromValues.single(r.instant("exporterUp")),
+				liveKpi.podsReady(), liveKpi.podsMax(), complete);
+		return new Instants(liveKpi, signals);
+	}
+
+	private static Long prepareSeconds(PromBatch.Results r) {
+		Double v = PromValues.single(r.instant("prepare"));
+		return v == null || v < 0 ? null : Math.round(v);
 	}
 
 	private static void addRanges(PromBatch batch, String prefix, EventQueries q, Grid g) {
@@ -227,6 +259,20 @@ class TrafficEventCollector {
 		return new PromSeries(times, v);
 	}
 
+	/**
+	 * 둘 중 큰 값. 하나만 있으면 그 값, 둘 다 없으면 null(입장 직전 · 최근 1분 요청 없음).
+	 * Long끼리만 비교한다 — 삼항식에 long(Math.max)이 섞이면 식 전체가 long이 되어 null을 풀다가 NPE(2026-10-28)
+	 */
+	static Long larger(Long a, Long b) {
+		if (a == null) {
+			return b;
+		}
+		if (b == null) {
+			return a;
+		}
+		return a >= b ? a : b;
+	}
+
 	private static Live live(PromBatch.Results r, boolean live, boolean ksm, Long stockTotal) {
 		Double rps = live ? PromValues.round(PromValues.single(r.instant("rps")), 1) : null;
 		Double errorRatio = live && r.ok("errorRps") ? PromValues.round(
@@ -245,7 +291,7 @@ class TrafficEventCollector {
 				}
 			}
 		}
-		Long p95 = p95Issuance == null ? p95Ticket : p95Ticket == null ? p95Issuance : Math.max(p95Issuance, p95Ticket);
+		Long p95 = larger(p95Issuance, p95Ticket);
 		Double waiting = live ? PromValues.single(r.instant("waiting")) : null;
 		Double used = PromValues.single(r.instant("redisUsed"));
 		Double max = PromValues.single(r.instant("redisMax"));

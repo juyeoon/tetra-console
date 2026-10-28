@@ -16,7 +16,6 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.function.UnaryOperator;
 import java.util.stream.Collectors;
 
 import org.slf4j.Logger;
@@ -32,6 +31,7 @@ import com.tetra.ops.domain.StatusType;
 import com.tetra.ops.domain.tenant.Event;
 import com.tetra.ops.domain.tenant.EventStatusLog;
 import com.tetra.ops.event.EntryOpen;
+import com.tetra.ops.monitoring.MonitoringSource.StaleReason;
 import com.tetra.ops.monitoring.TrafficAwsCollector.EventAws;
 import com.tetra.ops.monitoring.TrafficAwsCollector.PlatformAws;
 import com.tetra.ops.monitoring.TrafficCatalog.FailureItem;
@@ -77,15 +77,24 @@ public class TrafficMonitoringService {
 	static final List<String> ADDON_GROUPS = List.of("KEDA", "Karpenter", "LBC", "Prometheus", "External Secrets",
 			"ArgoCD");
 
-	/** 조회 결과 + 출처 기준 시각. asOf가 null이면 한 번도 성공 못 함 */
-	record Stamped<T>(T value, Instant asOf, boolean stale) {
+	/** 조회 결과 + 출처 기준 시각. asOf가 null이면 한 번도 성공 못 함. staleReason은 stale일 때만 */
+	record Stamped<T>(T value, Instant asOf, boolean stale, StaleReason staleReason) {
 
-		Stamped<T> asStale() {
-			return new Stamped<>(value, asOf, true);
+		static <T> Stamped<T> fresh(T value, Instant asOf) {
+			return new Stamped<>(value, asOf, false, null);
+		}
+
+		/** 값을 못 받음(갱신 실패 · 미설정) */
+		static <T> Stamped<T> unavailable(T value, StaleReason reason) {
+			return new Stamped<>(value, null, true, reason);
+		}
+
+		Stamped<T> asStale(StaleReason reason) {
+			return new Stamped<>(value, asOf, true, reason);
 		}
 
 		MonitoringSource source() {
-			return new MonitoringSource(asOf == null ? null : offset(asOf), stale);
+			return new MonitoringSource(asOf == null ? null : offset(asOf), stale, staleReason);
 		}
 
 	}
@@ -141,26 +150,30 @@ public class TrafficMonitoringService {
 		Duration awsTimeout = m.aws().refreshTimeout();
 
 		this.catalogCache = new RefreshCache<>("트래픽 모니터링 · DB", ttl, timeout, executor, deadline -> catalog.load(),
-				UnaryOperator.identity(), () -> {
+				(last, reason) -> last, reason -> {
 					throw new IllegalStateException("트래픽 모니터링 DB 조회 실패");
 				});
 		this.platformCache = new RefreshCache<>("트래픽 모니터링 · Prometheus", ttl, timeout, executor,
 				deadline -> stamp(platformCollector.collect(deadline, executor)), Stamped::asStale,
-				() -> new Stamped<>(TrafficPlatformCollector.Metrics.unavailable(), null, true));
+				reason -> Stamped.unavailable(TrafficPlatformCollector.Metrics.unavailable(), reason));
 		this.platformAwsCache = new RefreshCache<>("트래픽 모니터링 · AWS", awsTtl, awsTimeout, executor,
 				deadline -> stamp(awsCollector.platform()), Stamped::asStale,
-				() -> new Stamped<>(PlatformAws.unavailable(), null, true));
-		this.eventDbCache = new KeyedRefreshCache<>(eventId -> new RefreshCache<>("트래픽 모니터링 · 이벤트 DB", ttl, timeout,
-				executor, deadline -> router.inTenant(router.findEvent(eventId), () -> reader.detail(eventId)),
-				UnaryOperator.identity(), () -> {
+				reason -> Stamped.unavailable(PlatformAws.unavailable(), reason));
+		// 이벤트별 캐시는 로그 이름에 이벤트 번호(어느 이벤트가 실패하는지)
+		this.eventDbCache = new KeyedRefreshCache<>(eventId -> new RefreshCache<>(
+				"트래픽 모니터링 · 이벤트 DB(" + eventId + "번)", ttl, timeout, executor,
+				deadline -> router.inTenant(router.findEvent(eventId), () -> reader.detail(eventId)), (last, reason) -> last,
+				reason -> {
 					throw new IllegalStateException("트래픽 모니터링 이벤트 DB 조회 실패");
 				}));
-		this.eventPromCache = new KeyedRefreshCache<>(key -> new RefreshCache<>("트래픽 모니터링 · 이벤트 Prometheus", ttl,
-				timeout, executor, deadline -> stamp(collectEvent(key, deadline)), Stamped::asStale,
-				() -> new Stamped<>(null, null, true)));
-		this.eventAwsCache = new KeyedRefreshCache<>(key -> new RefreshCache<>("트래픽 모니터링 · 이벤트 AWS", awsTtl,
-				awsTimeout, executor, deadline -> stamp(collectEventAws(key)), Stamped::asStale,
-				() -> new Stamped<>(EventAws.unavailable(), null, true)));
+		this.eventPromCache = new KeyedRefreshCache<>(key -> new RefreshCache<>(
+				"트래픽 모니터링 · 이벤트 Prometheus(" + key.eventId() + "번)", ttl, timeout, executor,
+				deadline -> stamp(collectEvent(key, deadline)), Stamped::asStale,
+				reason -> Stamped.<EventProm>unavailable(null, reason)));
+		this.eventAwsCache = new KeyedRefreshCache<>(key -> new RefreshCache<>(
+				"트래픽 모니터링 · 이벤트 AWS(" + key.eventId() + "번)", awsTtl, awsTimeout, executor,
+				deadline -> stamp(collectEventAws(key)), Stamped::asStale,
+				reason -> Stamped.unavailable(EventAws.unavailable(), reason)));
 		if (!awsCollector.configured()) {
 			log.warn("MONITORING_* AWS 설정이 비어 있어 트래픽 모니터링의 AWS 값(ALB · RDS · ECS · DLQ)은 비워 둡니다");
 		}
@@ -424,16 +437,16 @@ public class TrafficMonitoringService {
 			.min(Comparator.naturalOrder())
 			.orElse(null);
 
-		Stamped<EventProm> prom = new Stamped<>(null, null, false);
-		Stamped<EventAws> aws = new Stamped<>(EventAws.unavailable(), null, false);
+		Stamped<EventProm> prom = new Stamped<>(null, null, false, null);
+		Stamped<EventAws> aws = new Stamped<>(EventAws.unavailable(), null, false, null);
 		if (phase.hasMetrics()) {
 			prom = platformCollector.configured()
 					? eventPromCache.get(new EventPromKey(eventId, routed.tenantId(), phase, range, event.getStartAt(),
 							event.getHostingEndAt(), openAt, event.getStockCount()))
-					: new Stamped<>(null, null, true);
+					: Stamped.<EventProm>unavailable(null, StaleReason.SOURCE);
 			aws = awsCollector.configured()
 					? eventAwsCache.get(new EventAwsKey(eventId, phase, range, event.getStartAt(), event.getHostingEndAt()))
-					: new Stamped<>(EventAws.unavailable(), null, true);
+					: Stamped.unavailable(EventAws.unavailable(), StaleReason.SOURCE);
 		}
 		TrafficEventCollector.Metrics metrics = prom.value() == null ? null : prom.value().metrics();
 		TrafficWindow window = prom.value() != null ? prom.value().window()
@@ -451,7 +464,8 @@ public class TrafficMonitoringService {
 						offset(window.to()), (int) window.step().toSeconds(), info.entryAt(), info.startAt());
 		return new TrafficEventResponse(prom.source(), aws.source(), info, steps,
 				kpi(phase, metrics, event, detail, now), rangeView,
-				metrics == null ? null : charts(phase, metrics.charts(), aws.value()));
+				// 그래프 구역만 가공에 실패하면 charts만 null(stale 아님 → 화면 "그래프를 만들지 못했어요")
+				metrics == null || metrics.charts() == null ? null : charts(phase, metrics.charts(), aws.value()));
 	}
 
 	private static Kpi kpi(EventPhase phase, TrafficEventCollector.Metrics m, Event event,
@@ -518,11 +532,12 @@ public class TrafficMonitoringService {
 
 	private Stamped<TrafficPlatformCollector.Metrics> prometheus() {
 		return platformCollector.configured() ? platformCache.get()
-				: new Stamped<>(TrafficPlatformCollector.Metrics.unavailable(), null, true);
+				: Stamped.unavailable(TrafficPlatformCollector.Metrics.unavailable(), StaleReason.SOURCE);
 	}
 
 	private Stamped<PlatformAws> aws() {
-		return awsCollector.configured() ? platformAwsCache.get() : new Stamped<>(PlatformAws.unavailable(), null, true);
+		return awsCollector.configured() ? platformAwsCache.get()
+				: Stamped.unavailable(PlatformAws.unavailable(), StaleReason.SOURCE);
 	}
 
 	private EventProm collectEvent(EventPromKey key, long deadlineNanos) {
@@ -547,7 +562,7 @@ public class TrafficMonitoringService {
 	}
 
 	private <T> Stamped<T> stamp(T value) {
-		return new Stamped<>(value, clock.instant(), false);
+		return Stamped.fresh(value, clock.instant());
 	}
 
 	private static OffsetDateTime offset(Instant instant) {
