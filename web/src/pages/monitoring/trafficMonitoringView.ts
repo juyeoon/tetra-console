@@ -1000,28 +1000,55 @@ export function timeTicks(from: number, to: number, width: number): number[] {
   return ticks;
 }
 
-/** 세로 점선 이름 폭 추정(px, 캡션 글자): 한글 12, 그 밖 7 */
-const markerLabelWidth = (label: string) => [...label].reduce((w, c) => w + (/[가-힣]/.test(c) ? 12 : 7), 0);
+/** 세로 점선 이름 글자 크기(px) = 캡션 12px × --type-scale 1.25(styles/tokens.css --fs-caption) */
+const MARKER_FONT_PX = 15;
+
+/** 세로 점선 이름 폭 추정(px): 한글은 글자 크기, 띄어쓰기 4, 그 밖 8 */
+const markerLabelWidth = (label: string) => [...label].reduce((w, c) => w + (/[가-힣]/.test(c) ? MARKER_FONT_PX : c === ' ' ? 4 : 8), 0);
 
 /** 그래프 오른쪽 여백(MetricChart margin.right) — 점선 이름은 여기까지 넘칠 수 있다 */
 const CHART_RIGHT_MARGIN = 24;
 
+/** 세로 점선과 이름 사이(px, x-charts 기본 간격) */
+export const MARKER_LABEL_OFFSET = 5;
+
+/** 세로 점선 이름 단 높이(px) · 최대 단 수 */
+export const MARKER_LEVEL_PX = 18;
+
+export const MARKER_MAX_LEVELS = 3;
+
+/** 같은 단 이름 사이 최소 간격(px) */
+const MARKER_LABEL_GAP = 4;
+
+/** 세로 점선 하나 — level = 이름 단(0이 맨 위), side = 이름이 선 오른쪽 · 왼쪽 */
+export interface MarkerLabel {
+  x: number;
+  label: string;
+  level: number;
+  side: 'right' | 'left';
+}
+
 /**
- * 세로 점선 이름이 앞 이름과 겹치거나 그래프 오른쪽 끝을 넘으면 이름만 비운다(선은 그대로). 이름은 선 오른쪽에 붙는다.
- * 이벤트 종료 · 호스팅 종료 점선이 더해져 좁은 그래프에서 '입장시작재고 소진…'처럼 겹치던 것(2026-10-28)
+ * 세로 점선 이름 배치. 시각 순으로 겹치지 않는 가장 낮은 단(최대 3단)에 놓는다 — 모든 그래프에 이름 5종이 보이게.
+ * 이름은 선 오른쪽에 붙고, 그래프 오른쪽 끝을 넘으면 선 왼쪽에 붙인다. 3단에도 못 놓으면 이름만 비운다(선은 그대로).
+ * 폭은 그래프마다 잰 px라 세 칸 · 두 칸 줄을 따로 나누지 않는다. 한 줄로만 놓아 그래프 폭마다 다른 이름이 숨던 것(테스트 13, 2026-10-28)
  */
-export function markerLabels(markers: { x: number; label: string }[], from: number, to: number, width: number): { x: number; label: string }[] {
+export function markerLabels(markers: { x: number; label: string }[], from: number, to: number, width: number): MarkerLabel[] {
   const plot = Math.max(1, (width > 0 ? width : DEFAULT_CHART_WIDTH) - Y_AXIS_WIDTH);
   const drawing = Math.max(1, plot - CHART_RIGHT_MARGIN);
-  let free = -Infinity;
+  // 단마다 놓인 이름의 [왼쪽, 오른쪽] px
+  const levels: [number, number][][] = Array.from({ length: MARKER_MAX_LEVELS }, () => []);
   return [...markers]
     .sort((a, b) => a.x - b.x)
     .map((m) => {
       const px = to > from ? ((m.x - from) / (to - from)) * drawing : 0;
-      const end = px + markerLabelWidth(m.label) + 8;
-      if (px < free || end > plot) return { ...m, label: '' };
-      free = end;
-      return m;
+      const w = markerLabelWidth(m.label);
+      const side = px + MARKER_LABEL_OFFSET + w <= plot ? 'right' : 'left';
+      const span: [number, number] = side === 'right' ? [px + MARKER_LABEL_OFFSET, px + MARKER_LABEL_OFFSET + w] : [px - MARKER_LABEL_OFFSET - w, px - MARKER_LABEL_OFFSET];
+      const level = span[0] < 0 ? -1 : levels.findIndex((placed) => placed.every(([s, e]) => span[1] + MARKER_LABEL_GAP <= s || e + MARKER_LABEL_GAP <= span[0]));
+      if (level < 0) return { ...m, label: '', level: 0, side: 'right' };
+      levels[level].push(span);
+      return { ...m, level, side };
     });
 }
 

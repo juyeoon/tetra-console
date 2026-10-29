@@ -142,6 +142,53 @@ class TrafficRulesTest {
 	}
 
 	@Test
+	void delaysSkipDeployAndHostingFailures() {
+		LocalDateTime now = LocalDateTime.of(2026, 10, 28, 17, 0);
+		// 이벤트 9: 배포 실패, 이벤트는 SCHEDULED 그대로, 입장 · 호스팅 종료 모두 하루 넘게 지남 — 준비 · 종료 지연 둘 다 아님
+		LocalDateTime start = now.minusHours(27);
+		var deployFailed = new MonitoredEvent(9L, "aaaaaaaaaaaa", "A사", "쿠폰", start.minusHours(2), start,
+				start.plusHours(1), start.plusHours(2), EventStatus.SCHEDULED, HostingStatus.DEPLOY_FAILED, 5000L, false,
+				null);
+		assertThat(TrafficRules.delays(List.of(deployFailed), now)).isEmpty();
+		// 24시간 실패 창도 지났으면 자동화 칸은 정상
+		assertThat(TrafficRules.automation(List.of(), null, TrafficRules.delays(List.of(deployFailed), now)))
+			.isEqualTo(new Judgment(MonitoringLevel.OK, "최근 24시간 실패 0"));
+
+		var hostingFailed = new MonitoredEvent(10L, "aaaaaaaaaaaa", "A사", "쿠폰", start.minusHours(2), start,
+				start.plusHours(1), start.plusHours(2), EventStatus.SCHEDULED, HostingStatus.HOSTING_FAILED, 5000L, false,
+				null);
+		assertThat(TrafficRules.delays(List.of(hostingFailed), now)).isEmpty();
+
+		// 준비 실패: 입장이 지났어도 준비 지연은 아니다(호스팅 종료 전)
+		LocalDateTime openFailedStart = now.minusMinutes(30);
+		var openFailed = new MonitoredEvent(11L, "aaaaaaaaaaaa", "A사", "쿠폰", openFailedStart.minusHours(2),
+				openFailedStart, openFailedStart.plusHours(1), openFailedStart.plusHours(2), EventStatus.OPEN_FAILED,
+				HostingStatus.HOSTING, 5000L, false, null);
+		assertThat(TrafficRules.delays(List.of(openFailed), now)).isEmpty();
+
+		// 실패와 섞여 있어도 정상 이벤트의 지연은 그대로
+		// TEST-LEAD: 서비스 값 now + 48분(입장 −60)
+		// LocalDateTime lateStart = now.plusMinutes(48); // 입장 = now − 12분
+		LocalDateTime lateStart = now.minusMinutes(7); // 입장 = now − 12분 // TEST-LEAD
+		var late = new MonitoredEvent(7L, "aaaaaaaaaaaa", "A사", "쿠폰", lateStart.minusHours(2), lateStart,
+				lateStart.plusHours(1), lateStart.plusHours(2), EventStatus.SCHEDULED, HostingStatus.HOSTING, 5000L, false,
+				null);
+		assertThat(TrafficRules.delays(List.of(deployFailed, late, hostingFailed, openFailed), now))
+			.containsExactly("7번 준비 12분 지연");
+	}
+
+	@Test
+	void openFailedKeepsHostingEndDelay() {
+		LocalDateTime now = LocalDateTime.of(2026, 10, 28, 17, 0);
+		// 준비 실패인데 hosting_end_at이 11분 지났고 호스팅이 남아 있음(WF4 정리 안 됨) — 종료 지연
+		LocalDateTime start = now.minusHours(3);
+		var openFailed = new MonitoredEvent(11L, "aaaaaaaaaaaa", "A사", "쿠폰", start.minusHours(2), start,
+				now.minusHours(1), now.minusMinutes(11), EventStatus.OPEN_FAILED, HostingStatus.HOSTING, 5000L, false,
+				null);
+		assertThat(TrafficRules.delays(List.of(openFailed), now)).containsExactly("11번 종료 11분 지연");
+	}
+
+	@Test
 	void platform() {
 		assertThat(TrafficRules.platform(true, "available", 48.0, 1, 2, 2))
 			.isEqualTo(new Judgment(MonitoringLevel.OK, "RDS 가동 · Portal·Console 2/2"));

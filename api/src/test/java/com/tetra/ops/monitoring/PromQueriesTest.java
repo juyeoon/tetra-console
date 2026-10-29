@@ -15,7 +15,7 @@ class PromQueriesTest {
 	void errorRpsJoinsOnlyValidTenantIds() {
 		assertThat(PromQueries.errorRpsByTenant(List.of("bbbbbbbbbbbb", "aaaaaaaaaaaa"))).isEqualTo(
 				"sum by (tenant_id) (rate(http_server_requests_seconds_count{tenant_id=~\"aaaaaaaaaaaa|bbbbbbbbbbbb\","
-						+ "uri!~\"/actuator.*\",status=~\"5..\"}[1m]))");
+						+ "uri!~\"/actuator.*|/api/issuance/health\",status=~\"5..\"}[1m]))");
 
 		for (String bad : List.of("aaaaaaaaaaa", "AAAAAAAAAAAA", "aaaaaaaaaaa\"", "aaaa|.*|aaaa", "aaaaaaaaaaaa\n")) {
 			assertThatThrownBy(() -> PromQueries.errorRpsByTenant(List.of("bbbbbbbbbbbb", bad)))
@@ -28,11 +28,21 @@ class PromQueriesTest {
 	void requestsSinceValidatesTenantAndClampsRange() {
 		assertThat(PromQueries.requestsByStatusSince("aaaaaaaaaaaa", Duration.ofMinutes(65))).isEqualTo(
 				"sum by (status) (increase(http_server_requests_seconds_count{tenant_id=\"aaaaaaaaaaaa\","
-						+ "uri!~\"/actuator.*\"}[3900s]))");
+						+ "uri!~\"/actuator.*|/api/issuance/health\"}[3900s]))");
 		assertThat(PromQueries.requestsByStatusSince("aaaaaaaaaaaa", Duration.ofSeconds(-30))).endsWith("[60s]))");
 		assertThat(PromQueries.requestsByStatusSince("aaaaaaaaaaaa", Duration.ofDays(30))).endsWith("[604800s]))");
 		assertThatThrownBy(() -> PromQueries.requestsByStatusSince("a\"}or vector(1", Duration.ofMinutes(5)))
 			.isInstanceOf(IllegalArgumentException.class);
+	}
+
+	@Test
+	void requestQueriesExcludeActuatorAndHealthLikeEventDetail() {
+		assertThat(PromQueries.RPS_BY_TENANT).isEqualTo("sum by (tenant_id) (rate(http_server_requests_seconds_count"
+				+ "{uri!~\"/actuator.*|/api/issuance/health\"}[1m]))");
+		assertThat(PromQueries.RPS_TOTAL)
+			.isEqualTo("sum(rate(http_server_requests_seconds_count{uri!~\"/actuator.*|/api/issuance/health\"}[1m]))");
+		// 홈 · 이벤트 상세가 같은 필터
+		assertThat(TrafficQueries.RPS_BY_EVENT).contains("uri!~\"" + PromQueries.EXCLUDED_URI + "\"");
 	}
 
 	@Test

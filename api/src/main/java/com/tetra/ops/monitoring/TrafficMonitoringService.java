@@ -323,10 +323,11 @@ public class TrafficMonitoringService {
 		return new TrafficPlatformResponse.Addons(healthy, groups.size(), groups);
 	}
 
+	/** 7일 안에 시작할 SCHEDULED 이벤트(시작 순, 5개). 실패 상태(배포 · 호스팅 시작 실패)는 열리지 않으므로 뺀다 — 실패 목록이 보여 준다 */
 	private static List<TrafficPlatformResponse.Upcoming> upcoming(TrafficCatalog.Snapshot db, LocalDateTime now) {
 		return db.events()
 			.stream()
-			.filter(e -> e.eventStatus() == EventStatus.SCHEDULED && e.startAt().isAfter(now)
+			.filter(e -> e.eventStatus() == EventStatus.SCHEDULED && e.failedStatus() == null && e.startAt().isAfter(now)
 					&& e.startAt().isBefore(now.plus(UPCOMING_WINDOW)))
 			.sorted(Comparator.comparing(MonitoredEvent::startAt).thenComparing(MonitoredEvent::eventId))
 			.limit(UPCOMING_LIMIT)

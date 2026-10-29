@@ -26,6 +26,7 @@ import {
   headerView,
   isClosedPhase,
   liveKpiGroups,
+  MARKER_MAX_LEVELS,
   markerLabels,
   mergeOnTime,
   nodeTooltip,
@@ -748,18 +749,41 @@ describe('그래프 변환', () => {
     // 범위 밖(진행 중의 이벤트 종료 예정)은 그리지 않는다
     assert.deepEqual(chartViews(charts, { ...markers, eventEndAt: '2026-10-26T16:00:00+09:00' }, false)[0].markers.map((m) => m.label), ['시작']);
   });
-  test('세로 점선 이름이 겹치면 뒤의 이름만 비운다(선은 그대로)', () => {
-    const from = 0;
-    const to = 50 * 60_000;
-    const at = (minute: number, label: string) => ({ x: minute * 60_000, label });
-    // 280px(그림 208px) · 50분: 1분 ≈ 4.2px. 입장(32px) 뒤 5분(21px)의 시작은 숨김, 10분(42px) 뒤 재고 소진은 보임
-    const labels = markerLabels([at(30, '호스팅 종료'), at(0, '입장'), at(5, '시작'), at(10, '재고 소진'), at(20, '이벤트 종료')], from, to, 280);
-    assert.deepEqual(labels.map((m) => m.label), ['입장', '', '재고 소진', '', '호스팅 종료']);
-    assert.deepEqual(labels.map((m) => m.x / 60_000), [0, 5, 10, 20, 30]);
-    // 오른쪽 끝(40분 = 166px)에서 이름(약 67px)이 그래프(232px)를 넘으면 비운다
-    assert.deepEqual(markerLabels([at(40, '호스팅 종료')], from, to, 280).map((m) => m.label), ['']);
-    // 넓으면 다 보인다
-    assert.ok(markerLabels([at(0, '입장'), at(5, '시작')], from, to, 1200).every((m) => m.label));
+  describe('세로 점선 이름: 겹치면 단을 엇갈린다(테스트 13 시각)', () => {
+    const t = (hm: string) => Date.parse(`2026-10-28T${hm}:00+09:00`);
+    // 입장 14:55 · 시작 15:00 · 재고 소진 15:01 · 이벤트 종료 15:10 · 호스팅 종료 15:15, 순서를 섞어 넣는다
+    const markers = [
+      { x: t('15:15'), label: '호스팅 종료' },
+      { x: t('14:55'), label: '입장' },
+      { x: t('15:00'), label: '시작' },
+      { x: t('15:01'), label: '재고 소진' },
+      { x: t('15:10'), label: '이벤트 종료' },
+    ];
+    const layout = (from: string, to: string, width: number) =>
+      markerLabels(markers.filter((m) => m.x >= t(from) && m.x <= t(to)), t(from), t(to), width).map((m) => (m.label ? `${m.label}@${m.level}${m.side === 'left' ? '←' : ''}` : ''));
+
+    test('전체 범위(입장 −10분 ~ 호스팅 종료 +10분): 세 칸 · 두 칸 모두 5개가 보인다', () => {
+      // 1440px 창의 세 칸(326px): 입장↔시작(5분)과 재고 소진↔이벤트 종료(9분)가 겹쳐 두 단
+      assert.deepEqual(layout('14:45', '15:25', 326), ['입장@0', '시작@1', '재고 소진@0', '이벤트 종료@1', '호스팅 종료@0']);
+      // 두 칸(507px): 시작↔재고 소진(1분), 이벤트 종료↔호스팅 종료(5분)만 겹친다
+      assert.deepEqual(layout('14:45', '15:25', 507), ['입장@0', '시작@0', '재고 소진@1', '이벤트 종료@0', '호스팅 종료@1']);
+    });
+    test('오른쪽 끝을 넘으면 선 왼쪽에 붙인다', () => {
+      // 시작 ±10분: 이벤트 종료가 오른쪽 끝
+      assert.deepEqual(layout('14:50', '15:10', 326), ['입장@0', '시작@0', '재고 소진@1', '이벤트 종료@0←']);
+      // 진행 중(15:12): 끝 2분 전의 이벤트 종료는 왼쪽에 붙어 세 번째 단까지 내려간다
+      assert.deepEqual(layout('14:45', '15:12', 326), ['입장@0', '시작@0', '재고 소진@1', '이벤트 종료@2←']);
+    });
+    test('세 단에도 못 놓으면 이름만 비운다(선 · 순서는 그대로)', () => {
+      // 1280px 창의 세 칸(278px)
+      assert.deepEqual(layout('14:45', '15:25', 278), ['입장@0', '시작@1', '재고 소진@2', '이벤트 종료@0', '']);
+      const labels = markerLabels(markers, t('14:45'), t('15:25'), 278);
+      assert.deepEqual(labels.map((m) => m.x), [t('14:55'), t('15:00'), t('15:01'), t('15:10'), t('15:15')]);
+      assert.equal(MARKER_MAX_LEVELS, 3);
+    });
+    test('넓으면 모두 맨 위 단', () => {
+      assert.ok(markerLabels(markers, t('14:45'), t('15:25'), 1600).every((m) => m.label && m.level === 0 && m.side === 'right'));
+    });
   });
   test('x축 눈금: 폭에 맞춰 눈금 사이 56px 이상, 1분 이상 간격, KST 정각 단위', () => {
     const from = Date.parse('2026-10-28T09:45:00+09:00');
