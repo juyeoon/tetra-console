@@ -1,9 +1,11 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import type { EventExecution, EventExecutionsResponse, ExecutionState } from '../../api/types.ts';
+import type { EventExecution, EventExecutionsResponse, ExecutionState, TrafficStep } from '../../api/types.ts';
 import {
+  EXECUTION_REFRESH_GRACE_MS,
   EXECUTIONS_FAILED_TEXT,
   executionPanel,
+  executionStepsKey,
   executionView,
   hasRunningExecution,
   stateRow,
@@ -132,9 +134,10 @@ describe('자동화 실행 상세', () => {
     assert.equal(v.defaultOpen, true);
 
     assert.equal(hasRunningExecution(response([running, approve9])), true);
-    assert.equal(stopExecutionPolling(response([running])), false);
-    assert.equal(stopExecutionPolling(response([prepare13, approve9])), true);
-    assert.equal(stopExecutionPolling(response([{ ...approve9, status: 'PENDING_REDRIVE' }])), false);
+    // 단계가 바뀐 적 없음(기한 0)
+    assert.equal(stopExecutionPolling(response([running]), NOW.getTime(), 0), false);
+    assert.equal(stopExecutionPolling(response([prepare13, approve9]), NOW.getTime(), 0), true);
+    assert.equal(stopExecutionPolling(response([{ ...approve9, status: 'PENDING_REDRIVE' }]), NOW.getTime(), 0), false);
   });
 
   test('시간 초과 · 실패 단계를 모르면', () => {
@@ -160,5 +163,80 @@ describe('자동화 실행 상세', () => {
     const unknown = stateRow(state({ names: ['X'], startedAt: null, endedAt: null, durationSeconds: null, status: 'FAILED' }), 0);
     assert.equal(unknown.time, '–~–');
     assert.equal(unknown.duration, '–');
+  });
+});
+
+function step(key: TrafficStep['key'], state: TrafficStep['state'], actualAt: string | null = null, extra: Partial<TrafficStep> = {}): TrafficStep {
+  return { key, plannedAt: null, actualAt, endAt: null, durationSeconds: null, state, reason: null, ...extra };
+}
+
+/** 이벤트 13 호스팅 시작 뒤 · 준비 계획 시각 전(WF2-1 끝 → WF2-2 시작 전, 실행 중 없음) */
+const beforePrepare: TrafficStep[] = [
+  step('APPROVE', 'DONE', '2026-10-28T14:20:00+09:00'),
+  step('DEPLOY', 'DONE', '2026-10-28T14:28:00+09:00'),
+  step('HOSTING_START', 'DONE', '2026-10-28T14:36:00+09:00'),
+  step('PREPARE', 'WAITING'),
+  step('ENTRY', 'WAITING'),
+  step('START', 'WAITING'),
+  step('END', 'WAITING'),
+  step('AGGREGATE', 'WAITING'),
+];
+
+const replace = (steps: TrafficStep[], next: TrafficStep) => steps.map((s) => (s.key === next.key ? next : s));
+
+describe('진행 단계가 바뀌면 자동화 실행 상세를 다시 부른다', () => {
+  test('흐름 4칸의 key:state:actualAt만', () => {
+    assert.equal(
+      executionStepsKey(beforePrepare),
+      'DEPLOY:DONE:2026-10-28T14:28:00+09:00,HOSTING_START:DONE:2026-10-28T14:36:00+09:00,PREPARE:WAITING:,END:WAITING:',
+    );
+    assert.equal(executionStepsKey(undefined), '');
+  });
+
+  test('단계 변화 → 키가 바뀜(시작 · 끝 · 재실행 재실패)', () => {
+    const base = executionStepsKey(beforePrepare);
+    // 준비 계획 시각(WF2-2 시작)
+    const preparing = replace(beforePrepare, step('PREPARE', 'ACTIVE'));
+    assert.notEqual(executionStepsKey(preparing), base);
+    // WF2-2 성공(OPEN 로그)
+    const prepared = replace(preparing, step('PREPARE', 'DONE', '2026-10-28T14:55:24+09:00'));
+    assert.notEqual(executionStepsKey(prepared), executionStepsKey(preparing));
+    // 준비 실패 뒤 수동 재실행이 또 실패: FAILED 그대로, 실패 시각만 바뀜
+    const failed = replace(beforePrepare, step('PREPARE', 'FAILED', '2026-10-28T14:55:00+09:00'));
+    const failedAgain = replace(beforePrepare, step('PREPARE', 'FAILED', '2026-10-28T15:20:00+09:00'));
+    assert.notEqual(executionStepsKey(failedAgain), executionStepsKey(failed));
+    // 호스팅 종료 시각(WF4 시작)
+    assert.notEqual(executionStepsKey(replace(beforePrepare, step('END', 'ACTIVE'))), base);
+  });
+
+  test('변화 없음 → 키가 같음(새 배열 · 흐름 밖 칸 · 사유 · 걸린 시간)', () => {
+    const base = executionStepsKey(beforePrepare);
+    assert.equal(executionStepsKey(beforePrepare.map((s) => ({ ...s }))), base);
+    // 입장 · 시작 · 집계 · 승인 칸은 실행과 무관
+    assert.equal(executionStepsKey(replace(beforePrepare, step('ENTRY', 'ACTIVE', '2026-10-28T14:55:24+09:00'))), base);
+    assert.equal(executionStepsKey(replace(beforePrepare, step('START', 'DONE', '2026-10-28T15:00:00+09:00'))), base);
+    assert.equal(executionStepsKey(replace(beforePrepare, step('AGGREGATE', 'ACTIVE'))), base);
+    assert.equal(executionStepsKey(replace(beforePrepare, step('APPROVE', 'DONE', null))), base);
+    // 준비 걸린 시간(Prometheus) · 실패 사유가 늦게 채워져도
+    const prepared = replace(beforePrepare, step('PREPARE', 'DONE', '2026-10-28T14:55:24+09:00'));
+    const withDuration = replace(prepared, step('PREPARE', 'DONE', '2026-10-28T14:55:24+09:00', { durationSeconds: 200, reason: '사유' }));
+    assert.equal(executionStepsKey(withDuration), executionStepsKey(prepared));
+  });
+
+  test('멈춤: 실행 중이 없고 단계가 바뀐 뒤 2분이 지났을 때만', () => {
+    const changedAt = NOW.getTime();
+    const until = changedAt + EXECUTION_REFRESH_GRACE_MS;
+    assert.equal(EXECUTION_REFRESH_GRACE_MS, 120_000);
+    const done = response([prepare13]);
+    // 2분 안: 실행 중이 없어도 15초마다(새 실행이 서버 캐시 · 스케줄러 지연 뒤에 보임)
+    assert.equal(stopExecutionPolling(response([]), changedAt, until), false);
+    assert.equal(stopExecutionPolling(done, changedAt + 105_000, until), false);
+    // 2분 지남
+    assert.equal(stopExecutionPolling(done, until, until), true);
+    assert.equal(stopExecutionPolling(response([]), until + 15_000, until), true);
+    // 실행 중이면 2분이 지나도 15초 유지
+    const running = response([{ ...prepare13, status: 'RUNNING', stoppedAt: null }]);
+    assert.equal(stopExecutionPolling(running, until + 600_000, until), false);
+    assert.equal(stopExecutionPolling(response([{ ...approve9, status: 'PENDING_REDRIVE' }]), until + 600_000, until), false);
   });
 });

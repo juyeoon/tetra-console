@@ -18,12 +18,14 @@ export interface PollingOptions<T> {
   enabled?: boolean;
   /** true를 돌려주면 그 응답 뒤로는 다시 부르지 않는다(예: 종료된 이벤트 — 값이 바뀌지 않음) */
   stopWhen?: (data: T) => boolean;
+  /** 바뀌면 데이터는 그대로 두고 바로 다시 부른다(stopWhen으로 멈췄어도 다시 시작). key와 달리 비우지 않아 화면이 깜빡이지 않는다. 원시 값으로 준다 */
+  reload?: string | number | null;
 }
 
 export function usePolling<T>(
   fetcher: (signal: AbortSignal) => Promise<T>,
   intervalMs: number,
-  { key = null, enabled = true, stopWhen }: PollingOptions<T> = {},
+  { key = null, enabled = true, stopWhen, reload = null }: PollingOptions<T> = {},
 ): Polling<T> {
   const [state, setState] = useState<{ key: string | number | null; data: T | undefined; failed: boolean }>({
     key,
@@ -76,8 +78,8 @@ export function usePolling<T>(
       controller?.abort();
       document.removeEventListener('visibilitychange', onVisibility);
     };
-    // fetcher · stopWhen은 매번 새 함수라 넣지 않는다(화면에 들어올 때 · key가 바뀔 때 한 번 시작)
-  }, [intervalMs, key, enabled]);
+    // fetcher · stopWhen은 매번 새 함수라 넣지 않는다(화면에 들어올 때 · key · reload가 바뀔 때 한 번 시작)
+  }, [intervalMs, key, enabled, reload]);
 
   // key가 바뀐 직후(새 응답 전)에는 이전 key의 데이터를 보여 주지 않는다
   const current = state.key === key && enabled;
