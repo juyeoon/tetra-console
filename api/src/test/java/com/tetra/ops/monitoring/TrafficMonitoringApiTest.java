@@ -314,6 +314,19 @@ class TrafficMonitoringApiTest extends IntegrationTest {
 	}
 
 	@Test
+	void upcomingSkipsFailedEvents() throws Exception {
+		// 배포 · 호스팅 시작 실패는 이벤트가 SCHEDULED로 남아도 열리지 않는다 — 다가오는 이벤트에서 빼고 드롭다운 · 실패 목록이 보여 준다
+		data.event(7124, A).name("A 배포 실패").approved("DEPLOY_FAILED", "SCHEDULED", "slug7124").startAt(now.plusDays(1))
+			.insert();
+		data.event(7125, B).name("B 호스팅 실패").approved("HOSTING_FAILED", "SCHEDULED", "slug7125").startAt(now.plusDays(1))
+			.insert();
+		respondPlatform();
+		mvc.perform(get("/api/ops/monitoring/platform").cookie(operatorCookie()))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.upcoming[*].eventId").value(contains(7106)));
+	}
+
+	@Test
 	void prometheusFailureKeepsOtherSourcesAndMarksStale() throws Exception {
 		respondPlatform();
 		mvc.perform(get("/api/ops/monitoring/platform").cookie(operatorCookie()))

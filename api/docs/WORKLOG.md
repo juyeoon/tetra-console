@@ -261,3 +261,12 @@
 - 파일: api/src/main/java/com/tetra/ops/monitoring/{TrafficQueries, TrafficEventCollector, TrafficEventResponse, TrafficMonitoringService, TrafficRules, TrafficPlatformCollector}.java, api/src/test/java/com/tetra/ops/monitoring/{TrafficQueriesTest, TrafficMonitoringApiTest, TrafficRulesTest}.java, ../web/src/api/types.ts, ../web/src/pages/monitoring/{trafficMonitoringView.ts, trafficMonitoringView.test.ts, MetricChart.tsx, EventSection.tsx}
 - 문서: docs/ops05/OPS-05_명세.md(D-1 · D-2 · 상태 요약 기준 · 5-1 표 · 지표 설명), 시안 서비스톤 범례 이름, CLAUDE.md §7.17
 - 남은 것: 세로선 라벨 겹침(C3), 홈 health 제외 · 이벤트 9 지연 판정은 다음 작업
+
+## 2026-10-29 KST — 테스트 13 후속: 홈 health 제외 · 실패 이벤트 지연 판정 · 세로선 이름 단 배치(api · web)
+- 홈 health 제외: 요청 수 · 5xx · 누적에서 빼는 uri `PromQueries.EXCLUDED_URI`(/actuator.* · /api/issuance/health)를 홈 · 이벤트 상세가 같이 쓴다(TrafficQueries에서 옮김). 홈 RPS_BY_TENANT · RPS_TOTAL · 테넌트 5xx · 누적 요청 수에 적용. 이벤트 11 · 12는 health가 홈 최대 RPS의 절반이었다(67.6 중 33.8, 57.9 중 28.9). 웜업 요청은 issuance-api가 지표에서 이미 뺀다(I3, 이미지 1f0a9814부터) — Console은 따로 처리하지 않는다.
+- 지연 판정(TrafficRules.delays): DEPLOY_FAILED · HOSTING_FAILED 이벤트는 준비 · 종료 지연 모두 넣지 않는다. 이벤트가 SCHEDULED로 남고 모니터링 후보에서도 빠지지 않아 "9번 준비 1625분 지연"이 계속 떴다(첫 24시간은 위험 "24시간 실패"가 가렸음). OPEN_FAILED는 준비 지연 없음(SCHEDULED가 아님), 종료 지연은 유지(hosting_end_at이 지났는데 호스팅이 남아 있으면 정리 안 된 것). 다가오는 이벤트에서도 실패 상태(failedStatus())를 뺀다.
+- 세로선 이름(markerLabels · MetricChart): 시각 순으로 겹치지 않는 가장 낮은 단(최대 3단, 18px)에 놓고, 그래프 오른쪽 끝을 넘으면 선 왼쪽에 붙인다. 3단에도 안 들어가면 이름만 비우고 선은 남긴다. 글자 폭 추정을 실제 캡션 15px(12px × type-scale 1.25)로. 그래프 폭(세 칸 · 두 칸)은 그래프마다 잰 px로 판단. 한 줄로만 놓아 폭마다 다른 이름이 숨던 것(1440px 창: 세 칸 입장 · 재고 소진 · 호스팅 종료, 두 칸 입장 · 시작 · 이벤트 종료).
+- 테스트: PromQueriesTest(홈 쿼리 필터, 상세와 같은 필터), TrafficRulesTest(배포 · 호스팅 실패 지연 없음 · 자동화 정상, 준비 실패 준비 지연 없음, 섞여도 정상 이벤트만, 준비 실패 종료 지연 유지), TrafficMonitoringApiTest(다가오는 이벤트에서 실패 제외), web(테스트 13 시각 — 326px · 507px 단 배치, 오른쪽 끝 왼쪽 붙임, 278px 숨김, 넓으면 한 단). API 320개 · web 159개 · tsc · build 통과. 헤드리스(이벤트 12 · 13 시각, 1280 · 1440 · 1920px, 전체 · 시작 ±10분)로 단 배치 확인 — 실제 글자 상자 겹침 0, 1280px 세 칸 전체 범위의 테스트 13 호스팅 종료 이름만 숨김.
+- 파일: api/src/main/java/com/tetra/ops/monitoring/{PromQueries, TrafficQueries, TrafficRules, TrafficMonitoringService}.java, api/src/test/java/com/tetra/ops/monitoring/{PromQueriesTest, TrafficRulesTest, TrafficMonitoringApiTest}.java, ../web/src/pages/monitoring/{trafficMonitoringView.ts, trafficMonitoringView.test.ts, MetricChart.tsx}
+- 문서: docs/ops05/OPS-05_명세.md(B-3 · D-2 · 상태 요약 자동화 · 5-1 이벤트 RPS · uri 설명), CLAUDE.md §7.16 트래픽 · §7.17 판정
+- 하지 않은 것: 에러 · RDS 그래프의 마지막 1~2분 세로선(x가 AWS 점), F1(Step Functions 상세)

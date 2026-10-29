@@ -60,13 +60,7 @@ final class TrafficQueries {
 	static final String ADDON_STATEFULSETS_DESIRED = """
 			kube_statefulset_replicas{namespace="argocd",statefulset="argocd-application-controller"}""";
 
-	// ---- 요청 처리 공통 ----
-
-	/**
-	 * 요청 수 · 5xx에서 빼는 uri: 액추에이터와 발급 API health. issuance-api 기동 웜업이 Pod마다 health · cursor를 300번씩 자기 자신에게
-	 * 불러 입장 전 RPS가 크게 잡혔다(이벤트 12: 입장 전 57.9 RPS가 최대 RPS, 2026-10-28). cursor는 실제 요청과 같은 uri라 뺄 수 없다
-	 */
-	static final String EXCLUDED_URI = "/actuator.*|/api/issuance/health";
+	// ---- 요청 처리 공통(요청 수 · 5xx에서 빼는 uri는 홈과 같은 PromQueries.EXCLUDED_URI) ----
 
 	/** p95를 재는 uri: 발급 /coupons/claim, 번호표 /ticket(Spring uri 템플릿, PromQL 문자열 안에서 \\{ 로 이스케이프) */
 	static final String P95_URI = "uri=~\"/api/issuance/events/\\\\{eventId\\\\}/(coupons/claim|ticket)\"";
@@ -83,11 +77,11 @@ final class TrafficQueries {
 	// ---- A 상태 요약 · 드롭다운: 이벤트별 판정 재료(모든 이벤트 한 번에, event_id별) ----
 
 	static final String RPS_BY_EVENT = "sum by (event_id) (rate(http_server_requests_seconds_count{uri!~\"%s\"}[1m]))"
-		.formatted(EXCLUDED_URI);
+		.formatted(PromQueries.EXCLUDED_URI);
 
 	static final String ERROR_RPS_BY_EVENT = """
 			sum by (event_id) (rate(http_server_requests_seconds_count{uri!~"%s",status=~"5.."}[1m]))"""
-		.formatted(EXCLUDED_URI);
+		.formatted(PromQueries.EXCLUDED_URI);
 
 	/** 발급 · 번호표 중 큰 p95(초). 버킷 증가량은 {@link #bucketIncrease}(구간 안에서 새로 생긴 시리즈 포함) */
 	static final String P95_BY_EVENT = "max by (event_id) (histogram_quantile(0.95, sum by (event_id, le, uri) ("
@@ -185,14 +179,15 @@ final class TrafficQueries {
 
 		// ---- 요청 처리 ----
 
-		/** 초당 요청(액추에이터 · health 제외, {@link TrafficQueries#EXCLUDED_URI}) */
+		/** 초당 요청(액추에이터 · health 제외, {@link PromQueries#EXCLUDED_URI}) */
 		String rps() {
-			return "sum(rate(http_server_requests_seconds_count{event_id=\"%s\",uri!~\"%s\"}[1m]))".formatted(e, EXCLUDED_URI);
+			return "sum(rate(http_server_requests_seconds_count{event_id=\"%s\",uri!~\"%s\"}[1m]))"
+				.formatted(e, PromQueries.EXCLUDED_URI);
 		}
 
 		String errorRps() {
 			return "sum(rate(http_server_requests_seconds_count{event_id=\"%s\",uri!~\"%s\",status=~\"5..\"}[1m]))"
-				.formatted(e, EXCLUDED_URI);
+				.formatted(e, PromQueries.EXCLUDED_URI);
 		}
 
 		/** uri별 p95(초), 최근 1분(KPI 순간값). 발급 /coupons/claim, 번호표 /ticket */

@@ -10,9 +10,15 @@ import com.tetra.ops.tenancy.TenantIds;
  * 홈 모니터링이 쓰는 PromQL 전부(10-24 · 10-26 회의 확정). 쿼리는 이 클래스 상수로만 둔다.
  * 사용자 입력은 쿼리에 들어가지 않는다. tenant_id는 RDS 값이라도 TenantIds.requireValid(^[a-z0-9]{12}$)를 통과한 것만 넣는다.
  * 요청 수 지표 http_server_requests_seconds_count는 발급 API 것(모든 지표에 tenant_id · event_id 라벨).
- * KEDA와 같은 식이다(커서 조회는 엣지가 받아 거의 잡히지 않음).
+ * KEDA 식에서 health를 더 뺀다({@link #EXCLUDED_URI}, 이벤트 상세 {@link TrafficQueries}와 같은 필터).
  */
 final class PromQueries {
+
+	/**
+	 * 요청 수 · 5xx에서 빼는 uri(홈 · 이벤트 상세 공통): 액추에이터와 발급 API health(사용자 요청이 아니라 상태 확인).
+	 * 기동 웜업 요청은 issuance-api가 지표에서 뺀다(I3) — Console은 따로 거르지 않는다
+	 */
+	static final String EXCLUDED_URI = "/actuator.*|/api/issuance/health";
 
 	// ---- 클러스터 사용량 (클러스터 전체, 실사용률) ----
 
@@ -39,14 +45,14 @@ final class PromQueries {
 
 	/** 테넌트별 초당 요청 수. range(최근 30분)와 instant(테넌트 별 처리 현황 rps) 둘 다 */
 	static final String RPS_BY_TENANT = """
-			sum by (tenant_id) (rate(http_server_requests_seconds_count{uri!~"/actuator.*"}[1m]))""";
+			sum by (tenant_id) (rate(http_server_requests_seconds_count{uri!~"%s"}[1m]))""".formatted(EXCLUDED_URI);
 
 	static final String RPS_TOTAL = """
-			sum(rate(http_server_requests_seconds_count{uri!~"/actuator.*"}[1m]))""";
+			sum(rate(http_server_requests_seconds_count{uri!~"%s"}[1m]))""".formatted(EXCLUDED_URI);
 
-	/** 테넌트별 5xx 초당 요청 수. %s = 검증한 tenant_id를 |로 이은 것 */
+	/** 테넌트별 5xx 초당 요청 수. %s = 검증한 tenant_id를 |로 이은 것, {@link #EXCLUDED_URI} */
 	private static final String ERROR_RPS_BY_TENANT = """
-			sum by (tenant_id) (rate(http_server_requests_seconds_count{tenant_id=~"%s",uri!~"/actuator.*",status=~"5.."}[1m]))""";
+			sum by (tenant_id) (rate(http_server_requests_seconds_count{tenant_id=~"%s",uri!~"%s",status=~"5.."}[1m]))""";
 
 	// ---- 테넌트 별 처리 현황: 네임스페이스 tenant-<tenant_id> ----
 
@@ -65,10 +71,10 @@ final class PromQueries {
 	/**
 	 * 입장 열림부터 누적 요청 수, status별. 5xx는 실패, 나머지는 처리 완료로 나눈다.
 	 * 앱(발급 API)까지 온 요청만 센다 — ALB가 앞에서 낸 5xx는 잡히지 않는다.
-	 * %s = 검증한 tenant_id, %d = 범위(초)
+	 * %s = 검증한 tenant_id · {@link #EXCLUDED_URI}, %d = 범위(초)
 	 */
 	private static final String REQUESTS_BY_STATUS_SINCE = """
-			sum by (status) (increase(http_server_requests_seconds_count{tenant_id="%s",uri!~"/actuator.*"}[%ds]))""";
+			sum by (status) (increase(http_server_requests_seconds_count{tenant_id="%s",uri!~"%s"}[%ds]))""";
 
 	static final Duration MIN_RANGE = Duration.ofSeconds(60);
 
@@ -82,13 +88,13 @@ final class PromQueries {
 			throw new IllegalArgumentException("tenant_id가 없습니다.");
 		}
 		String alternatives = tenantIds.stream().map(TenantIds::requireValid).sorted().collect(Collectors.joining("|"));
-		return ERROR_RPS_BY_TENANT.formatted(alternatives);
+		return ERROR_RPS_BY_TENANT.formatted(alternatives, EXCLUDED_URI);
 	}
 
 	/** range는 60초 ~ 7일로 자른다 */
 	static String requestsByStatusSince(String tenantId, Duration range) {
 		long seconds = Math.clamp(range.toSeconds(), MIN_RANGE.toSeconds(), MAX_RANGE.toSeconds());
-		return REQUESTS_BY_STATUS_SINCE.formatted(TenantIds.requireValid(tenantId), seconds);
+		return REQUESTS_BY_STATUS_SINCE.formatted(TenantIds.requireValid(tenantId), EXCLUDED_URI, seconds);
 	}
 
 	static String namespace(String tenantId) {

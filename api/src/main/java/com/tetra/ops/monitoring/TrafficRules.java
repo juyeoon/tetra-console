@@ -273,15 +273,21 @@ final class TrafficRules {
 	}
 
 	/**
-	 * 예정 단계 지연(계획 + 10분이 지났는데 상태가 그대로). 실패 상태(DEPLOY_FAILED 등)는 실패 목록이 보여 주므로 넣지 않는다.
+	 * 예정 단계 지연(계획 + 10분이 지났는데 상태가 그대로).
 	 * - 호스팅 시작(WF2-1): hosting_start_at, 호스팅 PENDING · DEPLOYED 그대로
 	 * - 준비(WF2-2): 입장(시작 − 60분) — 입장 직후 OPEN이 된다. 이벤트 SCHEDULED 그대로
 	 * - 종료(WF4): hosting_end_at, 호스팅 ENDED · END_FAILED가 아님
+	 * 배포 · 호스팅 시작 실패(DEPLOY_FAILED · HOSTING_FAILED)는 넣지 않는다 — 실패 목록 · 진행 단계가 보여 준다.
+	 * 이벤트가 SCHEDULED로 남아 준비 지연이 끝없이 늘었다(이벤트 9: "준비 1625분 지연", 2026-10-28).
+	 * 준비 실패(OPEN_FAILED)는 SCHEDULED가 아니라 준비 지연이 없고, 종료 지연은 본다(hosting_end_at이 지났는데 호스팅이 남아 있으면 정리가 안 된 것).
 	 */
 	static List<String> delays(List<MonitoredEvent> events, LocalDateTime now) {
 		List<String> delays = new ArrayList<>();
 		for (MonitoredEvent e : events) {
 			HostingStatus h = e.hostingStatus();
+			if (h == HostingStatus.DEPLOY_FAILED || h == HostingStatus.HOSTING_FAILED) {
+				continue;
+			}
 			if ((h == HostingStatus.PENDING || h == HostingStatus.DEPLOYED) && late(e.hostingStartAt(), now)) {
 				delays.add(delay(e, "호스팅 시작", e.hostingStartAt(), now));
 			}

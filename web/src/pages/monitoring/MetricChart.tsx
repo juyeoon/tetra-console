@@ -6,7 +6,7 @@ import { ChartsAxisTooltipContent, ChartsTooltipContainer, useAxesTooltip, type 
 import StatusChip from '@/components/common/StatusChip';
 import { chartColors, font, line, radius, text, tones } from '@/theme/theme';
 import { formatClock, formatClockMinute } from '@/utils/datetime';
-import { markerLabels, timeTicks, tooltipValue, Y_AXIS_WIDTH, type ChartView, type SeriesRole } from './trafficMonitoringView';
+import { MARKER_LABEL_OFFSET, MARKER_LEVEL_PX, markerLabels, timeTicks, tooltipValue, Y_AXIS_WIDTH, type ChartView, type SeriesRole } from './trafficMonitoringView';
 
 /** 주 지표 남색, 보조 지표 연보라. 이벤트 그래프에는 빨강을 쓰지 않는다 */
 export const ROLE_COLOR: Record<SeriesRole, string> = { primary: chartColors.primary, secondary: chartColors.secondary };
@@ -76,7 +76,7 @@ function useWidth<T extends HTMLElement>() {
 }
 
 /**
- * 머리글(제목 · 단위 · 오른쪽 현재 값) + 선 그래프(축 눈금, 기준 점선, 입장 · 시작 세로 점선) + 범례.
+ * 머리글(제목 · 단위 · 오른쪽 현재 값) + 선 그래프(축 눈금, 기준 점선, 세로 점선 5종 — 이름은 겹치면 단을 엇갈림) + 범례.
  * x축 눈금은 그래프 폭에 맞춰 직접 정한다(timeTicks — 좁은 3칸 줄에서 겹치지 않게), 축은 데이터 범위 그대로(strict).
  * 툴팁 머리는 'HH:mm:ss'(15초 점), 값이 없으면 '–'. tooltipNote가 있으면 툴팁 아래에 안내 한 줄, dashed 시리즈는 점선
  */
@@ -172,14 +172,15 @@ export default function MetricChart({
               {guides.map((g) => (
                 <ChartsReferenceLine key={`g-${g.label}`} y={g.y} lineStyle={{ stroke: GUIDE_COLOR, strokeDasharray: '4 4', strokeWidth: 1 }} />
               ))}
-              {markerLabels(markers, x[0], x[x.length - 1], width).map((m) => (
+              {markerLabels(markers, x[0], x[x.length - 1], width).map((m, i) => (
                 <ChartsReferenceLine
-                  key={`m-${m.x}`}
+                  key={`m-${m.x}-${i}`}
                   x={m.x}
                   label={m.label || undefined}
                   labelAlign="start"
+                  spacing={{ x: m.side === 'left' ? -MARKER_LABEL_OFFSET : MARKER_LABEL_OFFSET, y: MARKER_LABEL_OFFSET + m.level * MARKER_LEVEL_PX }}
                   lineStyle={{ stroke: GUIDE_COLOR, strokeDasharray: '3 3', strokeWidth: 1 }}
-                  labelStyle={{ fill: text.tertiary, fontSize: font.size.caption }}
+                  labelStyle={{ fill: text.tertiary, fontSize: font.size.caption, textAnchor: m.side === 'left' ? 'end' : 'start' }}
                 />
               ))}
             </LineChart>
