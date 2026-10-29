@@ -6,6 +6,7 @@ import StatusChip from '@/components/common/StatusChip';
 import type { TrafficEventResponse, TrafficRangeKey } from '@/api/types';
 import { line, radius, text, tones } from '@/theme/theme';
 import ExecutionPanel from './ExecutionPanel';
+import { executionStepsKey } from './executionView';
 import { KpiGroups, KpiTiles } from './KpiPanels';
 import MetricChart from './MetricChart';
 import StepTimeline from './StepTimeline';
@@ -124,7 +125,7 @@ function EventDetail({ detail, onRange, now }: { detail: TrafficEventResponse; o
         <StepTimeline steps={stepViews(detail.steps, now)} />
       </Box>
       {/* 이벤트를 바꾸면 다시 접힌 상태로 */}
-      <ExecutionPanel key={detail.event.eventId} eventId={detail.event.eventId} now={now} />
+      <ExecutionPanel key={detail.event.eventId} eventId={detail.event.eventId} stepsKey={executionStepsKey(detail.steps)} now={now} />
       {body.kind === 'scheduled' && <Notice tone="grey" title={body.title} description={body.description} />}
       {body.kind === 'failed' && (
         <Notice

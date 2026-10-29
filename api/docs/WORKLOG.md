@@ -280,3 +280,11 @@
 - 파일: src/main/java/com/tetra/ops/monitoring/{EventExecutionService, EventExecutionsResponse, SfnHistories}.java(신규), .../monitoring/{AwsMonitoringGateway, SdkAwsMonitoringGateway, TrafficMonitoringController}.java, .../config/{AwsConfig, TetraProperties}.java, src/main/resources/application.yml, .env.example, src/test/java/com/tetra/ops/monitoring/{SfnHistoriesTest, EventExecutionServiceTest, EventExecutionsApiTest}.java(신규) · TrafficAwsCollectorTest.java, src/test/resources/sfn/*.json(신규), ../web/src/api/{types.ts, monitoring.ts}, ../web/src/pages/monitoring/{ExecutionPanel.tsx, executionView.ts, executionView.test.ts}(신규) · EventSection.tsx
 - 문서: docs/ops05/OPS-05_명세.md(1절 C행 — 8단계로 고침 · 실행 상세, 4절 준비 실패, 5-2 Step Functions 호출 · 캐시 · 권한 표와 제목 정정, 6절 엔드포인트, 7절 검증), CLAUDE.md §3 · §6 · §7.17 · §8 · §10
 - 남은 것: Console 태스크 역할 권한(states:ListExecutions · GetExecutionHistory)은 infra-aws에서 apply 중 — 배포 뒤 dev에서 한 번 확인. 실행 이름 고정(스케줄러 universal target)은 하지 않음
+
+## 2026-10-29 KST — OPS-05 자동화 실행 상세: 진행 단계가 바뀌면 다시 불러오기(F3, web)
+- 한 일: 테스트 14에서 실행 중이 없는 사이(WF1-2 끝 → WF2-1 시작 전)에 시작한 실행이 접었다 펴야 보였음. 진행 단계 흐름 4칸(DEPLOY · HOSTING_START · PREPARE · END)의 key:state:actualAt이 바뀌면 바로 다시 부르고 2분 동안 실행 중이 없어도 15초 유지(EXECUTION_REFRESH_GRACE_MS — 이벤트 응답 캐시 15초 + ListExecutions 캐시 30초 + 스케줄러 시작 지연 약 37초). usePolling에 reload 옵션(데이터 유지 · 멈춘 폴링 재시작, key와 달리 비우지 않아 깜빡임 없음). 접힌 동안은 호출 없음(2분만 잡아 둠). 강제 새로고침 버튼은 두지 않음(결정). 서버 변경 없음 — List 호출은 상태 머신별 30초 캐시가 상한이라 늘지 않음
+- 테스트: executionView.test.ts 4개 추가 · 1개 수정(키 변화 · 변화 없음 · 멈춤 판정). web 171개 · typecheck · build 통과
+- 로컬 확인: 목 API + 헤드리스 Chrome으로 요청 시각 기록 — 펼침 15:33:18 1회 → 단계 변화 감지 15:34:03 즉시 1회 → 15초 간격 9회(15:34:33에 새 WF2-2가 RUNNING으로 나타남, 즉시 1회만이면 놓쳤음) → 15:36:03 뒤 멈춤. 접힌 동안 단계 변화(15:37:03 감지) 호출 0회, 15:38:00에 다시 펼치면 15:39:15까지 15초 간격 뒤 멈춤
+- 파일: ../web/src/hooks/usePolling.ts, ../web/src/pages/monitoring/{executionView.ts, executionView.test.ts, ExecutionPanel.tsx, EventSection.tsx}
+- 문서: docs/ops05/OPS-05_명세.md(1절 C행 갱신 칸, 5-2 Step Functions 화면 갱신 규칙 · 이유 · List 호출 · 한계), CLAUDE.md §7.17
+- 남은 것: 실패 뒤 수동 재실행(-rN · redrive)은 시작할 때 단계가 바뀌지 않아 끝날 때 보임(한계로 둠)

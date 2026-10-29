@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import ExpandMoreRoundedIcon from '@mui/icons-material/ExpandMoreRounded';
 import { Box, Button, ButtonBase, Collapse, Stack, TableBody, TableCell, TableHead, TableRow, Typography } from '@mui/material';
 import { fetchEventExecutions } from '@/api/monitoring';
@@ -7,7 +7,7 @@ import StatusChip from '@/components/common/StatusChip';
 import TableCard from '@/components/common/TableCard';
 import { usePolling } from '@/hooks/usePolling';
 import { font, line, radius, text, tones, type } from '@/theme/theme';
-import { EXECUTION_PANEL_TITLE, executionPanel, NO_EXECUTION_TEXT, stopExecutionPolling, type ExecutionView } from './executionView';
+import { EXECUTION_PANEL_TITLE, EXECUTION_REFRESH_GRACE_MS, executionPanel, NO_EXECUTION_TEXT, stopExecutionPolling, type ExecutionView } from './executionView';
 import { POLL_MS } from './trafficMonitoringView';
 
 const Chevron = ({ open }: { open: boolean }) => (
@@ -16,14 +16,24 @@ const Chevron = ({ open }: { open: boolean }) => (
 
 /**
  * C 진행 단계 아래 자동화 실행 상세(Step Functions — WF1-2 · WF2-1 · WF2-2 · WF4). 기본 접힘.
- * 펼쳤을 때만 부르고, 실행 중이 있을 때만 15초마다 다시 부른다(끝난 실행은 바뀌지 않음).
+ * 펼쳤을 때만 부르고, 실행 중이 있을 때 · 진행 단계(흐름 칸, stepsKey)가 바뀐 뒤 2분 동안 15초마다 다시 부른다(끝난 실행은 바뀌지 않음).
+ * 접힌 동안 단계가 바뀌면 부르지 않고 2분만 잡아 둔다(그 안에 펼치면 남은 시간 동안 15초).
  */
-export default function ExecutionPanel({ eventId, now }: { eventId: number; now: Date }) {
+export default function ExecutionPanel({ eventId, stepsKey, now }: { eventId: number; stepsKey: string; now: Date }) {
   const [open, setOpen] = useState(false);
+  // 단계가 바뀐 뒤 실행 중이 없어도 다시 부르는 기한. stopWhen이 지난 렌더의 함수여도 ref라 지금 값을 읽는다
+  const graceUntil = useRef(0);
+  const lastStepsKey = useRef(stepsKey);
+  useEffect(() => {
+    if (lastStepsKey.current === stepsKey) return;
+    lastStepsKey.current = stepsKey;
+    graceUntil.current = Date.now() + EXECUTION_REFRESH_GRACE_MS;
+  }, [stepsKey]);
   const { data, failed } = usePolling((signal) => fetchEventExecutions(eventId, signal), POLL_MS, {
     key: eventId,
     enabled: open,
-    stopWhen: stopExecutionPolling,
+    reload: stepsKey,
+    stopWhen: (res) => stopExecutionPolling(res, Date.now(), graceUntil.current),
   });
   const panel = executionPanel(data, failed, now);
   return (

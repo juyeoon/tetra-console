@@ -1,4 +1,4 @@
-import type { EventExecution, EventExecutionsResponse, ExecutionFlow, ExecutionState, ExecutionStatus } from '../../api/types.ts';
+import type { EventExecution, EventExecutionsResponse, ExecutionFlow, ExecutionState, ExecutionStatus, TrafficStep } from '../../api/types.ts';
 import { formatClock } from '../../utils/datetime.ts';
 import { clockText, durationText, EMPTY } from './trafficMonitoringView.ts';
 
@@ -37,10 +37,35 @@ export const EXECUTIONS_FAILED_TEXT = '실행 기록을 불러오지 못했어�
 
 const isRunning = (status: string) => status === 'RUNNING' || status === 'PENDING_REDRIVE';
 
-/** 실행 중(재실행 대기 포함)이 있을 때만 15초마다 다시 부른다 */
+/** 실행 중(재실행 대기 포함)이 있으면 15초마다 다시 부른다 */
 export const hasRunningExecution = (res: EventExecutionsResponse) => res.executions.some((e) => isRunning(e.status));
 
-export const stopExecutionPolling = (res: EventExecutionsResponse) => !hasRunningExecution(res);
+/**
+ * 진행 단계(흐름 칸)가 바뀐 뒤 실행 중이 없어도 15초마다 부르는 시간(2026-10-29, 테스트 14).
+ * 단계는 계획 시각 정각에 진행 중으로 바뀌지만 새 실행이 응답에 보이기까지 더 걸린다:
+ * 서버 이벤트 응답 캐시 15초 + ListExecutions 캐시 30초(MONITORING_SFN_LIST_TTL) + 스케줄러 시작 지연(이벤트 13 WF2-2 약 37초).
+ * 바뀐 직후 한 번만 부르면 '실행 없음'을 받고 다시 멈춘다. 2분이면 스케줄러 지연 75초까지 잡는다.
+ */
+export const EXECUTION_REFRESH_GRACE_MS = 120_000;
+
+/** 실행이 있는 흐름 칸 — 진행 단계 키와 같다 */
+const FLOW_STEPS: readonly TrafficStep['key'][] = FLOWS;
+
+/**
+ * 진행 단계가 바뀌었는지 보는 값: 흐름 4칸의 key:state:actualAt.
+ * actualAt은 수동 재실행이 또 실패했을 때(FAILED 그대로, 실패 시각만 바뀜)를 잡는다. 진행 중에는 고정값이라 흔들리지 않는다.
+ * 승인 · 입장 · 시작 · 집계 칸, 사유 · 걸린 시간(Prometheus 값)은 실행과 무관해 넣지 않는다.
+ */
+export function executionStepsKey(steps: TrafficStep[] | undefined): string {
+  return (steps ?? [])
+    .filter((s) => FLOW_STEPS.includes(s.key))
+    .map((s) => `${s.key}:${s.state}:${s.actualAt ?? ''}`)
+    .join(',');
+}
+
+/** 실행 중이 없고 단계가 바뀐 뒤 2분(graceUntilMs)이 지났을 때만 멈춘다 */
+export const stopExecutionPolling = (res: EventExecutionsResponse, nowMs: number, graceUntilMs: number) =>
+  !hasRunningExecution(res) && nowMs >= graceUntilMs;
 
 export interface StateRowView {
   key: string;
