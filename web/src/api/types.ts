@@ -640,6 +640,62 @@ export interface TrafficEventResponse {
   charts: TrafficCharts | null;
 }
 
+/** 자동화 실행 상세의 흐름 — 진행 단계 칸과 같은 이름(배포 WF1-2 · 호스팅 시작 WF2-1 · 준비 WF2-2 · 호스팅 종료 WF4) */
+export type ExecutionFlow = 'DEPLOY' | 'HOSTING_START' | 'PREPARE' | 'END';
+
+export type ExecutionStatus = 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'TIMED_OUT' | 'ABORTED' | 'PENDING_REDRIVE';
+
+/** LOOP = Wait로 시작하는 반복 묶음(names가 Wait부터 차례, count = 반복 횟수). Pass · Choice · Succeed는 실패 단계일 때만 온다 */
+export type ExecutionStateKind = 'TASK' | 'WAIT' | 'CHOICE' | 'PASS' | 'PARALLEL' | 'MAP' | 'SUCCEED' | 'LOOP';
+
+export interface ExecutionState {
+  kind: ExecutionStateKind;
+  names: string[];
+  /** 들어간 횟수(LOOP는 반복 횟수) */
+  count: number;
+  startedAt: string | null;
+  /** 진행 중이면 null */
+  endedAt: string | null;
+  /** 진행 중이면 지금까지 */
+  durationSeconds: number | null;
+  retries: number;
+  status: 'SUCCEEDED' | 'FAILED' | 'RUNNING';
+}
+
+/** state = 실패한 단계, reason = 요약 120자, cause = 비밀값을 가린 원문 500자 */
+export interface ExecutionFailure {
+  state: string | null;
+  error: string | null;
+  reason: string | null;
+  cause: string | null;
+}
+
+export interface EventExecution {
+  flow: ExecutionFlow;
+  workflow: string;
+  /** approve-13, 스케줄러가 시작한 실행은 UUID */
+  name: string;
+  /** 같은 흐름 안의 순번(1부터) — 2 이상이면 재실행 */
+  attempt: number;
+  status: ExecutionStatus;
+  startedAt: string;
+  stoppedAt: string | null;
+  durationSeconds: number | null;
+  redriveCount: number;
+  failure: ExecutionFailure | null;
+  states: ExecutionState[];
+  /** 기록이 길어 뒤쪽을 받지 않음 */
+  truncated: boolean;
+}
+
+/** GET /monitoring/events/{eventId}/executions — 자동화 실행 상세(Step Functions). 실행 입력 · 출력 · ARN은 없다 */
+export interface EventExecutionsResponse {
+  aws: MonitoringSource;
+  eventId: number;
+  /** 흐름 순 → 시작 순. 실행이 없는 흐름은 빠진다 */
+  executions: EventExecution[];
+}
+
 // ---------------------------------------------------------------- 알림센터 (NotificationController)
 
 /** GET /notifications 항목. 테넌트 · 이벤트와 무관한 알림이면 tenantId · tenantName · eventId가 null */

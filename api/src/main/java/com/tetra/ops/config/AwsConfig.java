@@ -52,10 +52,11 @@ public class AwsConfig {
 	}
 
 	// ---- OPS-05 트래픽 모니터링(읽기 전용). 호출 1회 상한을 두어 갱신 상한(MONITORING_AWS_REFRESH_TIMEOUT) 안에 끝나게 한다 ----
+	// Step Functions 조회는 위 sfnClient를 그대로 쓰고 같은 상한을 요청마다 덮어쓴다(SdkAwsMonitoringGateway)
 
-	static final Duration MONITORING_API_CALL_TIMEOUT = Duration.ofSeconds(5);
+	public static final Duration MONITORING_API_CALL_TIMEOUT = Duration.ofSeconds(5);
 
-	static final Duration MONITORING_ATTEMPT_TIMEOUT = Duration.ofSeconds(2);
+	public static final Duration MONITORING_ATTEMPT_TIMEOUT = Duration.ofSeconds(2);
 
 	private static ClientOverrideConfiguration monitoringOverride() {
 		return ClientOverrideConfiguration.builder()
