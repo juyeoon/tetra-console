@@ -45,7 +45,7 @@ class TrafficAwsCollectorTest {
 				"app/console/1", "app/portal/2", "targetgroup/console/3", "targetgroup/portal/4",
 				"arn:aws:elasticloadbalancing:ap-northeast-2:000000000000:targetgroup/console/3",
 				"arn:aws:elasticloadbalancing:ap-northeast-2:000000000000:targetgroup/portal/4", "tetra-dev-mysql",
-				"tetra-dev", "console,portal", dlqNames);
+				"tetra-dev", "console,portal", dlqNames, Duration.ofSeconds(30));
 		var monitoring = new TetraProperties.Monitoring("", Duration.ofSeconds(2), Duration.ofSeconds(3),
 				Duration.ofSeconds(15), Duration.ofSeconds(8), aws);
 		return new TetraProperties("test", null, null, null, null, null, null, null, null, monitoring, null, null, null,

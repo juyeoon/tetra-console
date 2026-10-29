@@ -99,6 +99,7 @@ public record TetraProperties(
 	 * ALB · 대상 그룹 값은 CloudWatch 차원용 arn_suffix(app/… · targetgroup/…), *TgArn은 DescribeTargetHealth용 ARN.
 	 * issuanceAlbName은 이름 — 실행 중 DescribeLoadBalancers로 ARN을 얻어 캐시한다(ALB가 이벤트 때 다시 만들어질 수 있어서).
 	 * ecsServices · dlqNames는 쉼표 구분.
+	 * sfnListTtl: 자동화 실행 상세의 ListExecutions(상태 머신별, 모든 이벤트가 같이 씀) 캐시. 상태 머신은 tetra.sfn 값으로 정해 따로 설정하지 않는다.
 	 */
 	public record MonitoringAws(@NotNull @DefaultValue("PT60S") Duration cacheTtl,
 			@NotNull @DefaultValue("PT10S") Duration refreshTimeout,
@@ -108,7 +109,8 @@ public record TetraProperties(
 			@DefaultValue("") String consoleTgArn, @DefaultValue("") String portalTgArn,
 			@DefaultValue("") String rdsId,
 			@DefaultValue("") String ecsCluster, @DefaultValue("") String ecsServices,
-			@DefaultValue("") String dlqNames) {
+			@DefaultValue("") String dlqNames,
+			@NotNull @DefaultValue("PT30S") Duration sfnListTtl) {
 
 		/** 하나라도 값이 있으면 AWS를 조회한다(전부 비면 aws.stale = true, 수치 null) */
 		public boolean configured() {

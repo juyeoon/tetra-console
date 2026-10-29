@@ -12,6 +12,9 @@ import java.util.function.Supplier;
 
 import org.springframework.stereotype.Component;
 
+import com.tetra.ops.config.AwsConfig;
+
+import software.amazon.awssdk.awscore.AwsRequestOverrideConfiguration;
 import software.amazon.awssdk.awscore.exception.AwsServiceException;
 import software.amazon.awssdk.core.exception.SdkException;
 import software.amazon.awssdk.services.cloudwatch.CloudWatchClient;
@@ -33,13 +36,26 @@ import software.amazon.awssdk.services.elasticloadbalancingv2.model.TargetHealth
 import software.amazon.awssdk.services.elasticloadbalancingv2.model.TargetHealthStateEnum;
 import software.amazon.awssdk.services.rds.RdsClient;
 import software.amazon.awssdk.services.rds.model.DbInstanceNotFoundException;
+import software.amazon.awssdk.services.sfn.SfnClient;
+import software.amazon.awssdk.services.sfn.model.ExecutionListItem;
+import software.amazon.awssdk.services.sfn.model.GetExecutionHistoryResponse;
+import software.amazon.awssdk.services.sfn.model.ListExecutionsResponse;
 
-/** AWS SDK v2 구현. 클라이언트 상한(호출 5초 · 시도 2초)은 AwsConfig. */
+/**
+ * AWS SDK v2 구현. 클라이언트 상한(호출 5초 · 시도 2초)은 AwsConfig. Step Functions는 StartExecution과 같은 SfnClient를 쓰고
+ * 같은 상한을 요청마다 덮어쓴다(클라이언트 Bean을 하나 더 두면 StartExecution 쪽 주입이 모호해진다).
+ */
 @Component
 class SdkAwsMonitoringGateway implements AwsMonitoringGateway {
 
 	/** DescribeTags 한 번에 넣을 수 있는 리소스 수 */
 	static final int TAGS_BATCH = 20;
+
+	/** ListExecutions 한 페이지 */
+	static final int EXECUTIONS_PAGE = 100;
+
+	/** GetExecutionHistory 한 페이지(API 최대) */
+	static final int HISTORY_PAGE = 1000;
 
 	private final CloudWatchClient cloudWatch;
 
@@ -49,11 +65,15 @@ class SdkAwsMonitoringGateway implements AwsMonitoringGateway {
 
 	private final EcsClient ecs;
 
-	SdkAwsMonitoringGateway(CloudWatchClient cloudWatch, ElasticLoadBalancingV2Client elb, RdsClient rds, EcsClient ecs) {
+	private final SfnClient sfn;
+
+	SdkAwsMonitoringGateway(CloudWatchClient cloudWatch, ElasticLoadBalancingV2Client elb, RdsClient rds, EcsClient ecs,
+			SfnClient sfn) {
 		this.cloudWatch = cloudWatch;
 		this.elb = elb;
 		this.rds = rds;
 		this.ecs = ecs;
+		this.sfn = sfn;
 	}
 
 	@Override
@@ -181,6 +201,91 @@ class SdkAwsMonitoringGateway implements AwsMonitoringGateway {
 		while (nextToken != null);
 		points.values().forEach(list -> list.sort(Comparator.comparingLong(MetricPoint::epochMillis)));
 		return points;
+	}
+
+	@Override
+	public List<ExecutionItem> executions(String stateMachineArn, Instant notBefore, int maxItems) {
+		List<ExecutionItem> items = new ArrayList<>();
+		String nextToken = null;
+		do {
+			String token = nextToken;
+			ListExecutionsResponse response = call("ListExecutions", () -> sfn.listExecutions(r -> r
+				.stateMachineArn(stateMachineArn)
+				.maxResults(EXECUTIONS_PAGE)
+				.nextToken(token)
+				.overrideConfiguration(SdkAwsMonitoringGateway::sfnLimits)));
+			for (ExecutionListItem e : response.executions()) {
+				if (e.startDate() != null && e.startDate().isBefore(notBefore)) {
+					// 최신순이라 뒤는 모두 더 오래됐다
+					return items;
+				}
+				items.add(new ExecutionItem(e.executionArn(), e.name(), e.statusAsString(), e.startDate(), e.stopDate(),
+						e.redriveCount() == null ? 0 : e.redriveCount()));
+				if (items.size() >= maxItems) {
+					return items;
+				}
+			}
+			nextToken = response.nextToken();
+		}
+		while (nextToken != null);
+		return items;
+	}
+
+	@Override
+	public String executionInput(String executionArn) {
+		return call("DescribeExecution", () -> sfn
+			.describeExecution(r -> r.executionArn(executionArn).overrideConfiguration(SdkAwsMonitoringGateway::sfnLimits))
+			.input());
+	}
+
+	@Override
+	public ExecutionHistory executionHistory(String executionArn, int maxEvents) {
+		List<HistoryEvent> events = new ArrayList<>();
+		String nextToken = null;
+		do {
+			String token = nextToken;
+			int page = Math.min(HISTORY_PAGE, maxEvents - events.size());
+			GetExecutionHistoryResponse response = call("GetExecutionHistory", () -> sfn.getExecutionHistory(r -> r
+				.executionArn(executionArn)
+				.maxResults(page)
+				.includeExecutionData(false)
+				.nextToken(token)
+				.overrideConfiguration(SdkAwsMonitoringGateway::sfnLimits)));
+			response.events().forEach(e -> events.add(historyEvent(e)));
+			nextToken = response.nextToken();
+			if (nextToken != null && events.size() >= maxEvents) {
+				return new ExecutionHistory(events, true);
+			}
+		}
+		while (nextToken != null);
+		return new ExecutionHistory(events, false);
+	}
+
+	/** SDK 이벤트에서 상태 이름(진입 · 나옴)과 실행 실패 · 시간 초과 · 중단의 error · cause만 꺼낸다 */
+	static HistoryEvent historyEvent(software.amazon.awssdk.services.sfn.model.HistoryEvent e) {
+		String name = e.stateEnteredEventDetails() != null ? e.stateEnteredEventDetails().name()
+				: e.stateExitedEventDetails() != null ? e.stateExitedEventDetails().name() : null;
+		String error = null;
+		String cause = null;
+		if (e.executionFailedEventDetails() != null) {
+			error = e.executionFailedEventDetails().error();
+			cause = e.executionFailedEventDetails().cause();
+		}
+		else if (e.executionTimedOutEventDetails() != null) {
+			error = e.executionTimedOutEventDetails().error();
+			cause = e.executionTimedOutEventDetails().cause();
+		}
+		else if (e.executionAbortedEventDetails() != null) {
+			error = e.executionAbortedEventDetails().error();
+			cause = e.executionAbortedEventDetails().cause();
+		}
+		return new HistoryEvent(e.id(), e.previousEventId() == null ? 0 : e.previousEventId(), e.typeAsString(),
+				e.timestamp(), name, error, cause);
+	}
+
+	private static void sfnLimits(AwsRequestOverrideConfiguration.Builder override) {
+		override.apiCallTimeout(AwsConfig.MONITORING_API_CALL_TIMEOUT)
+			.apiCallAttemptTimeout(AwsConfig.MONITORING_ATTEMPT_TIMEOUT);
 	}
 
 	/** arn:aws:elasticloadbalancing:{region}:{account}:loadbalancer/app/{name}/{id} → app/{name}/{id} */

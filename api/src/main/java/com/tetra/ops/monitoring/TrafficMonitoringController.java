@@ -18,8 +18,11 @@ public class TrafficMonitoringController {
 
 	private final TrafficMonitoringService service;
 
-	public TrafficMonitoringController(TrafficMonitoringService service) {
+	private final EventExecutionService executions;
+
+	public TrafficMonitoringController(TrafficMonitoringService service, EventExecutionService executions) {
 		this.service = service;
+		this.executions = executions;
 	}
 
 	@Operation(summary = "OPS-05 상태 요약 · 노드 · 플랫폼 · 다가오는 이벤트 · 최근 자동화 실패",
@@ -48,6 +51,16 @@ public class TrafficMonitoringController {
 			@Parameter(description = "entry · 15m · 1h(입장 직전 · 진행 중), full · start(종료). 이 상태에서 못 고르는 값이면 기본값")
 			@RequestParam(required = false) String range) {
 		return service.event(eventId, range);
+	}
+
+	@Operation(summary = "OPS-05 자동화 실행 상세(Step Functions)",
+			description = "이벤트의 WF1-2(DEPLOY) · WF2-1(HOSTING_START) · WF2-2(PREPARE) · WF4(END) 실행: 상태 · 시작 · 끝, "
+					+ "단계별 시작 · 끝 · 소요 · 횟수(Wait 반복은 LOOP 한 줄) · 재시도, 실패 단계와 사유(비밀값 가림). "
+					+ "실행 입력 · 출력 · ARN은 없다. 목록 30초 · 이벤트 15초 캐시, 실패하면 마지막 값 + aws.stale. "
+					+ "승인 전이면 executions []. 없는 이벤트 404 EVENT_NOT_FOUND, 테넌트 준비 전 409 TENANT_NOT_READY")
+	@GetMapping("/events/{eventId}/executions")
+	public EventExecutionsResponse executions(@PathVariable Long eventId) {
+		return executions.executions(eventId);
 	}
 
 }

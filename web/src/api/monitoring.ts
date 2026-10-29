@@ -1,5 +1,12 @@
 import { apiRequest } from './client.ts';
-import type { MonitoringOverviewResponse, TrafficEventResponse, TrafficEventsResponse, TrafficPlatformResponse, TrafficRangeKey } from './types.ts';
+import type {
+  EventExecutionsResponse,
+  MonitoringOverviewResponse,
+  TrafficEventResponse,
+  TrafficEventsResponse,
+  TrafficPlatformResponse,
+  TrafficRangeKey,
+} from './types.ts';
 
 /** OPS-02 홈 모니터링 카드 3개(클러스터 · 실시간 트래픽 · 테넌트 별 처리 현황) — Prometheus, 서버 15초 캐시 */
 export const fetchMonitoringOverview = (signal?: AbortSignal) => apiRequest<MonitoringOverviewResponse>('/monitoring/overview', { signal });
@@ -13,3 +20,7 @@ export const fetchTrafficEvents = (signal?: AbortSignal) => apiRequest<TrafficEv
 /** OPS-05 이벤트 진행 단계 · KPI · 그래프. range를 비우면 상태별 기본 범위 */
 export const fetchTrafficEvent = (eventId: number, range: TrafficRangeKey | null, signal?: AbortSignal) =>
   apiRequest<TrafficEventResponse>(`/monitoring/events/${eventId}${range ? `?range=${encodeURIComponent(range)}` : ''}`, { signal });
+
+/** OPS-05 자동화 실행 상세(Step Functions) — 목록 30초 · 이벤트 15초 캐시. 실행 입력 · 출력 · ARN은 없다 */
+export const fetchEventExecutions = (eventId: number, signal?: AbortSignal) =>
+  apiRequest<EventExecutionsResponse>(`/monitoring/events/${eventId}/executions`, { signal });
