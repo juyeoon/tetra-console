@@ -131,7 +131,7 @@ class SqsListenerContainerTest extends IntegrationTest {
 		verify(handler, org.mockito.Mockito.atLeastOnce()).handleTenantResult(eq(body));
 		verify(mail, times(1)).send(any());
 		assertThat(data.count("SELECT COUNT(*) FROM tetra_platform.operator_notification WHERE tenant_id = ?"
-				+ " AND category = 'MAIL' AND priority = 'URGENT'", B)).isEqualTo(1);
+				+ " AND category = 'MAIL' AND priority = 'WARNING'", B)).isEqualTo(1);
 	}
 
 	/** 수명 주기 결과 큐(WF2-1 · WF2-2 · WF4 공용): 정상 처리면 삭제 */

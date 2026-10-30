@@ -22,7 +22,8 @@ class TenantMigrationScriptTest {
 	@ParameterizedTest
 	@CsvSource({
 			"src/main/resources/db/migration/tenant/V1__init_tenant_schema.sql, 86435fdd49d1adb919c3d8e2eb465e0c52ddff48c48075f038a7b7cd529e67d8",
-			"src/test/resources/db/migration/platform/V1__init_platform_schema.sql, 7c28cd3e2d8a8057e81989a143f6fc4a558dedf80e1ba4f918868da4464c8ba4" })
+			"src/test/resources/db/migration/platform/V1__init_platform_schema.sql, 7c28cd3e2d8a8057e81989a143f6fc4a558dedf80e1ba4f918868da4464c8ba4",
+			"src/test/resources/db/migration/platform/V4__add_operator_notification_dedupe_key.sql, 159b71db705f9fe6b64e77025d9737e11362742dee4f738066961a307766d154" })
 	void copyMatchesDbSchemaHash(String file, String sha256) throws Exception {
 		String content = Files.readString(Path.of(file), StandardCharsets.UTF_8).replace("\r", "");
 		byte[] digest = MessageDigest.getInstance("SHA-256").digest(content.getBytes(StandardCharsets.UTF_8));

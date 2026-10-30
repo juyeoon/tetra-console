@@ -18,7 +18,7 @@ import software.amazon.awssdk.services.sesv2.SesV2Client;
 import software.amazon.awssdk.services.sfn.SfnClient;
 
 /**
- * AWS SDK v2 클라이언트. 자격 증명은 기본 자격 증명 체인(EKS에서는 IRSA)을 쓴다. 코드·설정에 넣지 않는다.
+ * AWS SDK v2 클라이언트. 자격 증명은 기본 자격 증명 체인(ECS에서는 태스크 역할)을 쓴다. 코드·설정에 넣지 않는다.
  */
 @Configuration(proxyBeanMethods = false)
 public class AwsConfig {

@@ -43,11 +43,23 @@ public class OperatorNotification {
 	@Column(name = "is_read", nullable = false)
 	private boolean read;
 
+	/**
+	 * 중복 방지 키(V4, uk_operator_notif_dedupe). 같은 키는 1행만 — 다시 넣으면 1062.
+	 * 1분 주기 확인 알림만 쓴다(DLQ:{큐}:{yyyy-MM-dd} · DELAY:{event_id}:{단계}). 상태 전이 알림은 NULL(제한 없음).
+	 */
+	@Column(name = "dedupe_key", length = 100)
+	private String dedupeKey;
+
 	protected OperatorNotification() {
 	}
 
 	public static OperatorNotification unread(String tenantId, Long eventId, String category, String priority,
 			LocalDateTime occurredAt, String content) {
+		return unread(tenantId, eventId, category, priority, occurredAt, content, null);
+	}
+
+	public static OperatorNotification unread(String tenantId, Long eventId, String category, String priority,
+			LocalDateTime occurredAt, String content, String dedupeKey) {
 		OperatorNotification notification = new OperatorNotification();
 		notification.tenantId = tenantId;
 		notification.eventId = eventId;
@@ -56,6 +68,7 @@ public class OperatorNotification {
 		notification.occurredAt = occurredAt;
 		notification.content = content;
 		notification.read = false;
+		notification.dedupeKey = dedupeKey;
 		return notification;
 	}
 
@@ -89,6 +102,10 @@ public class OperatorNotification {
 
 	public boolean isRead() {
 		return read;
+	}
+
+	public String getDedupeKey() {
+		return dedupeKey;
 	}
 
 }

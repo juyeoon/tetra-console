@@ -80,6 +80,12 @@ class IssuanceHistoryTest extends IntegrationTest {
 		return rows.isEmpty() ? null : rows.get(0);
 	}
 
+	/** 테넌트 집계 완료 알림(EVENT/INFO) 건수 */
+	private long aggregatedNotifications() {
+		return data.count("SELECT COUNT(*) FROM t_%s.tenant_notification WHERE event_id = ? AND category = 'EVENT'"
+				.formatted(A) + " AND priority = 'INFO' AND content LIKE '%이벤트 결과 집계가 완료되었습니다%'", EVENT_ID);
+	}
+
 	private byte[] uploadedCsv() {
 		ArgumentCaptor<byte[]> csv = ArgumentCaptor.forClass(byte[].class);
 		verify(storage).put(eq(BUCKET), eq(KEY), csv.capture(), eq("text/csv; charset=utf-8"));
@@ -119,6 +125,11 @@ class IssuanceHistoryTest extends IntegrationTest {
 		assertThat((BigDecimal) row.get("sellout_rate")).isEqualByComparingTo("0.3750");
 		assertThat(row.get("metrics_finalized_at").toString().replace('T', ' ')).startsWith("2026-11-01 23:00");
 		assertThat(row.get("history_generated_at")).isNotNull();
+		// 집계 Job 행이 먼저 있어도 history_generated_at을 처음 채운 것이므로 집계 완료 알림 1건
+		assertThat(aggregatedNotifications()).isEqualTo(1);
+		assertThat(data.jdbc().queryForObject("SELECT content FROM t_%s.tenant_notification WHERE category = 'EVENT'"
+				.formatted(A), String.class))
+			.isEqualTo("[4401:이벤트 4401] 이벤트 결과 집계가 완료되었습니다. 결과 화면에서 발급 내역을 확인하고 CSV를 내려받을 수 있습니다.");
 
 		// 결과 탭 READY, CSV 다운로드는 테넌트 로그 버킷의 같은 키
 		mvc.perform(get("/api/ops/events/{id}/result", EVENT_ID).cookie(operatorCookie()))
@@ -153,6 +164,7 @@ class IssuanceHistoryTest extends IntegrationTest {
 		assertThat((BigDecimal) row.get("sellout_rate")).isEqualByComparingTo("0");
 		assertThat(row.get("metrics_finalized_at")).isNotNull();
 		assertThat(row.get("history_generated_at")).isNotNull();
+		assertThat(aggregatedNotifications()).isEqualTo(1);
 	}
 
 	/** S3 실패: DB에 쓰지 않고 예외(ack 안 함). 재전달되면 상태는 이미 처리됨 → 저장만 다시 */
@@ -168,17 +180,20 @@ class IssuanceHistoryTest extends IntegrationTest {
 		assertThat(data.registry(EVENT_ID)).containsEntry("hosting_status", "ENDED").containsEntry("event_status", "EXPIRED");
 		assertThat(summary()).containsEntry("success_count", null).containsEntry("history_file_path", null)
 			.containsEntry("history_generated_at", null);
+		// 집계가 끝나지 않았으므로 집계 완료 알림 없음
+		assertThat(aggregatedNotifications()).isZero();
 
 		reset(storage);
 		handler.handle(succeeded());
 
 		verify(storage, times(1)).put(eq(BUCKET), eq(KEY), any(), any());
 		assertThat(summary()).containsEntry("success_count", 1L).containsEntry("history_file_path", KEY);
-		// 상태 로그 · 종료 알림은 첫 처리 때 한 번씩뿐
+		// 상태 로그 · 종료 알림은 첫 처리 때 한 번씩뿐, 집계 완료는 저장이 성공한 재시도 때 1건
 		assertThat(data.statusLogs(A, EVENT_ID)).hasSize(2);
 		assertThat(data.count("SELECT COUNT(*) FROM tetra_platform.operator_notification WHERE event_id = ?"
 				+ " AND category = 'HOSTING'", EVENT_ID))
 			.isEqualTo(1);
+		assertThat(aggregatedNotifications()).isEqualTo(1);
 	}
 
 	/** 같은 성공 결과가 다시 와도 같은 키 · 같은 행에 같은 내용으로 덮어쓴다 */
@@ -201,6 +216,29 @@ class IssuanceHistoryTest extends IntegrationTest {
 		}
 		assertThat(data.count("SELECT COUNT(*) FROM t_%s.event_result_summary WHERE event_id = ?".formatted(A), EVENT_ID))
 			.isEqualTo(1);
+		assertThat(aggregatedNotifications()).isEqualTo(1);
+	}
+
+	/**
+	 * history_generated_at = 처음 저장 시각. 다시 저장해도(재전달 · -rN 재실행) 그대로 두고, 결과 수 · 키는 덮어쓴다.
+	 * 집계 완료 알림은 처음 저장 때 한 번뿐.
+	 */
+	@Test
+	void resaveKeepsFirstSaveTimeAndOverwritesCounts() {
+		issuance(1, "user-a", 1, "SUCCESS", "2026-11-01 10:00:00");
+		handler.handle(succeeded());
+		assertThat(summary()).containsEntry("success_count", 1L);
+		// 처음 저장 시각을 과거로 돌려 두면, 다시 저장했을 때 덮어쓰는지 구분할 수 있다
+		data.jdbc().update("UPDATE t_%s.event_result_summary SET history_generated_at = '2026-11-01 23:30:00' WHERE event_id = ?"
+			.formatted(A), EVENT_ID);
+		issuance(2, "user-b", 2, "SUCCESS", "2026-11-01 10:00:01");
+
+		handler.handle(succeeded());
+
+		Map<String, Object> row = summary();
+		assertThat(row.get("history_generated_at").toString().replace('T', ' ')).startsWith("2026-11-01 23:30");
+		assertThat(row).containsEntry("success_count", 2L).containsEntry("history_file_path", KEY);
+		assertThat(aggregatedNotifications()).isEqualTo(1);
 	}
 
 	@ParameterizedTest
