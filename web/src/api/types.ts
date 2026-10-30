@@ -699,6 +699,26 @@ export interface EventExecutionsResponse {
 
 // ---------------------------------------------------------------- 알림센터 (NotificationController)
 
+/** 알림센터 칩 — 신청 · 이벤트 · 테넌트 · 리포트 · 시스템(category를 API가 묶음) */
+export type NotificationChip = 'APPLICATION' | 'EVENT' | 'TENANT' | 'REPORT' | 'SYSTEM';
+
+/** 현재 상태가 가리키는 값 — 상태 열 4종은 DB 값 그대로, PASSWORD_SETUP은 SET · NOT_SET, DLQ_MESSAGES는 메시지 수(10진 문자열) */
+export type NotificationStateKind =
+  | 'APPLICATION_STATUS'
+  | 'HOSTING_STATUS'
+  | 'EVENT_STATUS'
+  | 'PROVISIONING_STATUS'
+  | 'ACCOUNT_STATUS'
+  | 'PASSWORD_SETUP'
+  | 'DLQ_MESSAGES';
+
+/** 관련 상태의 지금 값(복구 여부는 판정하지 않음). alert = 실패 값(FAILED · *_FAILED)이거나 DLQ 메시지 1건 이상 */
+export interface NotificationState {
+  kind: NotificationStateKind | string;
+  value: string;
+  alert: boolean;
+}
+
 /** GET /notifications 항목. 테넌트 · 이벤트와 무관한 알림이면 tenantId · tenantName · eventId가 null */
 export interface NotificationItem {
   notificationId: number;
@@ -710,6 +730,12 @@ export interface NotificationItem {
   occurredAt: string;
   content: string;
   read: boolean;
+  /** 모르는 category면 null — 칩 필터 '전체'에서만 보인다 */
+  chip: NotificationChip | null;
+  /** 누르면 갈 화면 경로('/'로 시작). 필요한 id가 없으면 null(읽음만) */
+  link: string | null;
+  /** 보여 줄 값이 없으면 null */
+  state: NotificationState | null;
 }
 
 /** GET /notifications — 전체, 최신순(페이지네이션 없음). 필터 · 검색 · 건수는 화면이 계산 */

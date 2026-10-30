@@ -6,11 +6,14 @@ import { fetchNotifications, markAllNotificationsRead, markNotificationRead } fr
 import { useApiQuery } from '@/hooks/useApiQuery';
 import { useToast } from '@/store/ToastContext';
 import NotificationCenter from './components/NotificationCenter';
-import { withAllRead, withRead } from './notificationView';
+import { readOptimistically, withAllRead } from './notificationView';
 
 const BREADCRUMBS = ['로그', '알림센터'];
 
-/** OPS-08 알림센터 — 운영자 알림 전체(서버 최신순). 읽음은 화면을 먼저 바꾸고, 실패하면 되돌린 뒤 토스트 */
+/**
+ * OPS-08 알림센터 — 운영자 알림 전체(서버 최신순). 읽음은 화면을 먼저 바꾸고, 실패하면 되돌린 뒤 토스트.
+ * 항목은 서버가 준 경로로 이동하는 링크다(가운데 클릭은 새 탭). 이동한 뒤 읽음이 실패해도 토스트는 뜬다(전역)
+ */
 export default function NotificationCenterPage() {
   const toast = useToast();
   const query = useApiQuery((signal) => fetchNotifications(signal), []);
@@ -25,14 +28,14 @@ export default function NotificationCenterPage() {
     );
   }
 
-  const read = async (notificationId: number) => {
-    query.setData((prev) => prev && { items: withRead(prev.items, notificationId, true) });
-    try {
-      await markNotificationRead(notificationId);
-    } catch (e) {
-      query.setData((prev) => prev && { items: withRead(prev.items, notificationId, false) });
-      toast(errorMessage(e), 'error');
-    }
+  // 항목을 누르면 이동(링크)과 함께 부른다 — 기다리지 않으므로 실패해도 이동은 그대로, 되돌리고 토스트만
+  const read = (notificationId: number) => {
+    void readOptimistically(
+      notificationId,
+      (change) => query.setData((prev) => prev && { items: change(prev.items) }),
+      markNotificationRead,
+      (e) => toast(errorMessage(e), 'error'),
+    );
   };
 
   const readAll = async () => {
