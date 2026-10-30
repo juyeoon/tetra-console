@@ -36,6 +36,20 @@ class NotificationTest extends IntegrationTest {
 		return row.get("category") + "/" + row.get("priority");
 	}
 
+	/** 고정 문구(라벨 + 정해진 문장). 반려 사유 · 원인은 자르지 않고 뒤에 붙으므로 그 앞까지 */
+	static String fixedPart(String content) {
+		return content.replaceFirst(" (반려 사유|원인): .*$", "");
+	}
+
+	/** 고정 문구는 120자 이내(이벤트명 · 테넌트명은 테스트 데이터 기준) */
+	static void assertFixedPartsFit(List<String> contents) {
+		assertThat(contents).isNotEmpty().allSatisfy(c -> assertThat(fixedPart(c)).hasSizeLessThanOrEqualTo(120));
+	}
+
+	private static List<String> contents(List<Map<String, Object>> rows) {
+		return rows.stream().map(n -> (String) n.get("content")).toList();
+	}
+
 	@Test
 	void approveLeavesOperatorAndTenantInfo() throws Exception {
 		data.tenant(A, "A사", "ACTIVE", "READY");
@@ -43,12 +57,18 @@ class NotificationTest extends IntegrationTest {
 
 		mvc.perform(post("/api/ops/events/{id}/approve", 8101).cookie(operatorCookie())).andExpect(status().isOk());
 
-		// 승인 = 로그 3줄이지만 알림은 운영자 1건 + 테넌트 1건
+		// 승인 = 로그 3줄이지만 알림은 운영자 1건 + 테넌트 1건. 라벨은 [테넌트명] [id:이벤트명] / [id:이벤트명]
 		assertThat(operatorNotifications()).extracting(NotificationTest::kind).containsExactly("APPLICATION/INFO");
-		assertThat((String) operatorNotifications().get(0).get("content")).contains("[A사]", "[추석 쿠폰]", "승인");
+		assertThat((String) operatorNotifications().get(0).get("content"))
+			.isEqualTo("[A사] [8101:추석 쿠폰] 이벤트 신청을 승인했습니다.");
 		assertThat(((Number) operatorNotifications().get(0).get("event_id")).longValue()).isEqualTo(8101);
-		assertThat(operatorNotifications().get(0)).containsEntry("tenant_id", A).containsEntry("is_read", false);
+		assertThat(operatorNotifications().get(0)).containsEntry("tenant_id", A)
+			.containsEntry("is_read", false)
+			.containsEntry("dedupe_key", null);
 		assertThat(tenantNotifications(A)).extracting(NotificationTest::kind).containsExactly("APPLICATION/INFO");
+		assertThat((String) tenantNotifications(A).get(0).get("content")).isEqualTo("[8101:추석 쿠폰] 이벤트 신청이 승인되었습니다.");
+		assertFixedPartsFit(contents(operatorNotifications()));
+		assertFixedPartsFit(contents(tenantNotifications(A)));
 	}
 
 	@Test
@@ -68,10 +88,12 @@ class NotificationTest extends IntegrationTest {
 		assertThat(operatorNotifications()).allSatisfy(n -> assertThat((String) n.get("content")).doesNotContain("PRIVATE KEY"));
 		// 배포 실패·메일 실패는 테넌트 알림을 남기지 않는다
 		assertThat(tenantNotifications(A)).extracting(NotificationTest::kind).containsExactly("APPLICATION/INFO");
+		assertFixedPartsFit(contents(operatorNotifications()));
 	}
 
+	/** 반려: 운영자는 처리 완료라 INFO, 테넌트는 WARNING. 반려 사유는 자르지 않고 붙인다 */
 	@Test
-	void rejectLeavesWarningsAndDeactivationInfo() throws Exception {
+	void rejectLeavesOperatorInfoTenantWarningAndDeactivationInfo() throws Exception {
 		data.tenant(A, "A사", "ACTIVE", "READY");
 		data.event(8103, A).applied().insert();
 
@@ -80,10 +102,31 @@ class NotificationTest extends IntegrationTest {
 			.content("{\"reason\":\"배너 규격 위반\"}")).andExpect(status().isOk());
 
 		assertThat(operatorNotifications()).extracting(NotificationTest::kind)
-			.containsExactly("APPLICATION/WARNING", "ACCOUNT/INFO");
-		assertThat((String) operatorNotifications().get(0).get("content")).contains("배너 규격 위반");
-		assertThat((String) operatorNotifications().get(1).get("content")).contains("비활성");
+			.containsExactly("APPLICATION/INFO", "ACCOUNT/INFO");
+		assertThat((String) operatorNotifications().get(0).get("content"))
+			.isEqualTo("[A사] [8103:이벤트 8103] 이벤트 신청을 반려했습니다. 반려 사유: 배너 규격 위반");
+		assertThat((String) operatorNotifications().get(1).get("content"))
+			.isEqualTo("[A사] 진행 중인 이벤트가 없어 계정이 비활성으로 전환되었습니다.");
 		assertThat(tenantNotifications(A)).extracting(NotificationTest::kind).containsExactly("APPLICATION/WARNING");
+		assertThat((String) tenantNotifications(A).get(0).get("content"))
+			.isEqualTo("[8103:이벤트 8103] 이벤트 신청이 반려되었습니다. 반려 사유: 배너 규격 위반");
+		assertFixedPartsFit(contents(operatorNotifications()));
+		assertFixedPartsFit(contents(tenantNotifications(A)));
+	}
+
+	@Test
+	void longRejectReasonIsKeptWhole() throws Exception {
+		data.tenant(A, "A사", "ACTIVE", "READY");
+		data.event(8107, A).applied().insert();
+		String reason = "가".repeat(500);
+
+		mvc.perform(post("/api/ops/events/{id}/reject", 8107).cookie(operatorCookie())
+			.contentType(MediaType.APPLICATION_JSON)
+			.content("{\"reason\":\"" + reason + "\"}")).andExpect(status().isOk());
+
+		// 120자는 고정 문구 기준이고, 반려 사유는 자르지 않는다(1000자 상한 안)
+		assertThat((String) operatorNotifications().get(0).get("content")).endsWith("반려 사유: " + reason);
+		assertThat((String) tenantNotifications(A).get(0).get("content")).endsWith("반려 사유: " + reason);
 	}
 
 	@Test
@@ -103,7 +146,10 @@ class NotificationTest extends IntegrationTest {
 			.containsExactly("HOSTING/INFO", "HOSTING/URGENT", "HOSTING/INFO");
 		assertThat((String) operatorNotifications().get(1).get("content")).contains("TIMED_OUT: E / C");
 		assertThat((String) operatorNotifications().get(2).get("content")).contains("배포 실패로 표시됐던");
+		assertThat((String) operatorNotifications().get(0).get("content"))
+			.isEqualTo("[A사] [8104:이벤트 8104] 이벤트 배포가 완료되었습니다.");
 		assertThat(tenantNotifications(A)).isEmpty();
+		assertFixedPartsFit(contents(operatorNotifications()));
 	}
 
 	@Test
@@ -128,11 +174,14 @@ class NotificationTest extends IntegrationTest {
 		handler.handleTenantResult(ready);
 		handler.handleTenantResult(ready);
 
+		// 비밀번호 설정 메일 실패는 주의(WARNING), 테넌트 ID 대신 [테넌트명]
 		assertThat(operatorNotifications()).extracting(NotificationTest::kind)
-			.containsExactly("ACCOUNT/INFO", "PROVISIONING/INFO", "MAIL/URGENT");
+			.containsExactly("ACCOUNT/INFO", "PROVISIONING/INFO", "MAIL/WARNING");
 		assertThat((String) operatorNotifications().get(2).get("content"))
-			.isEqualTo("비밀번호 설정 메일 발송에 실패했습니다(테넌트 " + tenantId + "). 담당자 이메일 주소와 SES 상태를 확인해 주세요.");
+			.isEqualTo("[E사] 비밀번호 설정 메일 발송에 실패했습니다. 담당자 이메일 주소와 SES 상태를 확인해 주세요.");
+		assertThat(operatorNotifications().get(2)).containsEntry("tenant_id", tenantId).containsEntry("event_id", null);
 		assertThat(operatorNotifications()).allSatisfy(n -> assertThat((String) n.get("content")).doesNotContain("password/setup"));
+		assertFixedPartsFit(contents(operatorNotifications()));
 	}
 
 	@Test
@@ -151,6 +200,7 @@ class NotificationTest extends IntegrationTest {
 			.containsExactly("ACCOUNT/INFO", "PROVISIONING/URGENT", "PROVISIONING/URGENT");
 		assertThat((String) operatorNotifications().get(1).get("content")).contains("StartExecution 실패");
 		assertThat((String) operatorNotifications().get(2).get("content")).contains("[B사]", "FAILED: E / C");
+		assertFixedPartsFit(contents(operatorNotifications()));
 	}
 
 }

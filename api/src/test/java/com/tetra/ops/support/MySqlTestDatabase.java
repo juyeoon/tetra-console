@@ -71,6 +71,7 @@ public final class MySqlTestDatabase {
 			st.execute("CREATE SCHEMA tetra_platform DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci");
 			root.setCatalog("tetra_platform");
 			run(root, ddl("platform/V1__init_platform_schema.sql"));
+			run(root, ddl("platform/V4__add_operator_notification_dedupe_key.sql"));
 			for (String tenantId : new String[] { TENANT_A, TENANT_B }) {
 				String schema = "t_" + tenantId;
 				st.execute("CREATE SCHEMA " + schema + " DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci");

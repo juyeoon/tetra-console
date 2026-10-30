@@ -13,6 +13,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import com.tetra.ops.domain.tenant.Event;
 import com.tetra.ops.domain.tenant.EventRepository;
+import com.tetra.ops.notification.NotificationService;
 import com.tetra.ops.tenancy.TenantContext;
 import com.tetra.ops.tenancy.TenantMismatchException;
 
@@ -36,9 +37,12 @@ class IssuanceHistoryStore {
 
 	private final EntityManager entityManager;
 
-	IssuanceHistoryStore(EventRepository events, EntityManager entityManager) {
+	private final NotificationService notifications;
+
+	IssuanceHistoryStore(EventRepository events, EntityManager entityManager, NotificationService notifications) {
 		this.events = events;
 		this.entityManager = entityManager;
+		this.notifications = notifications;
 	}
 
 	record Snapshot(long totalStock, long successCount, long soldoutCount, BigDecimal selloutRate, byte[] csv) {
@@ -105,29 +109,25 @@ class IssuanceHistoryStore {
 	}
 
 	/**
-	 * event_result_summary에 결과 수 · CSV 키를 쓴다. 집계 Job이 만든 행이 있으면 그 지표는 두고 발급 이력 쪽만 바꾸고,
-	 * 없으면(집계 Job을 건너뜀 — 열린 적 없는 이벤트) 지표를 0으로 채워 만든다. 같은 값으로 다시 써도 된다.
+	 * event_result_summary에 결과 수 · CSV 키를 쓰고, 처음 저장이면 같은 트랜잭션에서 테넌트에 집계 완료 알림을 남긴다.
+	 * 1. 행이 없으면(집계 Job을 건너뜀 — 열린 적 없는 이벤트) 지표를 0으로 채워 만든다. 있으면 집계 Job 지표를 건드리지 않는다.
+	 *    집계 Job(issuance-api AggregateJob)은 나중에 와도 지표 열만 덮어쓰므로 서로 겹치지 않는다. INSERT IGNORE는 다른 오류까지 삼켜 쓰지 않는다
+	 * 2. history_generated_at은 비어 있을 때만 채운다(= 처음 저장 시각). 1행이면 처음 저장이다
+	 *    (조건부 UPDATE라 재전달 · 동시 처리 · 재실행이 겹쳐도 한 번만 1행)
+	 * 3. 결과 수 · CSV 키는 매번 덮어쓴다(같은 값으로 다시 써도 된다)
+	 * @return 처음 저장이면 true
 	 */
 	@Transactional
-	public void saveSummary(Long eventId, Snapshot snapshot, String historyKey, LocalDateTime now) {
+	public boolean saveSummary(Long eventId, Snapshot snapshot, String historyKey, LocalDateTime now) {
 		String tenantId = TenantContext.current();
 		entityManager.createNativeQuery("""
 				insert into event_result_summary (event_id, tenant_id, session_count, ticket_count, peak_concurrent,
-				    peak_at, metrics_finalized_at, total_stock, success_count, soldout_count, sellout_rate,
-				    history_file_path, history_generated_at)
-				values (:eventId, :tenantId, 0, 0, 0, null, :now, :totalStock, :successCount, :soldoutCount,
-				    :selloutRate, :historyKey, :now) as new
-				on duplicate key update total_stock = new.total_stock, success_count = new.success_count,
-				    soldout_count = new.soldout_count, sellout_rate = new.sellout_rate,
-				    history_file_path = new.history_file_path, history_generated_at = new.history_generated_at""")
+				    peak_at, metrics_finalized_at)
+				values (:eventId, :tenantId, 0, 0, 0, null, :now)
+				on duplicate key update event_id = event_id""")
 			.setParameter("eventId", eventId)
 			.setParameter("tenantId", tenantId)
 			.setParameter("now", now)
-			.setParameter("totalStock", snapshot.totalStock())
-			.setParameter("successCount", snapshot.successCount())
-			.setParameter("soldoutCount", snapshot.soldoutCount())
-			.setParameter("selloutRate", snapshot.selloutRate())
-			.setParameter("historyKey", historyKey)
 			.executeUpdate();
 		Number foreign = (Number) entityManager
 			.createNativeQuery("select count(*) from event_result_summary where event_id = :eventId and tenant_id <> :tenantId")
@@ -138,6 +138,27 @@ class IssuanceHistoryStore {
 			log.error("테넌트 불일치: event_result_summary eventId={}, routedTenant={}", eventId, tenantId);
 			throw new TenantMismatchException();
 		}
+		boolean first = entityManager.createNativeQuery("""
+				update event_result_summary set history_generated_at = :now
+				 where event_id = :eventId and history_generated_at is null""")
+			.setParameter("now", now)
+			.setParameter("eventId", eventId)
+			.executeUpdate() == 1;
+		entityManager.createNativeQuery("""
+				update event_result_summary set total_stock = :totalStock, success_count = :successCount,
+				    soldout_count = :soldoutCount, sellout_rate = :selloutRate, history_file_path = :historyKey
+				 where event_id = :eventId""")
+			.setParameter("totalStock", snapshot.totalStock())
+			.setParameter("successCount", snapshot.successCount())
+			.setParameter("soldoutCount", snapshot.soldoutCount())
+			.setParameter("selloutRate", snapshot.selloutRate())
+			.setParameter("historyKey", historyKey)
+			.setParameter("eventId", eventId)
+			.executeUpdate();
+		if (first) {
+			notifications.eventAggregated(tenantId, eventId);
+		}
+		return first;
 	}
 
 	/** success ÷ total, 소수 4자리(반올림). total 0이면 0. 1을 넘으면(재고보다 성공이 많음) WARN 후 1 */

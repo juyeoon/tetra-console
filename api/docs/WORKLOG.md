@@ -288,3 +288,13 @@
 - 파일: ../web/src/hooks/usePolling.ts, ../web/src/pages/monitoring/{executionView.ts, executionView.test.ts, ExecutionPanel.tsx, EventSection.tsx}
 - 문서: docs/ops05/OPS-05_명세.md(1절 C행 갱신 칸, 5-2 Step Functions 화면 갱신 규칙 · 이유 · List 호출 · 한계), CLAUDE.md §7.17
 - 남은 것: 실패 뒤 수동 재실행(-rN · redrive)은 시작할 때 단계가 바뀌지 않아 끝날 때 보임(한계로 둠)
+
+## 2026-10-30 KST — S3 알림센터 MR1: 알림 기록 규칙(api)
+- 한 일: NotificationService 문구 라벨 `[테넌트명] [id:이벤트명]` · 테넌트 `[id:이벤트명]`. 반려 운영자 WARNING → INFO(테넌트 WARNING 유지), 비밀번호 설정 메일 실패 URGENT → WARNING · 테넌트 ID 대신 `[테넌트명]`. WF4 성공 운영자 문구를 '호스팅 종료 · 자원 정리 완료'로, 테넌트 종료 문구 변경. 테넌트 알림 추가: 호스팅 시작(HOSTING/INFO, 입장 HH:mm) · 입장 시작(EVENT/INFO, 시작 HH:mm) — 복구 분기 포함, 집계 완료(EVENT/INFO). Category에 DELAY · SYSTEM · REPORT 추가(저장은 세부 값). 저장 문구는 자르지 않음(1000자 상한만)
+- 집계 완료: IssuanceHistoryStore.saveSummary를 ① 없으면 지표 0으로 INSERT(on duplicate key update event_id = event_id) ② history_generated_at IS NULL일 때만 채우는 조건부 UPDATE(1행 = 처음 저장) ③ 결과 수 · 키 덮어쓰기 ④ 처음 저장이면 같은 트랜잭션에서 테넌트 알림. history_generated_at = 처음 저장 시각. 집계 Job(issuance-api AggregateJob)은 지표 열만 upsert해 순서와 무관하게 겹치지 않음(확인)
+- 스키마 없음: TenantWriter.keepNotReadyWithoutSchema가 PROVISIONING → FAILED로 실제로 바뀔 때만 알림
+- dedupe_key: OperatorNotification에 필드 + unread(…, dedupeKey) 오버로드. 공용 V4 사본(db-schema main 1f49297, SHA-256 159b71db…) · MySqlTestDatabase V4 실행 · README 행 · TenantMigrationScriptTest 행. 저장 메서드는 MR2
+- 문서: CLAUDE.md §3(EKS · IRSA → ECS Fargate · 태스크 역할), §7.8 집계 기준, §7.12-6, §7.13(우선순위 · category · dedupe_key · 문구 표 · 호출 위치 · 정해 둔 것). AwsConfig 주석 ECS · 태스크 역할
+- 테스트: NotificationTest(라벨 · 반려 INFO/WARNING · 긴 반려 사유 · 메일 WARNING · 고정 문구 120자), LifecycleResultHandlerTest(라벨 · 테넌트 호스팅 시작 · 입장 시작(복구 포함) · 종료 + 집계 완료 · 120자), StepFunctionsResultHandlerTest(메일 WARNING · 스키마 없음 PROVISIONING 1건/FAILED 0건 · 중복 수신), SqsListenerContainerTest(메일 WARNING), IssuanceHistoryTest(집계 완료 1건 · S3 실패 뒤 재시도 · 처음 저장 시각 유지), OperatorNotificationDedupeKeyTest(신규: 같은 키 1062 · NULL 제한 없음)
+- 파일: src/main/java/com/tetra/ops/{notification/NotificationService, domain/platform/OperatorNotification, event/IssuanceHistoryStore, event/IssuanceHistoryService, tenant/TenantWriter, tenant/TenantCommandService, config/AwsConfig}.java, src/main/resources/db/README.md, src/test/resources/db/migration/platform/V4__add_operator_notification_dedupe_key.sql(신규), src/test/java/com/tetra/ops/{support/MySqlTestDatabase, TenantMigrationScriptTest, NotificationTest, LifecycleResultHandlerTest, StepFunctionsResultHandlerTest, SqsListenerContainerTest, IssuanceHistoryTest, OperatorNotificationDedupeKeyTest(신규)}.java
+- 남은 것: MR2(1분 주기 작업 · dedupe 저장 메서드 · TrafficRules 지연 5종 · D6), MR3(목록 API chip · link · 현재 상태 + web)

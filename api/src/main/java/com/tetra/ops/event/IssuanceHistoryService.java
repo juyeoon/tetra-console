@@ -17,7 +17,8 @@ import com.tetra.ops.tenant.TenantBuckets;
  * 발급 이력 저장(3-12). WF4 성공 결과를 반영한 뒤(상태 트랜잭션 커밋 후) 부른다.
  * 결과 수 · CSV를 DB에서 만들고 → CSV를 테넌트 로그 버킷 issuance-history/{event_id}.csv에 올리고(덮어쓰기) →
  * event_result_summary에 결과 수와 키를 쓴다. S3가 먼저라 DB에 키가 있으면 파일은 있다.
- * 실패하면 예외를 그대로 던진다(메시지 재전달 → 상태는 이미 처리됨 → 여기만 다시, 같은 키 · 같은 행에 덮어쓰기).
+ * 처음 저장(history_generated_at이 처음 채워짐)이면 같은 트랜잭션에서 테넌트 집계 완료 알림을 남긴다(IssuanceHistoryStore.saveSummary).
+ * 실패하면 예외를 그대로 던진다(메시지 재전달 → 상태는 이미 처리됨 → 여기만 다시, 같은 키 · 같은 행에 덮어쓰기, 알림은 한 번).
  */
 @Service
 public class IssuanceHistoryService {
@@ -53,9 +54,9 @@ public class IssuanceHistoryService {
 		Snapshot snapshot = router.inTenant(routed, () -> store.snapshot(eventId));
 		String key = historyKey(eventId);
 		storage.put(buckets.auditLog(routed.tenantId()), key, snapshot.csv(), "text/csv; charset=utf-8");
-		router.inTenant(routed, () -> store.saveSummary(eventId, snapshot, key, Kst.now(clock)));
-		log.info("발급 이력 저장: eventId={}, total={}, success={}, soldout={}, key={}", eventId, snapshot.totalStock(),
-				snapshot.successCount(), snapshot.soldoutCount(), key);
+		boolean first = router.inTenant(routed, () -> store.saveSummary(eventId, snapshot, key, Kst.now(clock)));
+		log.info("발급 이력 저장: eventId={}, total={}, success={}, soldout={}, key={}, first={}", eventId,
+				snapshot.totalStock(), snapshot.successCount(), snapshot.soldoutCount(), key, first);
 	}
 
 }

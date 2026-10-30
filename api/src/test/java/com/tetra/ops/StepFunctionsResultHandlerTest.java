@@ -23,6 +23,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -343,7 +344,7 @@ class StepFunctionsResultHandlerTest extends IntegrationTest {
 
 		assertThat(data.tenantRow(B)).containsEntry("provisioning_status", "READY");
 		verify(mail, times(1)).send(any());
-		assertThat(mailFailureNotifications(B)).isEqualTo(1);
+		assertThat(mailFailureNotifications(B, "B사")).isEqualTo(1);
 	}
 
 	@Test
@@ -354,30 +355,36 @@ class StepFunctionsResultHandlerTest extends IntegrationTest {
 		handler.handleTenantResult(message("tenant-" + B, "SUCCEEDED", null, null));
 
 		assertThat(data.tenantRow(B)).containsEntry("provisioning_status", "READY");
-		assertThat(mailFailureNotifications(B)).isEqualTo(1);
+		assertThat(mailFailureNotifications(B, "B사")).isEqualTo(1);
 	}
 
-	private long mailFailureNotifications(String tenantId) {
+	/** 비밀번호 설정 메일 실패 알림: 주의(WARNING), [테넌트명]으로 시작(테넌트 ID는 문구에 넣지 않는다) */
+	private long mailFailureNotifications(String tenantId, String tenantName) {
 		return data.count("SELECT COUNT(*) FROM tetra_platform.operator_notification WHERE tenant_id = ?"
-				+ " AND category = 'MAIL' AND priority = 'URGENT' AND content = ?", tenantId,
-				"비밀번호 설정 메일 발송에 실패했습니다(테넌트 " + tenantId + "). 담당자 이메일 주소와 SES 상태를 확인해 주세요.");
+				+ " AND category = 'MAIL' AND priority = 'WARNING' AND content = ?", tenantId,
+				"[" + tenantName + "] 비밀번호 설정 메일 발송에 실패했습니다. 담당자 이메일 주소와 SES 상태를 확인해 주세요.");
 	}
 
 	// ---- 스키마가 없으면 READY로 바꾸지 않는다 ----
 
+	/** PROVISIONING → FAILED로 실제로 바뀔 때만 URGENT 1건. 이미 FAILED면 상태 · 알림 그대로. 중복 수신도 한 번 */
 	@ParameterizedTest
-	@ValueSource(strings = { "PROVISIONING", "FAILED" })
-	void successWithoutTenantSchemaIsNotMadeReady(String current) {
+	@CsvSource({ "PROVISIONING, 1", "FAILED, 0" })
+	void successWithoutTenantSchemaIsNotMadeReady(String current, long expectedNotifications) {
 		String noSchema = "cccccccccccc";
 		data.tenant(noSchema, "C사", "INACTIVE", current);
+		String body = message("tenant-" + noSchema + "-r1", "SUCCEEDED", null, null);
 
-		handler.handleTenantResult(message("tenant-" + noSchema + "-r1", "SUCCEEDED", null, null));
+		handler.handleTenantResult(body);
+		handler.handleTenantResult(body);
 
 		assertThat(data.tenantRow(noSchema)).containsEntry("provisioning_status", "FAILED");
 		verify(mail, never()).send(any());
 		assertThat(data.count("SELECT COUNT(*) FROM tetra_platform.operator_notification WHERE tenant_id = ?"
 				+ " AND category = 'PROVISIONING' AND priority = 'URGENT' AND content LIKE ?", noSchema,
-				"%테넌트 스키마(t_" + noSchema + ")가 없어%READY로 반영하지 않았습니다%")).isEqualTo(1);
+				"[C사] %테넌트 스키마(t_" + noSchema + ")가 없어%READY로 반영하지 않았습니다%")).isEqualTo(expectedNotifications);
+		assertThat(data.count("SELECT COUNT(*) FROM tetra_platform.operator_notification WHERE tenant_id = ?", noSchema))
+			.isEqualTo(expectedNotifications);
 	}
 
 	private static Map<String, String> query(String url) {

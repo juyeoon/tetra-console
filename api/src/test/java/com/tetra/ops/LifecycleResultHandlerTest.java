@@ -2,8 +2,10 @@ package com.tetra.ops;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Stream;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -12,8 +14,10 @@ import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 
+import com.tetra.ops.event.EntryOpen;
 import com.tetra.ops.listener.LifecycleResultHandler;
 import com.tetra.ops.support.IntegrationTest;
+import com.tetra.ops.support.TestData;
 
 /** 이벤트 수명 주기 결과 리스너 (WF2-1 · WF2-2 · WF4, §8). 상태 머신 이름은 테스트 env 기준 tetra-test-…. */
 class LifecycleResultHandlerTest extends IntegrationTest {
@@ -25,6 +29,20 @@ class LifecycleResultHandlerTest extends IntegrationTest {
 	static final String EVENT_END = "tetra-test-event-end";
 
 	static final long EVENT_ID = 4201;
+
+	/** 운영자 알림 라벨 [테넌트명] [id:이벤트명] · 테넌트 알림 라벨 [id:이벤트명] (이벤트명은 TestData 기본값) */
+	static final String LABEL = "[A사] [4201:이벤트 4201]";
+
+	static final String TENANT_LABEL = "[4201:이벤트 4201]";
+
+	private static final DateTimeFormatter HH_MM = DateTimeFormatter.ofPattern("HH:mm");
+
+	/** 테넌트 호스팅 시작 알림(입장 = 시작 − 입장 리드, 이벤트 시작은 TestData.FUTURE) */
+	static final String TENANT_HOSTING_STARTED = "HOSTING/INFO " + TENANT_LABEL + " 이벤트 페이지가 열렸습니다. 입장은 "
+			+ HH_MM.format(EntryOpen.at(TestData.FUTURE)) + "부터 시작됩니다.";
+
+	static final String TENANT_ENTRY_OPENED = "EVENT/INFO " + TENANT_LABEL + " 이벤트 입장이 시작되었습니다. 이벤트는 "
+			+ HH_MM.format(TestData.FUTURE) + "에 시작됩니다.";
 
 	@Autowired
 	LifecycleResultHandler handler;
@@ -82,6 +100,16 @@ class LifecycleResultHandlerTest extends IntegrationTest {
 					+ " WHERE event_id = ? ORDER BY notification_id", String.class, EVENT_ID);
 	}
 
+	/** 운영자 · 테넌트 알림 내용만(category/priority 접두어 없이) */
+	private List<String> allContents() {
+		return Stream.concat(
+				data.jdbc().queryForList("SELECT content FROM tetra_platform.operator_notification ORDER BY notification_id",
+						String.class).stream(),
+				data.jdbc().queryForList("SELECT content FROM t_" + A + ".tenant_notification ORDER BY notification_id",
+						String.class).stream())
+			.toList();
+	}
+
 	// ---- WF2-1 호스팅 시작 ----
 
 	@Test
@@ -93,7 +121,9 @@ class LifecycleResultHandlerTest extends IntegrationTest {
 
 		assertStatus("HOSTING", "SCHEDULED");
 		assertThat(logs("HOSTING")).containsExactly("DEPLOYED→HOSTING");
-		assertThat(notifications()).containsExactly("HOSTING/INFO [A사] [이벤트 4201] 호스팅을 시작했습니다(대기방 열림).");
+		assertThat(notifications()).containsExactly("HOSTING/INFO " + LABEL + " 호스팅을 시작했습니다(대기방 열림).");
+		// 테넌트에도 이벤트 페이지 열림 1건(입장 시각 안내)
+		assertThat(tenantNotifications()).containsExactly(TENANT_HOSTING_STARTED);
 	}
 
 	@ParameterizedTest
@@ -113,9 +143,11 @@ class LifecycleResultHandlerTest extends IntegrationTest {
 		assertStatus("HOSTING", "SCHEDULED");
 		assertThat(logs("HOSTING")).containsExactly("DEPLOYED→HOSTING_FAILED", "HOSTING_FAILED→HOSTING");
 		assertThat(notifications()).containsExactly(
-				"HOSTING/URGENT [A사] [이벤트 4201] 호스팅 시작(대기방 열기)에 실패했습니다. 확인이 필요합니다. 원인: " + status
+				"HOSTING/URGENT " + LABEL + " 호스팅 시작(대기방 열기)에 실패했습니다. 확인이 필요합니다. 원인: " + status
 						+ ": States.TaskFailed / lambda error",
-				"HOSTING/INFO [A사] [이벤트 4201] 호스팅 시작 실패로 표시됐던 이벤트의 호스팅이 시작되었습니다.");
+				"HOSTING/INFO " + LABEL + " 호스팅 시작 실패로 표시됐던 이벤트의 호스팅이 시작되었습니다.");
+		// 실패는 테넌트에 남기지 않고, 복구(재실행 성공)는 처음 시작과 같은 문구로 1건
+		assertThat(tenantNotifications()).containsExactly(TENANT_HOSTING_STARTED);
 	}
 
 	@Test
@@ -141,7 +173,9 @@ class LifecycleResultHandlerTest extends IntegrationTest {
 		assertStatus("HOSTING", "OPEN");
 		assertThat(logs("EVENT")).containsExactly("SCHEDULED→OPEN");
 		assertThat(logs("HOSTING")).isEmpty();
-		assertThat(notifications()).containsExactly("EVENT/INFO [A사] [이벤트 4201] 입장이 열렸습니다(쿠폰 발급은 이벤트 시작 시각부터).");
+		assertThat(notifications()).containsExactly("EVENT/INFO " + LABEL + " 입장이 열렸습니다(쿠폰 발급은 이벤트 시작 시각부터).");
+		// 테넌트에도 입장 시작 1건(이벤트 시작 시각 안내)
+		assertThat(tenantNotifications()).containsExactly(TENANT_ENTRY_OPENED);
 	}
 
 	@Test
@@ -161,6 +195,8 @@ class LifecycleResultHandlerTest extends IntegrationTest {
 			.containsExactly("EVENT/URGENT", "EVENT/INFO");
 		assertThat(notifications().get(0)).contains("이벤트 준비(입장 열기)에 실패했습니다", "원인: FAILED: States.TaskFailed / lambda error");
 		assertThat(notifications().get(1)).contains("이벤트 준비 실패로 표시됐던 이벤트의 입장이 열렸습니다.");
+		// 준비 실패는 테넌트에 남기지 않고, 복구는 입장 시작과 같은 문구로 1건
+		assertThat(tenantNotifications()).containsExactly(TENANT_ENTRY_OPENED);
 	}
 
 	// ---- WF4 이벤트 종료 ----
@@ -176,9 +212,13 @@ class LifecycleResultHandlerTest extends IntegrationTest {
 		assertThat(logs("HOSTING")).containsExactly("HOSTING→ENDED");
 		assertThat(logs("EVENT")).containsExactly("OPEN→EXPIRED");
 		assertThat(notifications()).containsExactly(
-				"HOSTING/INFO [A사] [이벤트 4201] 이벤트가 종료되었습니다(호스팅 종료 · 발급 마감).", "ACCOUNT/INFO [A사] 진행 중인 이벤트가 없어 계정이 비활성으로 전환되었습니다.");
-		// 종료(HOSTING → ENDED)는 테넌트 알림도 1건 (§7.13)
-		assertThat(tenantNotifications()).containsExactly("HOSTING/INFO [이벤트 4201] 이벤트가 종료되었습니다.");
+				"HOSTING/INFO " + LABEL + " 호스팅이 종료되었습니다. 이벤트 앱(발급 서버·Redis)과 엣지 라우팅 키를 정리했습니다.",
+				"ACCOUNT/INFO [A사] 진행 중인 이벤트가 없어 계정이 비활성으로 전환되었습니다.");
+		// 종료(HOSTING → ENDED) 1건 + 발급 이력 처음 저장 때 집계 완료 1건(두 번 받아도 한 번씩, §7.13)
+		assertThat(tenantNotifications()).containsExactly(
+				"HOSTING/INFO " + TENANT_LABEL + " 이벤트가 종료되었습니다. 결과 집계가 끝나면 다시 알려 드립니다.",
+				"EVENT/INFO " + TENANT_LABEL
+						+ " 이벤트 결과 집계가 완료되었습니다. 결과 화면에서 발급 내역을 확인하고 CSV를 내려받을 수 있습니다.");
 		// 남은 이벤트가 없으면 계정 비활성(사유 배지 [종료])
 		assertThat(data.tenantRow(A)).containsEntry("account_status", "INACTIVE");
 		List<Map<String, Object>> tenantLogs = data.tenantStatusLogs(A);
@@ -241,6 +281,26 @@ class LifecycleResultHandlerTest extends IntegrationTest {
 
 		assertStatus("END_FAILED", "SCHEDULED");
 		assertThat(logs("EVENT")).isEmpty();
+	}
+
+	// ---- 문구 길이 ----
+
+	/** 수명 주기 알림의 고정 문구(라벨 + 정해진 문장)는 120자 이내 — 원인은 자르지 않고 뒤에 붙는다 */
+	@Test
+	void lifecycleFixedWordingFitsIn120Chars() {
+		event("DEPLOYED", "SCHEDULED");
+
+		handler.handle(failed(HOSTING_START, "FAILED"));
+		handler.handle(ok(HOSTING_START));
+		handler.handle(failed(EVENT_OPEN, "FAILED"));
+		handler.handle(ok(EVENT_OPEN));
+		handler.handle(failed(EVENT_END, "FAILED"));
+		handler.handle(ok(EVENT_END));
+
+		// 운영자: 실패 3 · 복구 2 · 종료 · 비활성, 테넌트: 호스팅 시작 · 입장 시작 · 종료 · 집계 완료
+		assertThat(allContents()).hasSize(11);
+		assertThat(tenantNotifications()).hasSize(4);
+		NotificationTest.assertFixedPartsFit(allContents());
 	}
 
 	// ---- 형식 오류 · 다른 이벤트: WARN 후 ack(변경 없음) ----
