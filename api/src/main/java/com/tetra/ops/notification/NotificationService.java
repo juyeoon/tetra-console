@@ -4,6 +4,8 @@ import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.Arrays;
+import java.util.Optional;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
@@ -240,14 +242,37 @@ public class NotificationService {
 
 	// ------------------------------------------------------------ 1분 주기 확인 (SYSTEM · DELAY, dedupe_key)
 
+	private static final String DLQ_KEY_PREFIX = "DLQ:";
+
+	private static final String DELAY_KEY_PREFIX = "DELAY:";
+
 	/** DLQ 알림 중복 방지 키: DLQ:{큐 이름}:{yyyy-MM-dd(KST)} — 같은 큐는 하루 1건 */
 	public static String dlqKey(String queueName, LocalDate day) {
-		return "DLQ:" + queueName + ":" + day;
+		return DLQ_KEY_PREFIX + queueName + ":" + day;
 	}
 
 	/** 단계 지연 알림 중복 방지 키: DELAY:{event_id}:{단계 코드} — 이벤트 · 단계마다 1건 */
 	public static String delayKey(Long eventId, DelayStep step) {
-		return "DELAY:" + eventId + ":" + step.name();
+		return DELAY_KEY_PREFIX + eventId + ":" + step.name();
+	}
+
+	/** {@link #dlqKey}의 큐 이름(SQS 이름에는 ':'가 없다). DLQ 키가 아니면 empty */
+	static Optional<String> dlqQueueOf(String dedupeKey) {
+		if (dedupeKey == null || !dedupeKey.startsWith(DLQ_KEY_PREFIX)) {
+			return Optional.empty();
+		}
+		int day = dedupeKey.lastIndexOf(':');
+		return day > DLQ_KEY_PREFIX.length() ? Optional.of(dedupeKey.substring(DLQ_KEY_PREFIX.length(), day))
+				: Optional.empty();
+	}
+
+	/** {@link #delayKey}의 단계. 단계 지연 키가 아니거나 모르는 단계면 empty */
+	static Optional<DelayStep> delayStepOf(String dedupeKey) {
+		if (dedupeKey == null || !dedupeKey.startsWith(DELAY_KEY_PREFIX)) {
+			return Optional.empty();
+		}
+		String step = dedupeKey.substring(dedupeKey.lastIndexOf(':') + 1);
+		return Arrays.stream(DelayStep.values()).filter(s -> s.name().equals(step)).findFirst();
 	}
 
 	/**

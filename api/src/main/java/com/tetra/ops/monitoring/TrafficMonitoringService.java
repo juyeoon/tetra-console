@@ -368,17 +368,54 @@ public class TrafficMonitoringService {
 		List<TrafficEventsResponse.Item> items = new ArrayList<>();
 		List<Judged> open = openJudged(db, prom, now);
 		open.forEach(j -> items.add(item(j.event(), Group.OPEN, j.judgment(), now)));
-		List<MonitoredEvent> today = db.events()
+		today(db, now).forEach(e -> items.add(item(e, Group.TODAY, null, now)));
+		ended(db, now).forEach(e -> items.add(item(e, Group.ENDED, null, now)));
+		// 같은 이벤트는 한 번만(앞 그룹 우선)
+		Set<Long> seen = new HashSet<>();
+		items.removeIf(i -> !seen.add(i.eventId()));
+		Long defaultEventId = items.isEmpty() ? null : items.get(0).eventId();
+		return new TrafficEventsResponse(defaultEventId, items);
+	}
+
+	/**
+	 * 드롭다운에 들어가는 이벤트 번호(진행 중 · 오늘 예정 · 최근 7일 종료, {@link #events()}와 같은 범위).
+	 * Prometheus를 부르지 않고 DB 캐시만 쓴다(진행 중 판정 순서만 Prometheus가 정하므로 범위는 같다) — 알림센터 이동 경로가 쓴다.
+	 * DB 캐시가 한 번도 성공하지 못했으면 IllegalStateException.
+	 */
+	public Set<Long> listedEventIds() {
+		LocalDateTime now = Kst.now(clock);
+		TrafficCatalog.Snapshot db = catalogCache.get();
+		Set<Long> ids = new HashSet<>();
+		open(db, now).forEach(e -> ids.add(e.eventId()));
+		today(db, now).forEach(e -> ids.add(e.eventId()));
+		ended(db, now).forEach(e -> ids.add(e.eventId()));
+		return ids;
+	}
+
+	/**
+	 * 진행 중 = event_status OPEN이고 호스팅 종료 전(입장 중 · 진행 중 · 마무리). 호스팅 종료 뒤에는 WF4가 EXPIRED로 바꾸기 전에도 뺀다
+	 * (이벤트 12: 10:25 호스팅 종료 화면에서도 "진행 중 1"이던 것, 2026-10-28)
+	 */
+	private static List<MonitoredEvent> open(TrafficCatalog.Snapshot db, LocalDateTime now) {
+		return db.events().stream().filter(e -> e.eventStatus() == EventStatus.OPEN && !e.phase(now).closed()).toList();
+	}
+
+	/** 오늘(KST) 시작 SCHEDULED, 입장 이른 순 */
+	private static List<MonitoredEvent> today(TrafficCatalog.Snapshot db, LocalDateTime now) {
+		return db.events()
 			.stream()
 			.filter(e -> e.eventStatus() == EventStatus.SCHEDULED && e.startAt().toLocalDate().equals(now.toLocalDate()))
 			// DB 상태는 SCHEDULED여도 hosting_end_at이 지났으면(호스팅 안 된 DEPLOY_FAILED 등) 최근 종료에만 넣는다
 			.filter(e -> endedAt(e, now) == null)
 			.sorted(Comparator.comparing(MonitoredEvent::entryAt).thenComparing(MonitoredEvent::eventId))
 			.toList();
-		today.forEach(e -> items.add(item(e, Group.TODAY, null, now)));
+	}
+
+	/** 최근 7일 종료 · 준비 실패, 늦은 순 */
+	private static List<MonitoredEvent> ended(TrafficCatalog.Snapshot db, LocalDateTime now) {
 		LocalDateTime endedSince = now.minus(ENDED_LIST_WINDOW);
 		// DB 상태가 OPEN이어도 호스팅 종료 뒤(WF4 결과 전)면 최근 종료
-		List<MonitoredEvent> ended = db.events()
+		return db.events()
 			.stream()
 			.filter(e -> e.eventStatus() != EventStatus.OPEN || e.phase(now).closed())
 			.filter(e -> {
@@ -388,12 +425,6 @@ public class TrafficMonitoringService {
 			.sorted(Comparator.comparing((MonitoredEvent e) -> endedAt(e, now)).reversed()
 				.thenComparing(MonitoredEvent::eventId))
 			.toList();
-		ended.forEach(e -> items.add(item(e, Group.ENDED, null, now)));
-		// 같은 이벤트는 한 번만(앞 그룹 우선)
-		Set<Long> seen = new HashSet<>();
-		items.removeIf(i -> !seen.add(i.eventId()));
-		Long defaultEventId = items.isEmpty() ? null : items.get(0).eventId();
-		return new TrafficEventsResponse(defaultEventId, items);
 	}
 
 	/**
@@ -421,16 +452,10 @@ public class TrafficMonitoringService {
 	private record Judged(MonitoredEvent event, Judgment judgment) {
 	}
 
-	/**
-	 * 진행 중 이벤트 판정, 나쁜 순 → 시작 늦은 순(상태 요약 이벤트 칸 · 드롭다운 기본 선택이 같이 쓴다).
-	 * 진행 중 = event_status OPEN이고 호스팅 종료 전(입장 중 · 진행 중 · 마무리). 호스팅 종료 뒤에는 WF4가 EXPIRED로 바꾸기 전에도 뺀다
-	 * (이벤트 12: 10:25 호스팅 종료 화면에서도 "진행 중 1"이던 것, 2026-10-28)
-	 */
+	/** 진행 중({@link #open}) 이벤트 판정, 나쁜 순 → 시작 늦은 순(상태 요약 이벤트 칸 · 드롭다운 기본 선택이 같이 쓴다) */
 	private static List<Judged> openJudged(TrafficCatalog.Snapshot db, Stamped<TrafficPlatformCollector.Metrics> prom,
 			LocalDateTime now) {
-		return db.events()
-			.stream()
-			.filter(e -> e.eventStatus() == EventStatus.OPEN && !e.phase(now).closed())
+		return open(db, now).stream()
 			.map(e -> new Judged(e, judge(e, prom.value().signals(e.eventId()), now)))
 			.sorted(Comparator.comparing((Judged j) -> j.judgment().level().severity())
 				.reversed()
