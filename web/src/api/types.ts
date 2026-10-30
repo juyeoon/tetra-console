@@ -362,7 +362,8 @@ export type EventPhase =
   | 'DEPLOY_FAILED'
   | 'HOSTING_FAILED';
 
-export type FailureStep = 'DEPLOY' | 'HOSTING_START' | 'PREPARE' | 'END' | 'PROVISIONING' | 'MAIL' | 'OTHER';
+/** E 목록 단계. DELAY(단계 지연) · SYSTEM(DLQ 등) 알림은 목록에만 보이고 자동화 칸 24시간 실패 수에는 들지 않는다 */
+export type FailureStep = 'DEPLOY' | 'HOSTING_START' | 'PREPARE' | 'END' | 'PROVISIONING' | 'MAIL' | 'DELAY' | 'SYSTEM' | 'OTHER';
 
 /** 출처별 기준 시각. stale = 지난 값(조회 실패)이거나 값 없음(asOf null, 미설정) */
 export interface MonitoringSource {

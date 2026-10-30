@@ -155,7 +155,7 @@ class TrafficCatalog {
 			MonitoredEvent base = new MonitoredEvent(r.getEventId(), r.getTenantId(), row.tenantName(), r.getName(),
 					r.getHostingStartAt(), r.getStartAt(), e == null ? null : e.getEndAt(),
 					e == null ? null : e.getHostingEndAt(), r.getEventStatus(), r.getHostingStatus(),
-					e == null ? null : e.getStockCount(), aggregated.contains(r.getEventId()), null);
+					e == null ? null : e.getStockCount(), aggregated.contains(r.getEventId()), null, r.getProcessedAt());
 			String failedStatus = base.failedStatus();
 			events.add(failedStatus == null ? base : base.withFailedAt(
 					lastFailed.getOrDefault(r.getEventId(), Map.of()).get(failedStatus)));

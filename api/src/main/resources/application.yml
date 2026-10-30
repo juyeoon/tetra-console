@@ -104,6 +104,12 @@ tetra:
       dlq-names: ${MONITORING_DLQ_NAMES:}
       # 자동화 실행 상세(Step Functions ListExecutions, 상태 머신별) 캐시
       sfn-list-ttl: ${MONITORING_SFN_LIST_TTL:PT30S}
+  # 1분 주기 자동화 확인(DLQ 메시지 · 단계 지연 운영자 알림). 여러 태스크면 GET_LOCK을 잡은 하나만 돈다.
+  # DLQ 이름은 위 MONITORING_DLQ_NAMES를 같이 쓴다. delay-window = 단계 지연을 보는 기간(예정 시각부터, OPS-05 자동화 칸 공통)
+  alerts:
+    enabled: ${AUTOMATION_ALERTS_ENABLED:true}
+    interval: ${AUTOMATION_ALERTS_INTERVAL:PT1M}
+    delay-window: ${AUTOMATION_ALERTS_DELAY_WINDOW:PT24H}
   auth:
     jwt-secret: ${OPS_JWT_SECRET}
   password-link:

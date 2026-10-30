@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -105,10 +106,55 @@ class TrafficRulesTest {
 		assertThat(TrafficRules.cluster(true, 1, 16, null, null).level()).isEqualTo(MonitoringLevel.DANGER);
 	}
 
+	// ---------------------------------------------------------------- 자동화 · 단계 지연 5종
+
+	private static final LocalDateTime NOW = LocalDateTime.of(2026, 10, 30, 15, 0);
+
+	private static final Duration WINDOW = Duration.ofHours(24);
+
+	private static final Duration ONE_SECOND = Duration.ofSeconds(1);
+
+	/** 실행 확인: 실행 없음 · 있음 · 모름 */
+	private static final TrafficRules.ExecutionCheck NONE = (step, t) -> false;
+
+	private static final TrafficRules.ExecutionCheck STARTED = (step, t) -> true;
+
+	private static final TrafficRules.ExecutionCheck UNKNOWN = (step, t) -> null;
+
+	private static TrafficRules.DelayTarget target(long id, LocalDateTime hostingStartAt, LocalDateTime startAt,
+			LocalDateTime hostingEndAt, EventStatus eventStatus, HostingStatus hostingStatus) {
+		return new TrafficRules.DelayTarget(id, "aaaaaaaaaaaa", NOW.minusDays(2), hostingStartAt, startAt, hostingEndAt,
+				eventStatus, hostingStatus);
+	}
+
+	/** 시작 시각으로 준비 스케줄 · 입장을 정한다(EventPhase · EntryOpen 상수 — 지금은 TEST-LEAD 값). 호스팅 종료는 먼 뒤 */
+	private static TrafficRules.DelayTarget byStart(long id, LocalDateTime startAt, EventStatus eventStatus,
+			HostingStatus hostingStatus) {
+		return target(id, startAt.minusHours(3), startAt, startAt.plusDays(2), eventStatus, hostingStatus);
+	}
+
+	/** 호스팅 종료만 정한다(시작 · 호스팅 시작은 하루 넘게 전이라 앞 3종은 기간 밖) */
+	private static TrafficRules.DelayTarget byEnd(long id, LocalDateTime hostingEndAt, EventStatus eventStatus,
+			HostingStatus hostingStatus) {
+		LocalDateTime start = hostingEndAt.minusDays(2);
+		return target(id, start.minusHours(2), start, hostingEndAt, eventStatus, hostingStatus);
+	}
+
+	private static List<String> delays(TrafficRules.ExecutionCheck executions, TrafficRules.DelayTarget... targets) {
+		return TrafficRules.delays(List.of(targets), NOW, WINDOW, executions)
+			.stream()
+			.map(d -> d.target().eventId() + ":" + d.step() + ":" + d.minutes())
+			.toList();
+	}
+
+	private static TrafficRules.Delay delay(long id, DelayStep step, long minutes) {
+		return new TrafficRules.Delay(byStart(id, NOW, EventStatus.SCHEDULED, HostingStatus.HOSTING), step,
+				NOW.minusMinutes(minutes), minutes);
+	}
+
 	@Test
 	void automationFailuresDlqAndDelays() {
-		LocalDateTime now = LocalDateTime.of(2026, 10, 26, 15, 0);
-		var failure = new TrafficCatalog.FailureItem(now.minusHours(2), 5L, "aaaaaaaaaaaa", "C사", "신규 가입 쿠폰",
+		var failure = new TrafficCatalog.FailureItem(NOW.minusHours(2), 5L, "aaaaaaaaaaaa", "C사", "신규 가입 쿠폰",
 				FailureStep.PREPARE, "동결 확인 시간 초과");
 		Map<String, Integer> emptyDlq = new LinkedHashMap<>();
 		emptyDlq.put("tetra-dev-approve-result-dlq", 0);
@@ -122,70 +168,126 @@ class TrafficRulesTest {
 		dlq.put("tetra-dev-wf-events-dlq", 1);
 		assertThat(TrafficRules.automation(List.of(), dlq, List.of()))
 			.isEqualTo(new Judgment(MonitoringLevel.DANGER, "DLQ tetra-dev-scheduler-dlq, tetra-dev-wf-events-dlq"));
-		assertThat(TrafficRules.automation(List.of(), null, List.of("7번 준비 12분 지연", "8번 종료 11분 지연")))
-			.isEqualTo(new Judgment(MonitoringLevel.WARN, "7번 준비 12분 지연 외 1"));
 
-		// TEST-LEAD: 서비스 값 now + 48분(입장 −60)
-		// LocalDateTime start = now.plusMinutes(48); // 입장 = now − 12분
-		LocalDateTime start = now.minusMinutes(7); // 입장 = now − 12분 // TEST-LEAD
-		var late = new MonitoredEvent(7L, "aaaaaaaaaaaa", "A사", "쿠폰", start.minusHours(2), start, start.plusHours(1),
-				start.plusHours(2), EventStatus.SCHEDULED, HostingStatus.HOSTING, 5000L, false, null);
-		assertThat(TrafficRules.delays(List.of(late), now)).containsExactly("7번 준비 12분 지연");
-		// 10분 이내면 지연 아님
-		assertThat(TrafficRules.delays(List.of(late), now.minusMinutes(3))).isEmpty();
-		var open = new MonitoredEvent(8L, "aaaaaaaaaaaa", "A사", "쿠폰", start.minusHours(2), start, now.minusMinutes(20),
-				now.minusMinutes(11), EventStatus.OPEN, HostingStatus.HOSTING, 5000L, false, null);
-		assertThat(TrafficRules.delays(List.of(open), now)).containsExactly("8번 종료 11분 지연");
-		var hosting = new MonitoredEvent(9L, "aaaaaaaaaaaa", "A사", "쿠폰", now.minusMinutes(15), now.plusHours(3),
-				now.plusHours(4), now.plusHours(5), EventStatus.SCHEDULED, HostingStatus.DEPLOYED, 5000L, false, null);
-		assertThat(TrafficRules.delays(List.of(hosting), now)).containsExactly("9번 호스팅 시작 15분 지연");
+		// 주의 2종(종료 시작 · 종료 완료)만이면 주의, 긴급 3종이 하나라도 있으면 위험(주의 지연은 사유에 넣지 않는다)
+		assertThat(TrafficRules.automation(List.of(), null,
+				List.of(delay(8, DelayStep.END_START, 11), delay(9, DelayStep.END_DONE, 61))))
+			.isEqualTo(new Judgment(MonitoringLevel.WARN, "8번 종료 시작 11분 지연 외 1"));
+		assertThat(TrafficRules.automation(List.of(), null,
+				List.of(delay(7, DelayStep.ENTRY_OPEN, 12), delay(8, DelayStep.END_START, 11))))
+			.isEqualTo(new Judgment(MonitoringLevel.DANGER, "7번 입장 12분 지연"));
+		assertThat(TrafficRules.automation(List.of(failure), null,
+				List.of(delay(7, DelayStep.HOSTING_START, 15), delay(6, DelayStep.PREPARE_START, 12))))
+			.isEqualTo(new Judgment(MonitoringLevel.DANGER, "24시간 실패 1 · 5번 준비 · 7번 호스팅 시작 15분 지연 외 1"));
 	}
 
+	/** 호스팅 시작: hosting_start_at + 10분 초과(경계 미포함) ~ + 24시간(경계 포함), PENDING · DEPLOYED만 */
 	@Test
-	void delaysSkipDeployAndHostingFailures() {
-		LocalDateTime now = LocalDateTime.of(2026, 10, 28, 17, 0);
-		// 이벤트 9: 배포 실패, 이벤트는 SCHEDULED 그대로, 입장 · 호스팅 종료 모두 하루 넘게 지남 — 준비 · 종료 지연 둘 다 아님
-		LocalDateTime start = now.minusHours(27);
-		var deployFailed = new MonitoredEvent(9L, "aaaaaaaaaaaa", "A사", "쿠폰", start.minusHours(2), start,
-				start.plusHours(1), start.plusHours(2), EventStatus.SCHEDULED, HostingStatus.DEPLOY_FAILED, 5000L, false,
-				null);
-		assertThat(TrafficRules.delays(List.of(deployFailed), now)).isEmpty();
-		// 24시간 실패 창도 지났으면 자동화 칸은 정상
-		assertThat(TrafficRules.automation(List.of(), null, TrafficRules.delays(List.of(deployFailed), now)))
-			.isEqualTo(new Judgment(MonitoringLevel.OK, "최근 24시간 실패 0"));
-
-		var hostingFailed = new MonitoredEvent(10L, "aaaaaaaaaaaa", "A사", "쿠폰", start.minusHours(2), start,
-				start.plusHours(1), start.plusHours(2), EventStatus.SCHEDULED, HostingStatus.HOSTING_FAILED, 5000L, false,
-				null);
-		assertThat(TrafficRules.delays(List.of(hostingFailed), now)).isEmpty();
-
-		// 준비 실패: 입장이 지났어도 준비 지연은 아니다(호스팅 종료 전)
-		LocalDateTime openFailedStart = now.minusMinutes(30);
-		var openFailed = new MonitoredEvent(11L, "aaaaaaaaaaaa", "A사", "쿠폰", openFailedStart.minusHours(2),
-				openFailedStart, openFailedStart.plusHours(1), openFailedStart.plusHours(2), EventStatus.OPEN_FAILED,
-				HostingStatus.HOSTING, 5000L, false, null);
-		assertThat(TrafficRules.delays(List.of(openFailed), now)).isEmpty();
-
-		// 실패와 섞여 있어도 정상 이벤트의 지연은 그대로
-		// TEST-LEAD: 서비스 값 now + 48분(입장 −60)
-		// LocalDateTime lateStart = now.plusMinutes(48); // 입장 = now − 12분
-		LocalDateTime lateStart = now.minusMinutes(7); // 입장 = now − 12분 // TEST-LEAD
-		var late = new MonitoredEvent(7L, "aaaaaaaaaaaa", "A사", "쿠폰", lateStart.minusHours(2), lateStart,
-				lateStart.plusHours(1), lateStart.plusHours(2), EventStatus.SCHEDULED, HostingStatus.HOSTING, 5000L, false,
-				null);
-		assertThat(TrafficRules.delays(List.of(deployFailed, late, hostingFailed, openFailed), now))
-			.containsExactly("7번 준비 12분 지연");
+	void hostingStartBoundariesAndWindow() {
+		LocalDateTime start = NOW.plusHours(3);
+		assertThat(delays(NONE, target(1, NOW.minusMinutes(10), start, start.plusHours(5), EventStatus.SCHEDULED,
+				HostingStatus.DEPLOYED))).isEmpty();
+		assertThat(delays(NONE, target(1, NOW.minusMinutes(10).minus(ONE_SECOND), start, start.plusHours(5),
+				EventStatus.SCHEDULED, HostingStatus.DEPLOYED))).containsExactly("1:HOSTING_START:10");
+		assertThat(delays(NONE, target(2, NOW.minusMinutes(15), start, start.plusHours(5), EventStatus.SCHEDULED,
+				HostingStatus.PENDING))).containsExactly("2:HOSTING_START:15");
+		// 호스팅이 이미 시작됐으면 아님
+		assertThat(delays(NONE, target(3, NOW.minusMinutes(15), start, start.plusHours(5), EventStatus.SCHEDULED,
+				HostingStatus.HOSTING))).isEmpty();
+		// 24시간 상한: 경계 포함, 넘으면 보지 않는다(첫 배포 때 옛 이벤트 알림이 몰리지 않게)
+		assertThat(delays(NONE, target(4, NOW.minusHours(24), NOW.plusHours(1), NOW.plusHours(6), EventStatus.OPEN,
+				HostingStatus.DEPLOYED))).containsExactly("4:HOSTING_START:1440");
+		assertThat(delays(NONE, target(4, NOW.minusHours(24).minus(ONE_SECOND), NOW.plusHours(1), NOW.plusHours(6),
+				EventStatus.OPEN, HostingStatus.DEPLOYED))).isEmpty();
 	}
 
+	/** 준비 시작: 준비 스케줄(EventPhase.prepareAt) + 10분 초과, SCHEDULED이고 WF2-2 실행이 없다고 확인될 때만 */
 	@Test
-	void openFailedKeepsHostingEndDelay() {
-		LocalDateTime now = LocalDateTime.of(2026, 10, 28, 17, 0);
-		// 준비 실패인데 hosting_end_at이 11분 지났고 호스팅이 남아 있음(WF4 정리 안 됨) — 종료 지연
-		LocalDateTime start = now.minusHours(3);
-		var openFailed = new MonitoredEvent(11L, "aaaaaaaaaaaa", "A사", "쿠폰", start.minusHours(2), start,
-				now.minusHours(1), now.minusMinutes(11), EventStatus.OPEN_FAILED, HostingStatus.HOSTING, 5000L, false,
-				null);
-		assertThat(TrafficRules.delays(List.of(openFailed), now)).containsExactly("11번 종료 11분 지연");
+	void prepareStartNeedsMissingExecution() {
+		LocalDateTime lateStart = NOW.plus(EventPhase.PREPARE_LEAD).minusMinutes(10).minus(ONE_SECOND);
+		LocalDateTime onTimeStart = NOW.plus(EventPhase.PREPARE_LEAD).minusMinutes(10);
+		var late = byStart(5, lateStart, EventStatus.SCHEDULED, HostingStatus.HOSTING);
+		assertThat(delays(NONE, late)).containsExactly("5:PREPARE_START:10");
+		// 실행이 있거나 모르면(조회 실패) 지연으로 보지 않는다
+		assertThat(delays(STARTED, late)).isEmpty();
+		assertThat(delays(UNKNOWN, late)).isEmpty();
+		// 경계(정확히 + 10분)는 아님. 판정 시각 전이면 실행 확인도 부르지 않는다
+		List<DelayStep> asked = new ArrayList<>();
+		assertThat(delays((step, t) -> {
+			asked.add(step);
+			return false;
+		}, byStart(5, onTimeStart, EventStatus.SCHEDULED, HostingStatus.HOSTING))).isEmpty();
+		assertThat(asked).isEmpty();
+		// 이미 입장이 열렸거나(OPEN) 준비가 실패했으면(OPEN_FAILED) 아님
+		assertThat(delays(NONE, byStart(5, lateStart, EventStatus.OPEN, HostingStatus.HOSTING))).isEmpty();
+		assertThat(delays(NONE, byStart(5, lateStart, EventStatus.OPEN_FAILED, HostingStatus.HOSTING))).isEmpty();
+	}
+
+	/** 입장: 입장(EntryOpen.at) + 5분 초과까지 OPEN이 아님. 준비 실패(OPEN_FAILED)는 실패 알림이 있어 아님 */
+	@Test
+	void entryOpenBoundaries() {
+		LocalDateTime onTime = NOW.plus(EntryOpen.ENTRY_OPEN_LEAD).minusMinutes(5);
+		LocalDateTime late = onTime.minus(ONE_SECOND);
+		// 준비 스케줄은 더 앞이라 준비 시작도 판정 대상 — 실행이 있다고 두어 입장만 본다
+		assertThat(delays(STARTED, byStart(6, onTime, EventStatus.SCHEDULED, HostingStatus.HOSTING))).isEmpty();
+		assertThat(delays(STARTED, byStart(6, late, EventStatus.SCHEDULED, HostingStatus.HOSTING)))
+			.containsExactly("6:ENTRY_OPEN:5");
+		assertThat(delays(STARTED, byStart(6, late, EventStatus.OPEN, HostingStatus.HOSTING))).isEmpty();
+		assertThat(delays(STARTED, byStart(6, late, EventStatus.OPEN_FAILED, HostingStatus.HOSTING))).isEmpty();
+		// 실행이 없으면 준비 시작과 입장이 함께 늦다(단계마다 따로)
+		assertThat(delays(NONE, byStart(6, late, EventStatus.SCHEDULED, HostingStatus.HOSTING))).containsExactly(
+				"6:PREPARE_START:" + (EventPhase.PREPARE_LEAD.minus(EntryOpen.ENTRY_OPEN_LEAD).toMinutes() + 5),
+				"6:ENTRY_OPEN:5");
+	}
+
+	/** 배포 · 호스팅 시작 실패는 앞 3종(호스팅 시작 · 준비 시작 · 입장)에서 뺀다. 여러 단계가 같이 늦을 수 있다 */
+	@Test
+	void hostingFailuresSkipFrontSteps() {
+		// 호스팅 시작 · 준비 · 입장이 모두 지난 이벤트
+		LocalDateTime start = NOW.plus(EntryOpen.ENTRY_OPEN_LEAD).minusMinutes(20);
+		var pending = target(7, start.minusHours(2), start, start.plusDays(2), EventStatus.SCHEDULED, HostingStatus.PENDING);
+		assertThat(delays(NONE, pending)).extracting(s -> s.split(":")[1])
+			.containsExactly("HOSTING_START", "PREPARE_START", "ENTRY_OPEN");
+		for (HostingStatus failed : List.of(HostingStatus.DEPLOY_FAILED, HostingStatus.HOSTING_FAILED)) {
+			assertThat(delays(NONE, target(7, start.minusHours(2), start, start.plusDays(2), EventStatus.SCHEDULED, failed)))
+				.as(failed.name())
+				.isEmpty();
+		}
+	}
+
+	/**
+	 * 종료 시작 · 종료 완료: hosting_end_at + 10분 · + 60분. WF4가 도는 호스팅 상태(DEPLOYED · HOSTING · HOSTING_FAILED)만 —
+	 * DEPLOY_FAILED는 event-end 스케줄이 없고, ENDED · END_FAILED는 끝났거나 실패 알림이 있다. 준비 실패(OPEN_FAILED)여도 본다.
+	 */
+	@Test
+	void endStepsOnlyWhereWf4Runs() {
+		LocalDateTime startLate = NOW.minusMinutes(10).minus(ONE_SECOND);
+		assertThat(delays(NONE, byEnd(8, NOW.minusMinutes(10), EventStatus.OPEN, HostingStatus.HOSTING))).isEmpty();
+		assertThat(delays(NONE, byEnd(8, startLate, EventStatus.OPEN, HostingStatus.HOSTING)))
+			.containsExactly("8:END_START:10");
+		// WF4 실행이 있으면 종료 시작은 아님 — 끝나지 않은 채 60분이 지나면 종료 완료
+		assertThat(delays(STARTED, byEnd(8, startLate, EventStatus.OPEN, HostingStatus.HOSTING))).isEmpty();
+		LocalDateTime doneLate = NOW.minusMinutes(60).minus(ONE_SECOND);
+		assertThat(delays(STARTED, byEnd(9, NOW.minusMinutes(60), EventStatus.OPEN, HostingStatus.HOSTING))).isEmpty();
+		assertThat(delays(STARTED, byEnd(9, doneLate, EventStatus.OPEN, HostingStatus.HOSTING)))
+			.containsExactly("9:END_DONE:60");
+		assertThat(delays(NONE, byEnd(9, doneLate, EventStatus.OPEN, HostingStatus.HOSTING)))
+			.containsExactly("9:END_START:60", "9:END_DONE:60");
+		// 호스팅 시작 실패 · 준비 실패여도 WF4는 돈다
+		assertThat(delays(NONE, byEnd(10, startLate, EventStatus.SCHEDULED, HostingStatus.HOSTING_FAILED)))
+			.containsExactly("10:END_START:10");
+		assertThat(delays(NONE, byEnd(11, startLate, EventStatus.OPEN_FAILED, HostingStatus.DEPLOYED)))
+			.containsExactly("11:END_START:10");
+		for (HostingStatus none : List.of(HostingStatus.DEPLOY_FAILED, HostingStatus.ENDED, HostingStatus.END_FAILED,
+				HostingStatus.PENDING)) {
+			assertThat(delays(NONE, byEnd(12, doneLate, EventStatus.OPEN, none))).as(none.name()).isEmpty();
+		}
+		// hosting_end_at을 못 읽었으면(테넌트 스키마) 종료 2종을 보지 않는다
+		assertThat(delays(NONE, target(13, NOW.minusDays(3), NOW.minusDays(2), null, EventStatus.OPEN,
+				HostingStatus.HOSTING))).isEmpty();
+		// 24시간 상한
+		assertThat(delays(NONE, byEnd(14, NOW.minusHours(24).minus(ONE_SECOND), EventStatus.OPEN, HostingStatus.HOSTING)))
+			.isEmpty();
 	}
 
 	@Test

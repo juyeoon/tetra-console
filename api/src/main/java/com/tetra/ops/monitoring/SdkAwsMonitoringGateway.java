@@ -8,6 +8,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
 
 import org.springframework.stereotype.Component;
@@ -40,10 +41,13 @@ import software.amazon.awssdk.services.sfn.SfnClient;
 import software.amazon.awssdk.services.sfn.model.ExecutionListItem;
 import software.amazon.awssdk.services.sfn.model.GetExecutionHistoryResponse;
 import software.amazon.awssdk.services.sfn.model.ListExecutionsResponse;
+import software.amazon.awssdk.services.sqs.SqsClient;
+import software.amazon.awssdk.services.sqs.model.QueueAttributeName;
 
 /**
  * AWS SDK v2 구현. 클라이언트 상한(호출 5초 · 시도 2초)은 AwsConfig. Step Functions는 StartExecution과 같은 SfnClient를 쓰고
  * 같은 상한을 요청마다 덮어쓴다(클라이언트 Bean을 하나 더 두면 StartExecution 쪽 주입이 모호해진다).
+ * SQS는 1분 주기 확인 전용 SqsClient(AwsConfig, 같은 상한) — @SqsListener는 Spring Cloud AWS의 SqsAsyncClient를 따로 쓴다.
  */
 @Component
 class SdkAwsMonitoringGateway implements AwsMonitoringGateway {
@@ -67,13 +71,19 @@ class SdkAwsMonitoringGateway implements AwsMonitoringGateway {
 
 	private final SfnClient sfn;
 
+	private final SqsClient sqs;
+
+	/** 큐 이름 → URL. 큐 URL은 바뀌지 않아 한 번 찾으면 보관한다(실패는 보관하지 않음) */
+	private final Map<String, String> queueUrls = new ConcurrentHashMap<>();
+
 	SdkAwsMonitoringGateway(CloudWatchClient cloudWatch, ElasticLoadBalancingV2Client elb, RdsClient rds, EcsClient ecs,
-			SfnClient sfn) {
+			SfnClient sfn, SqsClient sqs) {
 		this.cloudWatch = cloudWatch;
 		this.elb = elb;
 		this.rds = rds;
 		this.ecs = ecs;
 		this.sfn = sfn;
+		this.sqs = sqs;
 	}
 
 	@Override
@@ -259,6 +269,26 @@ class SdkAwsMonitoringGateway implements AwsMonitoringGateway {
 		}
 		while (nextToken != null);
 		return new ExecutionHistory(events, false);
+	}
+
+	@Override
+	public int queueDepth(String queueName) {
+		String queueUrl = queueUrls.get(queueName);
+		if (queueUrl == null) {
+			queueUrl = call("GetQueueUrl", () -> sqs.getQueueUrl(r -> r.queueName(queueName)).queueUrl());
+			queueUrls.put(queueName, queueUrl);
+		}
+		String url = queueUrl;
+		String value = call("GetQueueAttributes", () -> sqs
+			.getQueueAttributes(r -> r.queueUrl(url).attributeNames(QueueAttributeName.APPROXIMATE_NUMBER_OF_MESSAGES))
+			.attributes()
+			.get(QueueAttributeName.APPROXIMATE_NUMBER_OF_MESSAGES));
+		try {
+			return value == null ? 0 : Integer.parseInt(value);
+		}
+		catch (NumberFormatException ex) {
+			throw new AwsMonitoringException("GetQueueAttributes 값 형식 오류");
+		}
 	}
 
 	/** SDK 이벤트에서 상태 이름(진입 · 나옴)과 실행 실패 · 시간 초과 · 중단의 error · cause만 꺼낸다 */

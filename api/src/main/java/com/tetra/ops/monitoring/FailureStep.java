@@ -15,6 +15,10 @@ public enum FailureStep {
 	PROVISIONING,
 	/** 메일 발송 실패(SES) — 자동화 실패 수에는 넣지 않는다 */
 	MAIL,
+	/** 단계 지연(1분 주기 확인 DELAY 알림) — 자동화 실패 수에는 넣지 않는다(자동화 칸이 지연을 따로 판정한다) */
+	DELAY,
+	/** DLQ 메시지 등 시스템 알림(SYSTEM) — 자동화 실패 수에는 넣지 않는다(자동화 칸이 DLQ를 따로 판정한다) */
+	SYSTEM,
 	/** 그 밖의 URGENT 알림 */
 	OTHER;
 
@@ -33,13 +37,15 @@ public enum FailureStep {
 			case "PROVISIONING" -> PROVISIONING;
 			case "MAIL" -> MAIL;
 			case "EVENT" -> PREPARE;
+			case "DELAY" -> DELAY;
+			case "SYSTEM" -> SYSTEM;
 			default -> OTHER;
 		};
 	}
 
-	/** 자동화 칸(최근 24시간 실패)에 세는 단계 */
+	/** 자동화 칸(최근 24시간 실패)에 세는 단계. 메일 · 지연 · 시스템 알림은 E 목록에만 보인다(D6, 2026-10-30) */
 	boolean automation() {
-		return this != MAIL;
+		return this != MAIL && this != DELAY && this != SYSTEM;
 	}
 
 }

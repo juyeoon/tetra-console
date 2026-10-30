@@ -123,6 +123,11 @@ public class TrafficMonitoringService {
 
 	private final TenantRouter router;
 
+	private final EventExecutionService executions;
+
+	/** 단계 지연을 보는 기간(예정 시각부터, 1분 주기 확인과 같은 값) */
+	private final Duration delayWindow;
+
 	private final Clock clock;
 
 	private final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
@@ -141,11 +146,14 @@ public class TrafficMonitoringService {
 
 	public TrafficMonitoringService(TrafficCatalog catalog, TrafficEventReader reader,
 			TrafficPlatformCollector platformCollector, TrafficEventCollector eventCollector,
-			TrafficAwsCollector awsCollector, TenantRouter router, TetraProperties properties, Clock clock) {
+			TrafficAwsCollector awsCollector, TenantRouter router, EventExecutionService executions,
+			TetraProperties properties, Clock clock) {
 		this.platformCollector = platformCollector;
 		this.eventCollector = eventCollector;
 		this.awsCollector = awsCollector;
 		this.router = router;
+		this.executions = executions;
+		this.delayWindow = properties.alerts().delayWindow();
 		this.clock = clock;
 		TetraProperties.Monitoring m = properties.monitoring();
 		Duration ttl = m.cacheTtl();
@@ -208,8 +216,9 @@ public class TrafficMonitoringService {
 			.stream()
 			.filter(f -> !f.occurredAt().isBefore(dayAgo) && f.step().automation())
 			.toList();
-		Judgment automation = TrafficRules.automation(recent, aws.asOf() == null ? null : awsValue.dlq(),
-				TrafficRules.delays(db.events(), now));
+		List<TrafficRules.Delay> delays = TrafficRules.delays(
+				db.events().stream().map(MonitoredEvent::delayTarget).toList(), now, delayWindow, this::executionStarted);
+		Judgment automation = TrafficRules.automation(recent, aws.asOf() == null ? null : awsValue.dlq(), delays);
 		summary.add(new StatusCell(Area.AUTOMATION, automation.level(), automation.reason(), null, null));
 		summary.add(platformCell(aws));
 
@@ -220,6 +229,19 @@ public class TrafficMonitoringService {
 					.map(f -> new TrafficPlatformResponse.Failure(Kst.toOffset(f.occurredAt()), f.eventId(), f.tenantId(),
 							f.tenantName(), f.eventName(), f.step(), FailureReasons.summarize(f.reason())))
 					.toList());
+	}
+
+	/**
+	 * 자동화 칸 준비 시작 · 종료 시작 지연의 실행 여부(EventExecutionService 목록 캐시 30초 · input 캐시).
+	 * 판정 시각에 걸린 이벤트가 있을 때만 불린다. 못 읽으면 null — 그 2종은 이번 응답에서 보지 않는다(실패 로그는 목록 캐시가 남긴다).
+	 */
+	private Boolean executionStarted(DelayStep step, TrafficRules.DelayTarget target) {
+		try {
+			return executions.startedFor(step, target);
+		}
+		catch (AwsMonitoringException ex) {
+			return null;
+		}
 	}
 
 	private StatusCell eventCell(List<Judged> open) {

@@ -78,4 +78,9 @@ public interface AwsMonitoringGateway {
 	/** GetExecutionHistory(includeExecutionData=false) — 오래된 순, maxEvents까지 */
 	ExecutionHistory executionHistory(String executionArn, int maxEvents);
 
+	// ---- SQS(1분 주기 확인의 DLQ 메시지 수) ----
+
+	/** 큐의 ApproximateNumberOfMessages(지금 받을 수 있는 메시지 수). 큐 URL은 이름으로 한 번 찾아 보관한다(GetQueueUrl) */
+	int queueDepth(String queueName);
+
 }

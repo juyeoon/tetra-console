@@ -326,6 +326,27 @@ class TrafficMonitoringApiTest extends IntegrationTest {
 			.andExpect(jsonPath("$.upcoming[*].eventId").value(contains(7106)));
 	}
 
+	/** D6: 단계 지연(DELAY) · 시스템(SYSTEM) 긴급 알림은 E 목록에는 보이고, 자동화 칸 "24시간 실패" 수에는 넣지 않는다 */
+	@Test
+	void delayAndSystemAlertsAreListedButNotCountedAsFailures() throws Exception {
+		notification(A, 7101L, "DELAY", now.minusMinutes(30),
+				"[A사] [7101:A 쿠폰 이벤트] 입장 시각(10:00)이 5분 지났지만 입장이 열리지 않았습니다.");
+		notification(null, null, "SYSTEM", now.minusMinutes(20),
+				"예약된 자동화 실행이 시작되지 않았습니다. 스케줄러 DLQ에 메시지 2건이 있습니다.");
+		respondPlatform();
+		mvc.perform(get("/api/ops/monitoring/platform").cookie(operatorCookie()))
+			.andExpect(status().isOk())
+			// 24시간 안 알림 2건이 있어도 실패 수("24시간 실패 N")에는 없다 — DLQ · 지연은 자동화 칸이 따로 판정한다
+			.andExpect(jsonPath("$.summary[2].level").value("DANGER"))
+			.andExpect(jsonPath("$.summary[2].reason").value("DLQ tetra-dev-scheduler-dlq"))
+			.andExpect(jsonPath("$.failures.length()").value(4))
+			.andExpect(jsonPath("$.failures[0].step").value("SYSTEM"))
+			.andExpect(jsonPath("$.failures[0].eventId").value(nullValue()))
+			.andExpect(jsonPath("$.failures[1].step").value("DELAY"))
+			.andExpect(jsonPath("$.failures[1].eventId").value(7101))
+			.andExpect(jsonPath("$.failures[1].eventName").value("A 쿠폰 이벤트"));
+	}
+
 	@Test
 	void prometheusFailureKeepsOtherSourcesAndMarksStale() throws Exception {
 		respondPlatform();

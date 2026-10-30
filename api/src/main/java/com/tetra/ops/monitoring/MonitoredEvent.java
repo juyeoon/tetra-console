@@ -11,10 +11,12 @@ import com.tetra.ops.event.EntryOpen;
  * endAt(이벤트 종료) · hostingEndAt · stockCount · aggregated는 테넌트 스키마 값 — 테넌트가 READY가 아니어서 못 읽었으면 null · false.
  * aggregated: 집계 완료(event_result_summary.history_generated_at 있음).
  * failedAt: 지금 실패 상태(DEPLOY_FAILED · HOSTING_FAILED · OPEN_FAILED)로 바뀐 마지막 로그 시각. 최근 7일 밖이거나 로그가 없으면 null.
+ * approvedAt: registry processed_at(승인 시각) — 단계 지연의 WF2-2 · WF4 실행을 찾는 시작 기준.
  */
 record MonitoredEvent(Long eventId, String tenantId, String tenantName, String name, LocalDateTime hostingStartAt,
 		LocalDateTime startAt, LocalDateTime endAt, LocalDateTime hostingEndAt, EventStatus eventStatus,
-		HostingStatus hostingStatus, Long stockCount, boolean aggregated, LocalDateTime failedAt) {
+		HostingStatus hostingStatus, Long stockCount, boolean aggregated, LocalDateTime failedAt,
+		LocalDateTime approvedAt) {
 
 	LocalDateTime prepareAt() {
 		return EventPhase.prepareAt(startAt);
@@ -34,7 +36,13 @@ record MonitoredEvent(Long eventId, String tenantId, String tenantName, String n
 
 	MonitoredEvent withFailedAt(LocalDateTime at) {
 		return new MonitoredEvent(eventId, tenantId, tenantName, name, hostingStartAt, startAt, endAt, hostingEndAt,
-				eventStatus, hostingStatus, stockCount, aggregated, at);
+				eventStatus, hostingStatus, stockCount, aggregated, at, approvedAt);
+	}
+
+	/** 단계 지연 판정 재료(TrafficRules.delays, 1분 주기 확인과 같은 규칙) */
+	TrafficRules.DelayTarget delayTarget() {
+		return new TrafficRules.DelayTarget(eventId, tenantId, approvedAt, hostingStartAt, startAt, hostingEndAt, eventStatus,
+				hostingStatus);
 	}
 
 	EventPhase phase(LocalDateTime now) {

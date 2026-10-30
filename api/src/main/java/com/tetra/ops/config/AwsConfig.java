@@ -16,6 +16,7 @@ import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.presigner.S3Presigner;
 import software.amazon.awssdk.services.sesv2.SesV2Client;
 import software.amazon.awssdk.services.sfn.SfnClient;
+import software.amazon.awssdk.services.sqs.SqsClient;
 
 /**
  * AWS SDK v2 클라이언트. 자격 증명은 기본 자격 증명 체인(ECS에서는 태스크 역할)을 쓴다. 코드·설정에 넣지 않는다.
@@ -92,6 +93,18 @@ public class AwsConfig {
 	@Bean(destroyMethod = "close")
 	EcsClient ecsClient(TetraProperties properties) {
 		return EcsClient.builder()
+			.region(Region.of(properties.aws().region()))
+			.overrideConfiguration(monitoringOverride())
+			.build();
+	}
+
+	/**
+	 * 1분 주기 자동화 확인의 DLQ 메시지 수(GetQueueUrl · GetQueueAttributes, 읽기 전용). 같은 상한(호출 5초 · 시도 2초).
+	 * @SqsListener는 Spring Cloud AWS가 만드는 SqsAsyncClient를 따로 쓴다(타입이 달라 주입이 겹치지 않음).
+	 */
+	@Bean(destroyMethod = "close")
+	SqsClient sqsClient(TetraProperties properties) {
+		return SqsClient.builder()
 			.region(Region.of(properties.aws().region()))
 			.overrideConfiguration(monitoringOverride())
 			.build();

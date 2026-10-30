@@ -2,7 +2,9 @@ package com.tetra.ops.monitoring;
 
 import java.time.LocalDateTime;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -57,6 +59,14 @@ class TrafficEventReader {
 				: statusLogs.findByEventIdInAndNewStatusInAndChangedAtGreaterThanEqual(failureEventIds, FAILED_STATUSES,
 						failedSince);
 		return new TenantRows(rows, aggregated, failed);
+	}
+
+	/** 1분 주기 단계 지연 확인: 이벤트별 hosting_end_at(registry에 없어 테넌트 스키마 event에서 읽는다) */
+	@Transactional(readOnly = true)
+	public Map<Long, LocalDateTime> hostingEndAt(Collection<Long> eventIds) {
+		Map<Long, LocalDateTime> ends = new HashMap<>();
+		events.findAllById(eventIds).forEach(e -> ends.put(e.getEventId(), e.getHostingEndAt()));
+		return ends;
 	}
 
 	/** 이벤트 하나: 진행 단계용 상태 로그 전체(changed_at 오름차순)와 결과 요약 */
