@@ -196,6 +196,48 @@ public class EventExecutionService {
 		return new EventExecutionsResponse(result.source(), key.eventId(), result.value());
 	}
 
+	// ================================================================ 단계 지연(1분 주기 확인 · OPS-05 자동화 칸)
+
+	/**
+	 * 이 이벤트의 흐름 실행이 since 이후에 시작됐는지. 상태 머신별 목록 캐시(30초)와 input 캐시(영구)를 실행 상세와 같이 쓴다 —
+	 * 목록은 상태 머신마다 최대 30초에 한 번, DescribeExecution은 처음 보는 실행만.
+	 * @throws AwsMonitoringException 목록을 못 읽었거나(상태 머신 ARN 설정 없음 · AWS 실패) 마지막 값이 stale, DescribeExecution 실패 —
+	 *         없다고 단정할 수 없으니 판정하지 않는다
+	 */
+	public boolean started(Flow flow, long eventId, String tenantId, Instant since) {
+		RefreshCache<Stamped<List<ExecutionItem>>> cache = listCaches.get(flow);
+		if (cache == null) {
+			throw new AwsMonitoringException("상태 머신 ARN 설정 없음(" + WORKFLOWS.get(flow) + ")");
+		}
+		Stamped<List<ExecutionItem>> listed = cache.get();
+		if (listed.value() == null || listed.stale()) {
+			throw new AwsMonitoringException("ListExecutions 실패(" + WORKFLOWS.get(flow) + ")");
+		}
+		for (ExecutionItem item : listed.value()) {
+			if (item.startDate() == null || item.startDate().isBefore(since)) {
+				continue;
+			}
+			Owner owner = owner(item.executionArn());
+			if (owner.eventId() != null && owner.eventId() == eventId
+					&& (owner.tenantId() == null || owner.tenantId().equals(tenantId))) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/** 단계 지연용: 준비 시작 → WF2-2, 종료 시작 → WF4. 승인 − 1분 이후에 시작한 실행만 본다(실행 상세와 같은 시작 기준) */
+	boolean startedFor(DelayStep step, TrafficRules.DelayTarget target) {
+		Flow flow = switch (step) {
+			case PREPARE_START -> Flow.PREPARE;
+			case END_START -> Flow.END;
+			default -> throw new IllegalArgumentException("실행 여부를 보지 않는 단계: " + step);
+		};
+		Instant since = target.approvedAt() == null ? clock.instant().minus(LIST_LOOKBACK)
+				: instant(target.approvedAt()).minus(BEFORE_APPROVAL);
+		return started(flow, target.eventId(), target.tenantId(), since);
+	}
+
 	/** 이벤트 하나의 실행 전부(흐름 순, 같은 흐름은 시작 순). 목록이 stale이면 결과도 stale */
 	private Stamped<List<Execution>> lookup(EventKey key) {
 		List<Execution> executions = new ArrayList<>();

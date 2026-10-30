@@ -33,6 +33,7 @@ public record TetraProperties(
 		@Valid @NotNull @DefaultValue Csv csv,
 		@Valid @NotNull @DefaultValue Approve approve,
 		@Valid @NotNull @DefaultValue Monitoring monitoring,
+		@Valid @NotNull @DefaultValue Alerts alerts,
 		@Valid @NotNull Auth auth,
 		@Valid @NotNull PasswordLink passwordLink,
 		@Valid @NotNull DbMigration dbMigration,
@@ -135,6 +136,16 @@ public record TetraProperties(
 			return Arrays.stream(value.split(",")).map(String::strip).filter(s -> !s.isEmpty()).toList();
 		}
 
+	}
+
+	/**
+	 * 1분 주기 자동화 확인(DLQ 메시지 · 단계 지연 운영자 알림, AutomationAlertJob). 여러 태스크면 GET_LOCK을 잡은 하나만 돈다.
+	 * enabled = 스케줄 켜기(테스트 프로필은 끔 — 작업은 run()을 직접 부른다). interval = 회차 간격(앞 회차가 끝난 뒤부터).
+	 * delayWindow = 단계 지연을 보는 기간(예정 시각부터). 첫 배포 때 옛 이벤트 알림이 몰리지 않게 하고, OPS-05 자동화 칸도 같은 값을 쓴다.
+	 * DLQ 이름은 monitoring.aws.dlqNames(MONITORING_DLQ_NAMES)를 같이 쓴다.
+	 */
+	public record Alerts(@DefaultValue("true") boolean enabled, @NotNull @DefaultValue("PT1M") Duration interval,
+			@NotNull @DefaultValue("PT24H") Duration delayWindow) {
 	}
 
 	// TODO(미정): CSV presigned URL 만료. 임시 5분

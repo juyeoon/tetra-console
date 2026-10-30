@@ -9,6 +9,7 @@ import java.util.Map;
 
 import com.tetra.ops.domain.EventStatus;
 import com.tetra.ops.domain.HostingStatus;
+import com.tetra.ops.event.EntryOpen;
 
 /**
  * OPS-05 상태 판정(명세 2절, 초안 — 경보 8장 임계값, 부하 시험 뒤 조정). 판정은 백엔드 한 곳에서만 한다(상태 요약 · 드롭다운 기본 선택 ·
@@ -41,7 +42,14 @@ final class TrafficRules {
 
 	static final Duration AUTOMATION_FAILURE_WINDOW = Duration.ofHours(24);
 
+	/** 단계 지연: 호스팅 시작 · 준비 시작 · 종료 시작은 예정 + 10분 */
 	static final Duration STEP_DELAY = Duration.ofMinutes(10);
+
+	/** 입장 지연: 입장 + 5분(WF2-2는 입장 직후 OPEN으로 바꾼다) */
+	static final Duration ENTRY_OPEN_DELAY = Duration.ofMinutes(5);
+
+	/** 종료 완료 지연: hosting_end_at + 60분(WF4 최대 대기 — 닫힘 3분 · 집계 30분 · 앱 삭제 10분 — 보다 길게) */
+	static final Duration END_DONE_DELAY = Duration.ofMinutes(60);
 
 	record Judgment(MonitoringLevel level, String reason) {
 
@@ -232,11 +240,12 @@ final class TrafficRules {
 	// ---------------------------------------------------------------- 자동화
 
 	/**
-	 * 위험: 최근 24시간 *_FAILED(메일 제외), DLQ 메시지 있음. 주의: 예정 단계가 계획보다 10분 이상 늦음.
+	 * 위험: 최근 24시간 *_FAILED(메일 · 지연 · 시스템 알림 제외), DLQ 메시지 있음, 긴급 단계 지연(호스팅 시작 · 준비 시작 · 입장).
+	 * 주의: 주의 단계 지연(종료 시작 · 종료 완료).
 	 * @param dlq 큐 이름 → 보이는 메시지 수. null이면 DLQ를 보지 않음(미설정 · AWS 조회 실패)
 	 */
 	static Judgment automation(List<TrafficCatalog.FailureItem> recentFailures, Map<String, Integer> dlq,
-			List<String> delays) {
+			List<Delay> delays) {
 		List<String> danger = new ArrayList<>();
 		if (!recentFailures.isEmpty()) {
 			TrafficCatalog.FailureItem latest = recentFailures.get(0);
@@ -250,13 +259,22 @@ final class TrafficRules {
 				danger.add("DLQ " + String.join(", ", queues));
 			}
 		}
+		List<Delay> urgent = delays.stream().filter(d -> d.step().urgent()).toList();
+		if (!urgent.isEmpty()) {
+			danger.add(summarize(urgent));
+		}
 		if (!danger.isEmpty()) {
 			return new Judgment(MonitoringLevel.DANGER, String.join(" · ", danger));
 		}
 		if (!delays.isEmpty()) {
-			return new Judgment(MonitoringLevel.WARN, delays.get(0) + (delays.size() > 1 ? " 외 " + (delays.size() - 1) : ""));
+			return new Judgment(MonitoringLevel.WARN, summarize(delays));
 		}
 		return new Judgment(MonitoringLevel.OK, "최근 24시간 실패 0");
+	}
+
+	/** "7번 준비 시작 12분 지연 외 1" */
+	private static String summarize(List<Delay> delays) {
+		return delays.get(0).reason() + (delays.size() > 1 ? " 외 " + (delays.size() - 1) : "");
 	}
 
 	/** 사유 문구용 짧은 단계 이름 */
@@ -268,46 +286,97 @@ final class TrafficRules {
 			case END -> "종료";
 			case PROVISIONING -> "환경 준비";
 			case MAIL -> "메일";
+			case DELAY -> "지연";
+			case SYSTEM -> "시스템";
 			case OTHER -> "알림";
 		};
 	}
 
 	/**
-	 * 예정 단계 지연(계획 + 10분이 지났는데 상태가 그대로).
-	 * - 호스팅 시작(WF2-1): hosting_start_at, 호스팅 PENDING · DEPLOYED 그대로
-	 * - 준비(WF2-2): 입장(시작 − 60분) — 입장 직후 OPEN이 된다. 이벤트 SCHEDULED 그대로
-	 * - 종료(WF4): hosting_end_at, 호스팅 ENDED · END_FAILED가 아님
-	 * 배포 · 호스팅 시작 실패(DEPLOY_FAILED · HOSTING_FAILED)는 넣지 않는다 — 실패 목록 · 진행 단계가 보여 준다.
-	 * 이벤트가 SCHEDULED로 남아 준비 지연이 끝없이 늘었다(이벤트 9: "준비 1625분 지연", 2026-10-28).
-	 * 준비 실패(OPEN_FAILED)는 SCHEDULED가 아니라 준비 지연이 없고, 종료 지연은 본다(hosting_end_at이 지났는데 호스팅이 남아 있으면 정리가 안 된 것).
+	 * 단계 지연 판정 재료. registry 값 + 테넌트 스키마 hosting_end_at(못 읽었으면 null — 종료 2종을 보지 않는다).
+	 * approvedAt(processed_at)은 WF2-2 · WF4 실행을 찾는 시작 기준(EventExecutionService 자동화 실행 상세와 같은 범위).
 	 */
-	static List<String> delays(List<MonitoredEvent> events, LocalDateTime now) {
-		List<String> delays = new ArrayList<>();
-		for (MonitoredEvent e : events) {
-			HostingStatus h = e.hostingStatus();
-			if (h == HostingStatus.DEPLOY_FAILED || h == HostingStatus.HOSTING_FAILED) {
-				continue;
+	record DelayTarget(Long eventId, String tenantId, LocalDateTime approvedAt, LocalDateTime hostingStartAt,
+			LocalDateTime startAt, LocalDateTime hostingEndAt, EventStatus eventStatus, HostingStatus hostingStatus) {
+
+		/** 준비(WF2-2) 스케줄 */
+		LocalDateTime prepareAt() {
+			return startAt == null ? null : EventPhase.prepareAt(startAt);
+		}
+
+		LocalDateTime entryAt() {
+			return startAt == null ? null : EntryOpen.at(startAt);
+		}
+
+	}
+
+	/** WF2-2 · WF4 실행이 시작됐는지. 있으면 true, 없으면 false, 모르면(조회 실패 · 시간 상한) null — 그 단계는 이번에 판정하지 않는다 */
+	@FunctionalInterface
+	interface ExecutionCheck {
+
+		Boolean started(DelayStep step, DelayTarget target);
+
+	}
+
+	/** 판정한 지연. minutes = 예정 시각부터 판정 시각까지(분) */
+	record Delay(DelayTarget target, DelayStep step, LocalDateTime planned, long minutes) {
+
+		/** 자동화 칸 사유: "7번 준비 시작 12분 지연" */
+		String reason() {
+			return target.eventId() + "번 " + step.label() + " " + minutes + "분 지연";
+		}
+
+	}
+
+	/** WF4(종료)가 도는 호스팅 상태 — WF1-2가 끝까지 성공해 event-end 스케줄을 만든 뒤, 아직 ENDED · END_FAILED가 아님 */
+	static boolean endStepsApply(HostingStatus hosting) {
+		return hosting == HostingStatus.DEPLOYED || hosting == HostingStatus.HOSTING
+				|| hosting == HostingStatus.HOSTING_FAILED;
+	}
+
+	/**
+	 * 예정 단계 지연 5종(1분 주기 확인 알림 · OPS-05 자동화 칸 공통). 예정 + 단계별 기준({@link DelayStep#after})을 넘었고
+	 * 예정 + window(기본 24시간) 안일 때만 본다 — 오래 멈춘 이벤트가 끝없이 지연으로 남거나 첫 배포 때 한꺼번에 알림이 몰리지 않게.
+	 * - 호스팅 시작: hosting_start_at, 호스팅 PENDING · DEPLOYED 그대로
+	 * - 준비 시작: EventPhase.prepareAt(시작 − 준비 리드), 이벤트 SCHEDULED이고 WF2-2 실행이 없음
+	 * - 입장: EntryOpen.at(시작 − 입장 리드), 이벤트 SCHEDULED 그대로(WF2-2는 입장 직후 OPEN으로 바꾼다)
+	 * - 종료 시작 · 종료 완료: hosting_end_at, WF4가 도는 호스팅 상태({@link #endStepsApply})에서 WF4 실행이 없음 / ENDED가 아님
+	 * 제외: 배포 · 호스팅 시작 실패(DEPLOY_FAILED · HOSTING_FAILED)는 앞 3종만 뺀다 — 실패 알림 · 실패 목록이 따로 보여 준다.
+	 * DEPLOY_FAILED는 WF1-2가 event-end 스케줄을 만들기 전에 실패해 WF4가 돌지 않으므로 종료 2종에도 들지 않는다.
+	 * 같은 단계가 이미 실패 상태(OPEN_FAILED · END_FAILED)면 지연이 아니다(실패 알림이 있다). 한 이벤트에 여러 단계가 같이 늦을 수 있다.
+	 * 실행 확인(executions)은 그 단계의 상태 · 시각 조건이 맞을 때만 부른다.
+	 */
+	static List<Delay> delays(List<DelayTarget> targets, LocalDateTime now, Duration window, ExecutionCheck executions) {
+		List<Delay> delays = new ArrayList<>();
+		for (DelayTarget t : targets) {
+			HostingStatus h = t.hostingStatus();
+			boolean hostingFailed = h == HostingStatus.DEPLOY_FAILED || h == HostingStatus.HOSTING_FAILED;
+			boolean scheduled = t.eventStatus() == EventStatus.SCHEDULED;
+			if (!hostingFailed && (h == HostingStatus.PENDING || h == HostingStatus.DEPLOYED)) {
+				add(delays, t, DelayStep.HOSTING_START, t.hostingStartAt(), now, window, null);
 			}
-			if ((h == HostingStatus.PENDING || h == HostingStatus.DEPLOYED) && late(e.hostingStartAt(), now)) {
-				delays.add(delay(e, "호스팅 시작", e.hostingStartAt(), now));
+			if (!hostingFailed && scheduled) {
+				add(delays, t, DelayStep.PREPARE_START, t.prepareAt(), now, window, executions);
+				add(delays, t, DelayStep.ENTRY_OPEN, t.entryAt(), now, window, null);
 			}
-			else if (e.eventStatus() == EventStatus.SCHEDULED && late(e.entryAt(), now)) {
-				delays.add(delay(e, "준비", e.entryAt(), now));
-			}
-			else if (e.hostingEndAt() != null && h != HostingStatus.ENDED && h != HostingStatus.END_FAILED
-					&& late(e.hostingEndAt(), now)) {
-				delays.add(delay(e, "종료", e.hostingEndAt(), now));
+			if (endStepsApply(h)) {
+				add(delays, t, DelayStep.END_START, t.hostingEndAt(), now, window, executions);
+				add(delays, t, DelayStep.END_DONE, t.hostingEndAt(), now, window, null);
 			}
 		}
 		return delays;
 	}
 
-	private static boolean late(LocalDateTime planned, LocalDateTime now) {
-		return planned != null && now.isAfter(planned.plus(STEP_DELAY));
-	}
-
-	private static String delay(MonitoredEvent e, String step, LocalDateTime planned, LocalDateTime now) {
-		return e.eventId() + "번 " + step + " " + Duration.between(planned, now).toMinutes() + "분 지연";
+	/** 예정 + 기준을 넘었고(경계 미포함) 예정 + window 안(경계 포함)이면 지연. executions가 있으면 실행이 없다고 확인될 때만 */
+	private static void add(List<Delay> delays, DelayTarget t, DelayStep step, LocalDateTime planned, LocalDateTime now,
+			Duration window, ExecutionCheck executions) {
+		if (planned == null || !now.isAfter(planned.plus(step.after())) || now.isAfter(planned.plus(window))) {
+			return;
+		}
+		if (executions != null && !Boolean.FALSE.equals(executions.started(step, t))) {
+			return;
+		}
+		delays.add(new Delay(t, step, planned, Duration.between(planned, now).toMinutes()));
 	}
 
 	// ---------------------------------------------------------------- 플랫폼

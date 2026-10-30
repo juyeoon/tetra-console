@@ -1,6 +1,7 @@
 package com.tetra.ops.notification;
 
 import java.time.Clock;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 
@@ -19,12 +20,15 @@ import com.tetra.ops.domain.platform.TenantRepository;
 import com.tetra.ops.domain.tenant.TenantNotification;
 import com.tetra.ops.domain.tenant.TenantNotificationRepository;
 import com.tetra.ops.event.EntryOpen;
+import com.tetra.ops.monitoring.DelayStep;
+import com.tetra.ops.monitoring.DlqQueue;
 import com.tetra.ops.tenancy.TenantContext;
 
 /**
  * 운영자 알림(operator_notification)·테넌트 알림(tenant_notification)을 남기는 유일한 곳 (CLAUDE.md §7.13).
  * 상태 변경은 상태 로그와 같은 트랜잭션에서 부른다(MANDATORY). 한 사건에 알림은 한 번만 남긴다.
  * 메일 발송 실패처럼 커밋 뒤에 생기는 일은 자체 트랜잭션으로 남긴다.
+ * 1분 주기 확인(DLQ · 단계 지연)은 상태 전이가 없어 중복 방지 키(dedupe_key)로 한 번만 남긴다 — 자체 트랜잭션, 트랜잭션 밖에서 부른다.
  * 문구: 운영자는 [테넌트명] [id:이벤트명], 테넌트는 [id:이벤트명]으로 시작한다. 시각은 HH:mm(DB의 KST 값 그대로).
  * 고정 문구(라벨 + 정해진 문장)는 120자 이내로 두고, 반려 사유 · 원인은 자르지 않고 붙인다(1000자 상한만).
  */
@@ -234,11 +238,78 @@ public class NotificationService {
 				tenantLabel(tenantId) + " 비밀번호 설정 메일 발송에 실패했습니다. 담당자 이메일 주소와 SES 상태를 확인해 주세요.");
 	}
 
+	// ------------------------------------------------------------ 1분 주기 확인 (SYSTEM · DELAY, dedupe_key)
+
+	/** DLQ 알림 중복 방지 키: DLQ:{큐 이름}:{yyyy-MM-dd(KST)} — 같은 큐는 하루 1건 */
+	public static String dlqKey(String queueName, LocalDate day) {
+		return "DLQ:" + queueName + ":" + day;
+	}
+
+	/** 단계 지연 알림 중복 방지 키: DELAY:{event_id}:{단계 코드} — 이벤트 · 단계마다 1건 */
+	public static String delayKey(Long eventId, DelayStep step) {
+		return "DELAY:" + eventId + ":" + step.name();
+	}
+
+	/**
+	 * DLQ에 메시지가 있음(1분 주기 확인). 운영자 SYSTEM/URGENT, 테넌트 · 이벤트 없음. 같은 키가 이미 있으면 남기지 않고 false.
+	 * 자체 트랜잭션 — 트랜잭션 밖에서 부른다. 다른 태스크와 동시에 같은 키를 넣으면 1062(uk_operator_notif_dedupe)가 이 메서드 밖으로
+	 * 나가고 이 트랜잭션은 롤백된다(부른 쪽이 1062만 잡아 false로 본다).
+	 * @return 새로 남겼으면 true(Slack 연동 등은 이때만)
+	 */
+	@Transactional
+	public boolean dlqDetected(DlqQueue queue, int messages, LocalDate day) {
+		String key = dlqKey(queue.name(), day);
+		if (operatorNotifications.existsByDedupeKey(key)) {
+			return false;
+		}
+		String content = switch (queue.kind()) {
+			case RESULT -> "자동화 결과를 반영하지 못했습니다. " + queue.resultLabel() + " DLQ에 메시지 " + messages
+					+ "건이 있습니다. 이벤트·테넌트 상태가 갱신되지 않았을 수 있습니다.";
+			case DELIVERY -> "자동화 실행 결과가 Console에 전달되지 않았습니다. 결과 전달 DLQ에 메시지 " + messages + "건이 있습니다.";
+			case SCHEDULER -> "예약된 자동화 실행이 시작되지 않았습니다. 스케줄러 DLQ에 메시지 " + messages + "건이 있습니다.";
+		};
+		operator(null, null, Category.SYSTEM, Priority.URGENT, content, key);
+		return true;
+	}
+
+	/**
+	 * 예정 단계 지연(1분 주기 확인). 운영자 DELAY — 호스팅 시작 · 준비 시작 · 입장은 URGENT, 종료 시작 · 종료 완료는 WARNING.
+	 * planned = 그 단계의 예정 시각(호스팅 시작 · 준비 스케줄 · 입장 · 호스팅 종료). 같은 키가 이미 있으면 남기지 않고 false.
+	 * 자체 트랜잭션 — 트랜잭션 밖에서 부른다(1062는 dlqDetected와 같이 밖으로 나간다).
+	 * @return 새로 남겼으면 true
+	 */
+	@Transactional
+	public boolean stepDelayed(String tenantId, Long eventId, DelayStep step, LocalDateTime planned) {
+		String key = delayKey(eventId, step);
+		if (operatorNotifications.existsByDedupeKey(key)) {
+			return false;
+		}
+		EventRegistry registry = registry(eventId);
+		String label = tenantLabel(tenantId) + " " + eventLabel(eventId, registry);
+		long minutes = step.after().toMinutes();
+		String content = switch (step) {
+			case HOSTING_START -> label + " 호스팅 시작이 예정 시각(" + time(planned) + ")보다 " + minutes + "분 넘게 늦어지고 있습니다.";
+			case PREPARE_START -> label + " 이벤트 준비가 예정 시각(" + time(planned) + ")보다 " + minutes
+					+ "분 넘게 시작되지 않았습니다. 입장(" + time(registry == null ? null : EntryOpen.at(registry.getStartAt()))
+					+ ")이 늦어질 수 있습니다.";
+			case ENTRY_OPEN -> label + " 입장 시각(" + time(planned) + ")이 " + minutes + "분 지났지만 입장이 열리지 않았습니다.";
+			case END_START -> label + " 호스팅 종료가 예정 시각(" + time(planned) + ")보다 " + minutes + "분 넘게 시작되지 않았습니다.";
+			case END_DONE -> label + " 호스팅 종료 예정 시각(" + time(planned) + ")에서 " + minutes + "분이 지나도 종료가 끝나지 않았습니다.";
+		};
+		operator(tenantId, eventId, Category.DELAY, step.urgent() ? Priority.URGENT : Priority.WARNING, content, key);
+		return true;
+	}
+
 	// ------------------------------------------------------------
 
 	private void operator(String tenantId, Long eventId, Category category, Priority priority, String content) {
+		operator(tenantId, eventId, category, priority, content, null);
+	}
+
+	private void operator(String tenantId, Long eventId, Category category, Priority priority, String content,
+			String dedupeKey) {
 		operatorNotifications.save(OperatorNotification.unread(tenantId, eventId, category.name(), priority.name(),
-				Kst.now(clock), fit(content)));
+				Kst.now(clock), fit(content), dedupeKey));
 	}
 
 	/** tenant_notification은 테넌트 스키마 테이블이라 라우팅된 테넌트와 같아야 한다(이중 확인은 엔티티 리스너가 한다). */

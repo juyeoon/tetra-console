@@ -345,6 +345,8 @@ export const FAILURE_STEP_LABEL: Record<TrafficFailure['step'], string> = {
   END: '종료(WF4) 실패',
   PROVISIONING: '환경 준비(WF5) 실패',
   MAIL: '메일 발송 실패',
+  DELAY: '단계 지연',
+  SYSTEM: '시스템(DLQ)',
   OTHER: '긴급 알림',
 };
 

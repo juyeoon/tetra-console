@@ -54,6 +54,20 @@ public interface EventRegistryRepository extends JpaRepository<EventRegistry, Lo
 			 order by r.startAt, r.eventId""")
 	List<WithTenantName> findMonitoringCandidates(@Param("since") LocalDateTime since);
 
+	/**
+	 * 1분 주기 단계 지연 확인 후보: 승인 이벤트 중 호스팅이 끝나지 않았고(PENDING · DEPLOYED · HOSTING · HOSTING_FAILED)
+	 * 호스팅 시작 예정이 지난 것. 지연 단계는 모두 hosting_start_at 이후라 그 전 이벤트는 볼 것이 없다.
+	 * DEPLOY_FAILED는 지연 5종 어디에도 들지 않아 뺀다. 기간 상한(예정 + 24시간)은 단계마다 예정 시각이 달라 TrafficRules.delays가 본다.
+	 */
+	@Query("""
+			select r from EventRegistry r
+			 where r.applicationStatus = com.tetra.ops.domain.ApplicationStatus.APPROVED
+			   and r.hostingStatus in (com.tetra.ops.domain.HostingStatus.PENDING, com.tetra.ops.domain.HostingStatus.DEPLOYED,
+			                           com.tetra.ops.domain.HostingStatus.HOSTING, com.tetra.ops.domain.HostingStatus.HOSTING_FAILED)
+			   and r.hostingStartAt <= :now
+			 order by r.startAt, r.eventId""")
+	List<EventRegistry> findDelayCandidates(@Param("now") LocalDateTime now);
+
 	/** OPS-06-2: 테넌트별, 신청시각 내림차순 (idx_registry_tenant_applied). */
 	List<EventRegistry> findByTenantIdOrderByAppliedAtDescEventIdDesc(String tenantId);
 

@@ -279,6 +279,19 @@ describe('플랫폼 · 다가오는 이벤트 · 실패', () => {
       ],
     );
   });
+  test('실패 목록: 1분 주기 확인 알림(단계 지연 · DLQ)도 단계 이름으로', () => {
+    const rows = failureRows([
+      { occurredAt: '2026-10-30T15:00:00+09:00', eventId: 7, tenantId: 't', tenantName: 'A사', eventName: '쿠폰', step: 'DELAY', reason: '입장 시각(14:54)이 5분 지났지만 입장이 열리지 않았습니다.' },
+      { occurredAt: '2026-10-30T14:00:00+09:00', eventId: null, tenantId: null, tenantName: null, eventName: null, step: 'SYSTEM', reason: '스케줄러 DLQ에 메시지 2건이 있습니다.' },
+    ]);
+    assert.deepEqual(
+      rows.map((r) => [r.event, r.step, r.link]),
+      [
+        ['7 · A사 쿠폰', '단계 지연', '/events/progress/7'],
+        [EMPTY, '시스템(DLQ)', '/logs/notifications'],
+      ],
+    );
+  });
 });
 
 describe('드롭다운 선택 유지', () => {

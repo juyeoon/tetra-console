@@ -17,6 +17,9 @@ public interface OperatorNotificationRepository extends JpaRepository<OperatorNo
 	/** OPS-02 최근 알림 5건 (idx_operator_notif_occurred). */
 	List<OperatorNotification> findTop5ByOrderByOccurredAtDescNotificationIdDesc();
 
+	/** 1분 주기 확인: 같은 중복 방지 키 알림이 이미 있는지 (uk_operator_notif_dedupe). */
+	boolean existsByDedupeKey(String dedupeKey);
+
 	/** OPS-08 전체, 최신순 (idx_operator_notif_occurred). 페이지네이션 없음. */
 	@Query("""
 			select new com.tetra.ops.domain.platform.OperatorNotificationRepository$WithTenantName(n, t.name)

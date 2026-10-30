@@ -1,6 +1,7 @@
 package com.tetra.ops.monitoring;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.tuple;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
@@ -251,6 +252,57 @@ class EventExecutionServiceTest {
 		assertThat(response.aws().stale()).isTrue();
 		assertThat(response.executions()).isEmpty();
 		verifyNoInteractions(aws);
+	}
+
+	/** 단계 지연(1분 주기 확인 · OPS-05 자동화 칸): since 이후 이 이벤트(같은 테넌트)의 실행이 있는지. 목록 · input 캐시를 같이 쓴다 */
+	@Test
+	void startedFindsExecutionOfEventSince() {
+		service = service(Duration.ofMinutes(5));
+		Instant approved13 = Instant.parse("2026-10-28T05:18:00Z");
+
+		// WF2-2: uuid-e = 이벤트 13(05:45:37Z), uuid-d = 다른 테넌트의 13
+		assertThat(service.started(Flow.PREPARE, 13, TENANT, approved13)).isTrue();
+		assertThat(service.started(Flow.PREPARE, 13, OTHER_TENANT, approved13)).isTrue();
+		assertThat(service.started(Flow.PREPARE, 12, TENANT, approved13)).isFalse();
+		// since보다 앞에 시작한 실행은 보지 않는다
+		assertThat(service.started(Flow.PREPARE, 13, TENANT, Instant.parse("2026-10-28T05:46:00Z"))).isFalse();
+		// WF4: 이벤트 13 실행 없음(uuid-late는 input이 없어 이벤트를 모름)
+		assertThat(service.started(Flow.END, 13, TENANT, approved13)).isFalse();
+		// 목록은 상태 머신마다 한 번(캐시), input은 실행마다 한 번
+		verify(aws, times(1)).executions(eq(EVENT_OPEN), any(), anyInt());
+		verify(aws, times(1)).executionInput(arn(EVENT_OPEN, "uuid-e"));
+
+		// 지연 단계 → 흐름: 준비 시작 = WF2-2, 종료 시작 = WF4. 시작 기준 = 승인(KST) − 1분
+		var event13 = new TrafficRules.DelayTarget(13L, TENANT, LocalDateTime.of(2026, 10, 28, 14, 18),
+				LocalDateTime.of(2026, 10, 28, 14, 30), LocalDateTime.of(2026, 10, 28, 15, 0),
+				LocalDateTime.of(2026, 10, 28, 15, 15), com.tetra.ops.domain.EventStatus.OPEN,
+				com.tetra.ops.domain.HostingStatus.HOSTING);
+		assertThat(service.startedFor(DelayStep.PREPARE_START, event13)).isTrue();
+		assertThat(service.startedFor(DelayStep.END_START, event13)).isFalse();
+		assertThatThrownBy(() -> service.startedFor(DelayStep.HOSTING_START, event13))
+			.isInstanceOf(IllegalArgumentException.class);
+	}
+
+	/** 목록을 못 읽으면(AWS 실패 · 상태 머신 ARN 설정 없음) 없다고 단정하지 않고 예외 — 부른 쪽이 그 단계를 판정하지 않는다 */
+	@Test
+	void startedFailsWhenListUnavailable() {
+		when(aws.executions(eq(EVENT_END), any(), anyInt()))
+			.thenThrow(new AwsMonitoringException("ListExecutions ThrottlingException"));
+		service = service(Duration.ofMinutes(5));
+		assertThatThrownBy(() -> service.started(Flow.END, 13, TENANT, Instant.EPOCH))
+			.isInstanceOf(AwsMonitoringException.class)
+			.hasMessageContaining("WF4");
+
+		var broken = new TetraProperties.Sfn("local-approve", "local-tenant", SFN.lifecycle());
+		EventExecutionService unconfigured = new EventExecutionService(aws, null, null, JsonMapper.builder().build(), broken,
+				Duration.ZERO, Duration.ZERO, Duration.ofSeconds(5), clock);
+		try {
+			assertThatThrownBy(() -> unconfigured.started(Flow.PREPARE, 13, TENANT, Instant.EPOCH))
+				.isInstanceOf(AwsMonitoringException.class);
+		}
+		finally {
+			unconfigured.shutdown();
+		}
 	}
 
 	@Test
