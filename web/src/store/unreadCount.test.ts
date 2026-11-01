@@ -2,15 +2,46 @@ import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   NO_UNREAD,
+  WRITE_REFRESH_DELAY_MS,
   applyUnread,
   badgeText,
   badgeTone,
   clearUnread,
+  coalesce,
   fetchOnRoute,
   navAriaLabel,
+  refreshAfterWrite,
   shouldPoll,
   shouldReloadDashboard,
+  type Timers,
 } from './unreadCount.ts';
+
+/** 시간을 직접 흘리는 타이머(setTimeout · clearTimeout 대신) */
+function fakeTimers() {
+  let now = 0;
+  let nextId = 1;
+  const queue = new Map<number, { at: number; fn: () => void }>();
+  const timers: Timers = {
+    set: (fn, ms) => {
+      const id = nextId++;
+      queue.set(id, { at: now + ms, fn });
+      return id as unknown as ReturnType<typeof setTimeout>;
+    },
+    clear: (handle) => {
+      queue.delete(handle as unknown as number);
+    },
+  };
+  const advance = (ms: number) => {
+    now += ms;
+    for (const [id, t] of [...queue].sort((a, b) => a[1].at - b[1].at)) {
+      if (t.at <= now) {
+        queue.delete(id);
+        t.fn();
+      }
+    }
+  };
+  return { timers, advance };
+}
 
 describe('사이드바 안 읽은 알림 배지 — 글자 · 읽기 이름 · 색', () => {
   test('0 · 모름이면 배지 없음, 1~99는 그대로, 100 이상은 99+', () => {
@@ -79,6 +110,62 @@ describe('사이드바 안 읽은 알림 배지 — 갱신 판단', () => {
     assert.notDeepEqual(cleared, before);
     // 다시 로그인한 뒤 요청은 반영
     assert.deepEqual(applyUnread(cleared, 4, { count: 2, urgent: false }), { unread: { count: 2, urgent: false }, applied: 4 });
+  });
+
+  test('쓰기 뒤 다시 받기 — 승인 · 반려 · 테넌트 등록 등 쓰기는 받고, GET은 아님', () => {
+    assert.equal(refreshAfterWrite('POST', '/events/1043/approve'), true);
+    assert.equal(refreshAfterWrite('POST', '/events/1043/reject'), true);
+    assert.equal(refreshAfterWrite('POST', '/tenants'), true);
+    assert.equal(refreshAfterWrite('PATCH', '/tenants/k7f2m9qx4b1t'), true);
+    assert.equal(refreshAfterWrite('POST', '/reports/3/email'), true);
+    assert.equal(refreshAfterWrite('DELETE', '/x?y=1'), true);
+    assert.equal(refreshAfterWrite('GET', '/notifications/unread-count'), false);
+    assert.equal(refreshAfterWrite('GET', '/events/1043'), false);
+  });
+
+  test('쓰기 뒤 다시 받기 제외 — 읽음 · 모두 읽음(따로 갱신) · 로그인 · 로그아웃', () => {
+    assert.equal(refreshAfterWrite('PATCH', '/notifications/12/read'), false);
+    assert.equal(refreshAfterWrite('PATCH', '/notifications/read-all'), false);
+    assert.equal(refreshAfterWrite('POST', '/auth/login'), false);
+    assert.equal(refreshAfterWrite('POST', '/auth/logout'), false);
+    // 비슷하지만 다른 경로는 제외가 아니다
+    assert.equal(refreshAfterWrite('PATCH', '/notifications/12/read/extra'), true);
+  });
+
+  test('여러 쓰기가 몰리면 한 번만 — 첫 쓰기 뒤 300ms에 한 번, 그 뒤 쓰기는 새로 묶는다', () => {
+    const fake = fakeTimers();
+    let refreshed = 0;
+    const batch = coalesce(() => refreshed++, WRITE_REFRESH_DELAY_MS, fake.timers);
+
+    batch.trigger();
+    fake.advance(100);
+    batch.trigger();
+    fake.advance(150);
+    batch.trigger();
+    assert.equal(refreshed, 0);
+    fake.advance(50);
+    assert.equal(refreshed, 1);
+    fake.advance(1000);
+    assert.equal(refreshed, 1);
+
+    batch.trigger();
+    fake.advance(300);
+    assert.equal(refreshed, 2);
+  });
+
+  test('묶어 둔 다시 받기는 로그아웃 때 버린다', () => {
+    const fake = fakeTimers();
+    let refreshed = 0;
+    const batch = coalesce(() => refreshed++, WRITE_REFRESH_DELAY_MS, fake.timers);
+
+    batch.trigger();
+    batch.cancel();
+    fake.advance(1000);
+    assert.equal(refreshed, 0);
+    // 다시 시작할 수 있다
+    batch.trigger();
+    fake.advance(300);
+    assert.equal(refreshed, 1);
   });
 
   test('홈 최근 알림 — 배지 수가 바뀌었을 때만 다시 받는다(처음 받은 값 · 로그아웃은 아님)', () => {

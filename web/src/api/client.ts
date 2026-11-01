@@ -3,6 +3,7 @@
  * - 같은 출처 쿠키(TETRA_OPS_TOKEN)로 인증한다. 개발 서버는 Vite 프록시로 :8080에 넘긴다.
  * - 오류 응답 {code, message, fields?}는 ApiError로 바꾼다. message는 화면에 그대로 보여 줘도 되는 문구.
  * - 401이면 등록된 처리기(로그인 화면으로 이동)를 부른다. 로그인 · 내 정보처럼 호출한 쪽이 직접 판단하는 요청은 빼 달라고 할 수 있다.
+ * - 쓰기 요청이 끝나면 등록된 처리기(사이드바 배지 다시 받기)를 부른다 — 화면마다 붙이지 않는다.
  * - CSRF는 API에서 꺼져 있다(SameSite=Strict 쿠키). 켜지면 여기서 헤더를 붙인다.
  * node --test로 바로 실행하므로 import는 상대 경로 + .ts 확장자만 쓴다.
  */
@@ -37,8 +38,21 @@ export function setUnauthorizedHandler(handler: (() => void) | null) {
   unauthorizedHandler = handler;
 }
 
+export type HttpMethod = 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
+
+let writeHandler: ((method: HttpMethod, path: string) => void) | null = null;
+
+/**
+ * 쓰기 요청(POST · PUT · PATCH · DELETE)이 서버 응답을 받고 끝났을 때 부를 처리기 — 성공 · 실패 모두.
+ * 서버에 닿지 못함(네트워크 오류) · 취소 · 401(로그아웃 상태)은 부르지 않는다. 경로를 가려 쓰는 것은 처리기 몫.
+ * UnreadCountProvider가 등록한다(쓰기가 운영자 알림을 만들 수 있어 사이드바 배지를 바로 다시 받는다).
+ */
+export function setWriteHandler(handler: ((method: HttpMethod, path: string) => void) | null) {
+  writeHandler = handler;
+}
+
 export interface RequestOptions {
-  method?: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
+  method?: HttpMethod;
   body?: unknown;
   /** true면 401이어도 처리기를 부르지 않는다(로그인 실패 · 앱 시작 시 내 정보 확인) */
   skipUnauthorizedHandler?: boolean;
@@ -65,15 +79,19 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
     throw new ApiError(0, 'NETWORK_ERROR', NETWORK_ERROR_MESSAGE);
   }
 
-  if (response.ok) {
-    if (response.status === 204) return undefined as T;
-    const text = await response.text();
-    return (text ? JSON.parse(text) : undefined) as T;
-  }
+  try {
+    if (response.ok) {
+      if (response.status === 204) return undefined as T;
+      const text = await response.text();
+      return (text ? JSON.parse(text) : undefined) as T;
+    }
 
-  const error = await toApiError(response);
-  if (response.status === 401 && !skipUnauthorizedHandler) unauthorizedHandler?.();
-  throw error;
+    const error = await toApiError(response);
+    if (response.status === 401 && !skipUnauthorizedHandler) unauthorizedHandler?.();
+    throw error;
+  } finally {
+    if (method !== 'GET' && response.status !== 401) writeHandler?.(method, path);
+  }
 }
 
 /** 서버 오류 JSON이면 그대로, 아니면(프록시 502 HTML 등) 공통 문구로 */

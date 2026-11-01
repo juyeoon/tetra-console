@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ApiError, apiRequest, errorMessage, NETWORK_ERROR_MESSAGE, setUnauthorizedHandler, UNKNOWN_ERROR_MESSAGE } from './client.ts';
+import { ApiError, apiRequest, errorMessage, NETWORK_ERROR_MESSAGE, setUnauthorizedHandler, setWriteHandler, UNKNOWN_ERROR_MESSAGE } from './client.ts';
 import { fetchMe, login, logout } from './auth.ts';
 
 interface Call {
@@ -133,5 +133,60 @@ describe('auth API', () => {
     );
     assert.equal(calls[0].init.body, '{"email":"a@b.c","password":"pw"}');
     assert.equal(unauthorized, 0);
+  });
+});
+
+describe('쓰기 요청이 끝나면 처리기(사이드바 배지 다시 받기)', () => {
+  let writes: string[];
+
+  beforeEach(() => {
+    writes = [];
+    setWriteHandler((method, path) => writes.push(`${method} ${path}`));
+  });
+
+  afterEach(() => setWriteHandler(null));
+
+  test('POST · PATCH · PUT · DELETE가 성공하면 부른다', async () => {
+    respond(json(200, { eventId: 1043 }));
+    await apiRequest('/events/1043/approve', { method: 'POST' });
+    respond(json(200, {}));
+    await apiRequest('/tenants/k7f2m9qx4b1t', { method: 'PATCH', body: { name: 'E사' } });
+    respond(new Response(null, { status: 204 }));
+    await apiRequest('/x', { method: 'PUT' });
+    respond(new Response(null, { status: 204 }));
+    await apiRequest('/x', { method: 'DELETE' });
+
+    assert.deepEqual(writes, ['POST /events/1043/approve', 'PATCH /tenants/k7f2m9qx4b1t', 'PUT /x', 'DELETE /x']);
+  });
+
+  test('서버가 실패로 답해도 부른다(오류는 그대로 던진다)', async () => {
+    respond(json(409, { code: 'APPLICATION_NOT_APPLIED', message: '이미 처리된 신청입니다.' }));
+
+    await assert.rejects(apiRequest('/events/1043/reject', { method: 'POST', body: { reason: '사유' } }), { status: 409 });
+    assert.deepEqual(writes, ['POST /events/1043/reject']);
+  });
+
+  test('GET은 부르지 않는다', async () => {
+    respond(json(200, { count: 3, urgent: false }));
+
+    await apiRequest('/notifications/unread-count');
+    assert.deepEqual(writes, []);
+  });
+
+  test('서버에 닿지 못함 · 취소 · 401(로그아웃 상태)은 부르지 않는다', async () => {
+    respond(() => {
+      throw new TypeError('Failed to fetch');
+    });
+    await assert.rejects(apiRequest('/events/1043/approve', { method: 'POST' }), { code: 'NETWORK_ERROR' });
+
+    respond(() => {
+      throw new DOMException('aborted', 'AbortError');
+    });
+    await assert.rejects(apiRequest('/tenants', { method: 'POST', body: {} }), { name: 'AbortError' });
+
+    respond(json(401, { code: 'UNAUTHENTICATED', message: '로그인이 필요합니다.' }));
+    await assert.rejects(apiRequest('/events/1043/approve', { method: 'POST' }), { status: 401 });
+
+    assert.deepEqual(writes, []);
   });
 });
