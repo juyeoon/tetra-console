@@ -335,3 +335,9 @@
 - 홈: 배지 수가 바뀌면 GET /dashboard를 다시 받는다(따로 주기 요청 없음). 사이드바 접기가 없어 점 표시는 없음
 - 테스트: NotificationCenterApiTest(unread-count = 목록 값, 긴급 참 · 거짓, 로그인 필요), ApiDocsTest(경로), store/unreadCount.test.ts
 - 파일: src/main/java/com/tetra/ops/notification/NotificationController.java, 테스트 위 목록, ../web/src/{api/types.ts, api/notifications.ts, store/unreadCount.ts(신규), store/unreadCount.test.ts(신규), store/UnreadCountContext.tsx(신규), main.tsx, components/layout/Sidebar.tsx, styles/tokens.css, theme/tokens.ts, pages/logs/NotificationCenterPage.tsx, pages/dashboard/DashboardPage.tsx}
+
+## 2026-11-01 KST — 쓰기 요청 직후 사이드바 배지 다시 받기(web)
+- 한 일: API 클라이언트(apiRequest)가 쓰기 요청(POST · PUT · PATCH · DELETE)이 서버 응답을 받고 끝나면(성공 · 실패 모두, 네트워크 오류 · 취소 · 401 제외) 등록된 처리기를 부른다(setWriteHandler). UnreadCountProvider가 등록해 refreshAfterWrite(읽음 · 모두 읽음 · 로그인 · 로그아웃 제외, GET 아님)이면 300ms 묶어(coalesce, 첫 쓰기 뒤 한 번) 기존 refresh를 부른다. 로그아웃이면 묶어 둔 것을 버린다. 늦은 응답 버림 · 실패 시 이전 값 · 홈 다시 받기(배지 수가 바뀌면)는 그대로
+- 대상(운영자 알림을 만드는 Console 쓰기): 승인 POST /events/{id}/approve, 반려 POST /events/{id}/reject, 테넌트 등록 POST /tenants — 알림은 응답 전에 커밋되므로 그 화면에 머물러도 300ms 뒤 배지가 바뀐다
+- 테스트: client.test.ts(쓰기 성공 · 실패에 부름, GET · 네트워크 오류 · 취소 · 401은 안 부름), store/unreadCount.test.ts(쓰기 대상 · 제외 경로, 몰리면 한 번, 로그아웃 때 버림)
+- 파일: ../web/src/api/client.ts, ../web/src/api/client.test.ts, ../web/src/store/unreadCount.ts, ../web/src/store/unreadCount.test.ts, ../web/src/store/UnreadCountContext.tsx

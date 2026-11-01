@@ -1,7 +1,8 @@
 import type { UnreadCount } from '../api/types.ts';
 
 /**
- * 사이드바 안 읽은 알림 배지 — 글자 · 읽기 이름 · 색 · 갱신 판단(화면과 분리, node --test 대상). Tetra Portal과 같은 규칙.
+ * 사이드바 안 읽은 알림 배지 — 글자 · 읽기 이름 · 색 · 갱신 판단(화면과 분리, node --test 대상). Tetra Portal과 같은 규칙 +
+ * 쓰기 요청 직후 다시 받기(Console만 — 승인 · 반려 · 테넌트 등록이 운영자 알림을 만든다).
  * 값은 UnreadCountContext 하나가 들고, 알림센터 목록 응답의 unreadCount · unreadUrgent로도 맞춘다.
  */
 
@@ -49,6 +50,54 @@ export function shouldPoll({ authenticated, hidden }: { authenticated: boolean; 
 /** 라우트 이동 때 받을지 — 알림센터는 목록 응답으로 맞추고, 로그인 전 화면은 받지 않는다 */
 export function fetchOnRoute(pathname: string): boolean {
   return pathname !== NOTIFICATIONS_PATH && pathname !== LOGIN_PATH && !pathname.startsWith(PREVIEW_PREFIX);
+}
+
+/** 쓰기 요청 뒤 다시 받기를 묶는 시간 — 그 안에 끝난 쓰기는 한 번만 받는다 */
+export const WRITE_REFRESH_DELAY_MS = 300;
+
+/** 쓰기 뒤 다시 받지 않는 경로 — 읽음 · 모두 읽음(성공 직후 · 목록 응답으로 따로 맞춤), 로그인 · 로그아웃 */
+const WRITE_EXCLUDED = [/^\/notifications\/[^/]+\/read$/, /^\/notifications\/read-all$/, /^\/auth\/(login|logout)$/];
+
+/**
+ * 쓰기 요청(API 클라이언트 공통 처리기)이 끝난 뒤 배지를 다시 받을지 — 승인 · 반려 · 테넌트 등록처럼 운영자 알림을 만들 수 있는 쓰기.
+ * GET(unread-count 자신 포함)은 아니고, 제외 경로도 아니다. path는 API_BASE 아래 경로(쿼리는 무시)
+ */
+export function refreshAfterWrite(method: string, path: string): boolean {
+  if (method === 'GET') return false;
+  const p = path.split('?')[0];
+  return !WRITE_EXCLUDED.some((re) => re.test(p));
+}
+
+type TimerHandle = ReturnType<typeof setTimeout>;
+
+export interface Timers {
+  set: (fn: () => void, ms: number) => TimerHandle;
+  clear: (handle: TimerHandle) => void;
+}
+
+const REAL_TIMERS: Timers = { set: (fn, ms) => setTimeout(fn, ms), clear: (handle) => clearTimeout(handle) };
+
+/**
+ * 짧게 묶기 — 처음 부른 뒤 delayMs가 지나면 fn을 한 번 부르고, 그사이 다시 불러도 늘리지 않는다(쓰기가 이어져도 첫 쓰기 뒤 delayMs 안에 받는다).
+ * 그 시점에는 그사이 끝난 쓰기가 모두 커밋돼 있다(응답이 온 뒤에 부르므로)
+ */
+export function coalesce(fn: () => void, delayMs: number, timers: Timers = REAL_TIMERS) {
+  let pending: TimerHandle | null = null;
+  return {
+    trigger() {
+      if (pending !== null) return;
+      pending = timers.set(() => {
+        pending = null;
+        fn();
+      }, delayMs);
+    },
+    /** 기다리는 것을 버린다(로그아웃 · 화면 정리) */
+    cancel() {
+      if (pending === null) return;
+      timers.clear(pending);
+      pending = null;
+    },
+  };
 }
 
 /**
