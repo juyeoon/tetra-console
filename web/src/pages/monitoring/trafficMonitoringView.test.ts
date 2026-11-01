@@ -266,7 +266,7 @@ describe('플랫폼 · 다가오는 이벤트 · 실패', () => {
     // 자정 근처 KST 날짜(UTC로는 전날)
     assert.equal(dayLabel('2026-10-27T00:30:00+09:00', NOW), '내일');
   });
-  test('실패 목록: 단계 이름 · 상세 링크(이벤트 없으면 알림센터)', () => {
+  test('실패 목록: 단계 이름 · 상세 링크(이벤트 없으면 알림센터 긴급 · 읽은 것 포함)', () => {
     const rows = failureRows([
       { occurredAt: '2026-10-25T13:31:00+09:00', eventId: 5, tenantId: 't', tenantName: 'C사', eventName: '신규 가입 쿠폰', step: 'PREPARE', reason: '동결 확인 시간 초과' },
       { occurredAt: '2026-10-24T09:00:00+09:00', eventId: null, tenantId: null, tenantName: null, eventName: null, step: 'MAIL', reason: null },
@@ -275,7 +275,7 @@ describe('플랫폼 · 다가오는 이벤트 · 실패', () => {
       rows.map((r) => [r.time, r.event, r.step, r.reason, r.link]),
       [
         ['10.25 13:31', '5 · C사 신규 가입 쿠폰', '준비(WF2-2) 실패', '동결 확인 시간 초과', '/events/progress/5'],
-        ['10.24 09:00', EMPTY, '메일 발송 실패', EMPTY, '/logs/notifications'],
+        ['10.24 09:00', EMPTY, '메일 발송 실패', EMPTY, '/logs/notifications?priority=URGENT&unreadOnly=false'],
       ],
     );
   });
@@ -288,7 +288,7 @@ describe('플랫폼 · 다가오는 이벤트 · 실패', () => {
       rows.map((r) => [r.event, r.step, r.link]),
       [
         ['7 · A사 쿠폰', '단계 지연', '/events/progress/7'],
-        [EMPTY, '시스템(DLQ)', '/logs/notifications'],
+        [EMPTY, '시스템(DLQ)', '/logs/notifications?priority=URGENT&unreadOnly=false'],
       ],
     );
   });

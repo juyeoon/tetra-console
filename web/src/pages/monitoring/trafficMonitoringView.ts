@@ -360,6 +360,9 @@ export interface FailureRow {
   link: string;
 }
 
+/** 이벤트가 없는 실패의 상세 — 알림센터 긴급 · 읽은 것도(이미 읽은 실패 알림도 보이게) */
+export const FAILURE_NOTIFICATIONS_LINK = '/logs/notifications?priority=URGENT&unreadOnly=false';
+
 export function failureRows(failures: TrafficFailure[] | undefined): FailureRow[] {
   return (failures ?? []).map((f, i) => ({
     key: `${f.occurredAt}-${f.eventId ?? 'none'}-${i}`,
@@ -367,7 +370,7 @@ export function failureRows(failures: TrafficFailure[] | undefined): FailureRow[
     event: f.eventId != null ? eventTitle({ eventId: f.eventId, tenantName: f.tenantName, name: f.eventName ?? '' }).trim() : (f.tenantName ?? EMPTY),
     step: FAILURE_STEP_LABEL[f.step] ?? f.step,
     reason: f.reason ?? EMPTY,
-    link: f.eventId != null ? `/events/progress/${f.eventId}` : '/logs/notifications',
+    link: f.eventId != null ? `/events/progress/${f.eventId}` : FAILURE_NOTIFICATIONS_LINK,
   }));
 }
 

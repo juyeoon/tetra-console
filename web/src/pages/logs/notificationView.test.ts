@@ -1,30 +1,34 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import type { NotificationChip, NotificationItem, NotificationState } from '../../api/types.ts';
+import type { NotificationChip, NotificationItem, NotificationPage, NotificationState } from '../../api/types.ts';
 import { priorityMeta, priorityOf } from '../../utils/status.ts';
 import {
   NOTIFICATION_CHIPS,
-  NOTIFICATION_FILTERS,
-  countByChip,
-  countByFilter,
+  PAGE_SIZE,
+  PRIORITY_FILTERS,
+  canReadAll,
+  chipButtonLabel,
+  chipMenuItems,
+  emptyState,
   itemHref,
-  matchesFilter,
+  listQuery,
+  pageToFix,
+  paramsFromView,
   pressItem,
   readOptimistically,
   splitContent,
   stateLabel,
   stateView,
-  visibleNotifications,
-  withAllRead,
+  viewFromParams,
+  withFilters,
   withRead,
+  type NotificationFilters,
+  type NotificationView,
 } from './notificationView.ts';
 
 const item = (
   notificationId: number,
-  priority: string,
-  read: boolean,
-  occurredAt: string,
-  content = `알림 ${notificationId}`,
+  read = false,
   chip: NotificationChip | null = 'EVENT',
   link: string | null = null,
   state: NotificationState | null = null,
@@ -34,75 +38,118 @@ const item = (
   tenantName: null,
   eventId: null,
   category: 'HOSTING',
-  priority,
-  occurredAt,
-  content,
+  priority: 'URGENT',
+  occurredAt: '2026-10-21T10:00:00+09:00',
+  content: `알림 ${notificationId}`,
   read,
   chip,
   link,
   state,
 });
 
-const ITEMS = [
-  item(1, 'URGENT', false, '2026-10-21T10:00:00+09:00', '[A사] 배포에 실패했습니다', 'EVENT'),
-  item(2, 'WARNING', true, '2026-10-21T11:00:00+09:00', '[A사] 신청을 반려했습니다', 'APPLICATION'),
-  item(3, 'INFO', false, '2026-10-21T12:00:00+09:00', '[B사] Deploy 완료', 'EVENT'),
-  item(4, 'INFO', true, '2026-10-21T12:00:00+09:00', '테넌트 무관 알림', 'SYSTEM'),
-  item(5, 'SOMETHING', false, '2026-10-21T09:00:00+09:00', '모르는 우선순위', null),
-  item(6, 'URGENT', false, '2026-10-21T08:00:00+09:00', '[B사] 환경 준비에 실패했습니다', 'TENANT'),
-];
+const ITEMS = [item(1, false), item(2, true), item(3, false)];
 
-describe('알림센터 탭 · 건수', () => {
-  test('탭 5종 건수는 전체 목록 기준, 모르는 우선순위는 정보', () => {
-    assert.deepEqual(countByFilter(ITEMS), { ALL: 6, URGENT: 2, WARNING: 1, INFO: 3, UNREAD: 4 });
-    assert.deepEqual(countByFilter([]), { ALL: 0, URGENT: 0, WARNING: 0, INFO: 0, UNREAD: 0 });
-  });
-
-  test('안읽음 탭은 read=false만', () => {
-    assert.deepEqual(ITEMS.filter((n) => matchesFilter(n, 'UNREAD')).map((n) => n.notificationId), [1, 3, 5, 6]);
-  });
-
-  test("우선순위 탭 이름은 긴급 · 주의 · 정보", () => {
-    assert.deepEqual(NOTIFICATION_FILTERS.map((f) => f.label), ['전체보기', '긴급', '주의', '정보', '안읽음']);
-  });
+const pageOf = (over: Partial<NotificationPage> = {}): NotificationPage => ({
+  items: ITEMS,
+  page: 1,
+  size: PAGE_SIZE,
+  totalCount: 3,
+  totalPages: 1,
+  unreadCount: 2,
+  unreadUrgent: true,
+  counts: {
+    priority: { ALL: 3, URGENT: 3, WARNING: 0, INFO: 0 },
+    chip: { ALL: 3, APPLICATION: 0, EVENT: 3, TENANT: 0, REPORT: 0, SYSTEM: 0 },
+  },
+  ...over,
 });
 
-describe('칩 필터 · 건수', () => {
-  test('칩은 전체 + 신청 · 이벤트 · 테넌트 · 리포트 · 시스템', () => {
+const DEFAULT_FILTERS: NotificationFilters = { priority: 'ALL', chip: 'ALL', unreadOnly: true, query: '' };
+
+describe('필터 한 줄', () => {
+  test('우선순위 세그먼트는 전체 · 긴급 · 주의 · 정보', () => {
+    assert.deepEqual(PRIORITY_FILTERS.map((f) => f.label), ['전체', '긴급', '주의', '정보']);
+  });
+
+  test('분류 메뉴는 전체 + 신청 · 이벤트 · 테넌트 · 리포트 · 시스템, 서버 건수, 0건은 흐리게', () => {
     assert.deepEqual(NOTIFICATION_CHIPS.map((c) => c.label), ['전체', '신청', '이벤트', '테넌트', '리포트', '시스템']);
+    const items = chipMenuItems({ ALL: 5, APPLICATION: 0, EVENT: 3, TENANT: 2, REPORT: 0, SYSTEM: 0 });
+    assert.deepEqual(
+      items.map((c) => [c.label, c.count, c.dim]),
+      [['전체', 5, false], ['신청', 0, true], ['이벤트', 3, false], ['테넌트', 2, false], ['리포트', 0, true], ['시스템', 0, true]],
+    );
   });
 
-  test('칩 건수는 지금 탭 기준(탭과 AND), 칩이 없는 알림은 전체에만', () => {
-    assert.deepEqual(countByChip(ITEMS, 'ALL'), { ALL: 6, APPLICATION: 1, EVENT: 2, TENANT: 1, REPORT: 0, SYSTEM: 1 });
-    assert.deepEqual(countByChip(ITEMS, 'URGENT'), { ALL: 2, APPLICATION: 0, EVENT: 1, TENANT: 1, REPORT: 0, SYSTEM: 0 });
-    assert.deepEqual(countByChip(ITEMS, 'UNREAD'), { ALL: 4, APPLICATION: 0, EVENT: 2, TENANT: 1, REPORT: 0, SYSTEM: 0 });
-  });
-
-  test('보이는 목록은 탭 AND 칩 AND 검색', () => {
-    assert.deepEqual(visibleNotifications(ITEMS, 'ALL', 'EVENT', '').map((n) => n.notificationId), [3, 1]);
-    assert.deepEqual(visibleNotifications(ITEMS, 'URGENT', 'EVENT', '').map((n) => n.notificationId), [1]);
-    assert.deepEqual(visibleNotifications(ITEMS, 'UNREAD', 'APPLICATION', ''), []);
-    assert.deepEqual(visibleNotifications(ITEMS, 'ALL', 'TENANT', '환경').map((n) => n.notificationId), [6]);
-    assert.deepEqual(visibleNotifications(ITEMS, 'ALL', 'EVENT', 'a사').map((n) => n.notificationId), [1]);
+  test('분류 버튼 글자', () => {
+    assert.equal(chipButtonLabel('ALL'), '분류: 전체');
+    assert.equal(chipButtonLabel('TENANT'), '분류: 테넌트');
   });
 });
 
-describe('보이는 목록', () => {
-  test('최신순, 같은 시각은 나중 알림 먼저', () => {
-    assert.deepEqual(visibleNotifications(ITEMS, 'ALL', 'ALL', '').map((n) => n.notificationId), [4, 3, 2, 1, 5, 6]);
+describe('주소 쿼리', () => {
+  test('비어 있으면 기본값 — 전체 · 전체 · 안 읽은 것만 켬 · 검색 없음 · 1페이지', () => {
+    assert.deepEqual(viewFromParams(new URLSearchParams()), { filters: DEFAULT_FILTERS, page: 1 });
   });
 
-  test('검색은 내용만, 앞뒤 공백 · 대소문자 무시, 탭과 함께 적용', () => {
-    assert.deepEqual(visibleNotifications(ITEMS, 'ALL', 'ALL', '  a사 ').map((n) => n.notificationId), [2, 1]);
-    assert.deepEqual(visibleNotifications(ITEMS, 'ALL', 'ALL', 'deploy').map((n) => n.notificationId), [3]);
-    assert.deepEqual(visibleNotifications(ITEMS, 'UNREAD', 'ALL', 'A사').map((n) => n.notificationId), [1]);
-    assert.deepEqual(visibleNotifications(ITEMS, 'URGENT', 'ALL', '없는 말'), []);
+  test('값이 있으면 그대로, 모르는 값은 기본값', () => {
+    assert.deepEqual(viewFromParams(new URLSearchParams('priority=URGENT&chip=SYSTEM&unreadOnly=false&q=배포&page=3')), {
+      filters: { priority: 'URGENT', chip: 'SYSTEM', unreadOnly: false, query: '배포' },
+      page: 3,
+    });
+    assert.deepEqual(viewFromParams(new URLSearchParams('priority=LOW&chip=FOO&unreadOnly=no&page=0')), { filters: DEFAULT_FILTERS, page: 1 });
+    assert.equal(viewFromParams(new URLSearchParams('page=10001')).page, 1);
+    assert.equal(viewFromParams(new URLSearchParams('page=2.5')).page, 1);
+    assert.equal(viewFromParams(new URLSearchParams(`q=${'가'.repeat(150)}`)).filters.query.length, 100);
   });
 
-  test('원본 배열은 바꾸지 않는다', () => {
-    const before = ITEMS.map((n) => n.notificationId);
-    visibleNotifications(ITEMS, 'ALL', 'ALL', '');
-    assert.deepEqual(ITEMS.map((n) => n.notificationId), before);
+  test('기본값은 주소에서 뺀다', () => {
+    assert.equal(paramsFromView({ filters: DEFAULT_FILTERS, page: 1 }).toString(), '');
+    assert.equal(paramsFromView({ filters: { ...DEFAULT_FILTERS, query: '   ' }, page: 1 }).toString(), '');
+    const view: NotificationView = { filters: { priority: 'WARNING', chip: 'EVENT', unreadOnly: false, query: '쿠폰' }, page: 2 };
+    assert.deepEqual(viewFromParams(paramsFromView(view)), view);
+  });
+
+  test('조건을 바꾸면 1페이지로', () => {
+    const view: NotificationView = { filters: DEFAULT_FILTERS, page: 4 };
+    assert.deepEqual(withFilters(view, { chip: 'TENANT' }), { filters: { ...DEFAULT_FILTERS, chip: 'TENANT' }, page: 1 });
+    assert.deepEqual(withFilters(view, { unreadOnly: false }).page, 1);
+  });
+
+  test('목록 요청 — 전체는 빼고, 안 읽은 것만 · 페이지 · 크기는 늘 보낸다. 검색어는 앞뒤 공백을 지운다', () => {
+    assert.equal(listQuery({ filters: DEFAULT_FILTERS, page: 1 }).toString(), 'unreadOnly=true&page=1&size=10');
+    assert.equal(
+      listQuery({ filters: { priority: 'URGENT', chip: 'SYSTEM', unreadOnly: false, query: '  DLQ ' }, page: 2 }).toString(),
+      'priority=URGENT&chip=SYSTEM&unreadOnly=false&q=DLQ&page=2&size=10',
+    );
+  });
+});
+
+describe('페이지 · 빈 목록 · 모두 읽음', () => {
+  test('범위 밖 페이지는 마지막 페이지로, 맞는 알림이 없으면 1페이지로', () => {
+    assert.equal(pageToFix(pageOf({ items: [], page: 5, totalPages: 3 })), 3);
+    assert.equal(pageToFix(pageOf({ items: [], page: 2, totalPages: 0, totalCount: 0 })), 1);
+    assert.equal(pageToFix(pageOf({ items: [], page: 1, totalPages: 0, totalCount: 0 })), null);
+    assert.equal(pageToFix(pageOf({ page: 2, totalPages: 3 })), null);
+  });
+
+  test('빈 목록 문구 3가지 — 검색 결과 없음 / 안 읽은 알림 없음 + 모든 알림 보기 / 알림 없음', () => {
+    assert.deepEqual(emptyState({ ...DEFAULT_FILTERS, query: '배포' }), { title: '검색 결과가 없습니다', showAll: false });
+    assert.deepEqual(emptyState(DEFAULT_FILTERS), {
+      title: '안 읽은 알림이 없습니다',
+      description: "'안 읽은 것만'을 끄면 읽은 알림도 볼 수 있습니다.",
+      showAll: true,
+    });
+    assert.deepEqual(emptyState({ ...DEFAULT_FILTERS, unreadOnly: false }), { title: '알림이 없습니다', showAll: false });
+    // 공백뿐인 검색어는 검색이 아니다
+    assert.equal(emptyState({ ...DEFAULT_FILTERS, query: '  ' }).showAll, true);
+  });
+
+  test('모두 읽음은 안 읽은 알림이(조건과 무관하게) 있고 요청 중이 아닐 때만', () => {
+    assert.equal(canReadAll(pageOf(), false), true);
+    assert.equal(canReadAll(pageOf(), true), false);
+    assert.equal(canReadAll(pageOf({ unreadCount: 0 }), false), false);
+    // 지금 페이지에 안 읽은 항목이 없어도 다른 조건에 있으면 켠다
+    assert.equal(canReadAll(pageOf({ items: [item(2, true)] }), false), true);
   });
 });
 
@@ -146,21 +193,19 @@ describe('현재 상태', () => {
 
 describe('링크 · 읽음', () => {
   test('href는 서버 경로 그대로, 앱 밖 주소는 링크로 만들지 않는다', () => {
-    const at = '2026-10-21T10:00:00+09:00';
-    assert.equal(itemHref(item(1, 'URGENT', false, at, 'x', 'EVENT', '/monitoring/traffic?eventId=1043')), '/monitoring/traffic?eventId=1043');
-    assert.equal(itemHref(item(1, 'URGENT', false, at, 'x', 'EVENT', '/events/progress/1043')), '/events/progress/1043');
-    assert.equal(itemHref(item(1, 'URGENT', false, at, 'x', 'TENANT', null)), null);
-    assert.equal(itemHref(item(1, 'URGENT', false, at, 'x', 'TENANT', 'https://example.com')), null);
-    assert.equal(itemHref(item(1, 'URGENT', false, at, 'x', 'TENANT', '//example.com')), null);
+    assert.equal(itemHref(item(1, false, 'EVENT', '/monitoring/traffic?eventId=1043')), '/monitoring/traffic?eventId=1043');
+    assert.equal(itemHref(item(1, false, 'EVENT', '/events/progress/1043')), '/events/progress/1043');
+    assert.equal(itemHref(item(1, false, 'TENANT', null)), null);
+    assert.equal(itemHref(item(1, false, 'TENANT', 'https://example.com')), null);
+    assert.equal(itemHref(item(1, false, 'TENANT', '//example.com')), null);
   });
 
   test('클릭 · 가운데 클릭은 안 읽은 것만 읽음, 오른쪽 클릭은 아님', () => {
     const calls: number[] = [];
     const onRead = (id: number) => calls.push(id);
-    const unread = ITEMS[0];
-    pressItem(unread, { button: 0 }, onRead);
-    pressItem(unread, { button: 1 }, onRead);
-    pressItem(unread, { button: 2 }, onRead);
+    pressItem(ITEMS[0], { button: 0 }, onRead);
+    pressItem(ITEMS[0], { button: 1 }, onRead);
+    pressItem(ITEMS[0], { button: 2 }, onRead);
     pressItem(ITEMS[1], { button: 0 }, onRead); // 이미 읽음
     pressItem(ITEMS[1], { button: 1 }, onRead);
     assert.deepEqual(calls, [1, 1]);
@@ -184,10 +229,11 @@ describe('링크 · 읽음', () => {
     assert.equal(errors.length, 1);
   });
 
-  test('읽음이 성공하면 그대로 읽음', async () => {
+  test('읽음이 성공하면 그대로 읽음(안 읽은 것만이어도 목록에서 빠지는 건 다음 조회 때)', async () => {
     let items = ITEMS;
     await readOptimistically(1, (change) => { items = change(items); }, async () => {}, () => assert.fail('토스트 없음'));
     assert.equal(items.find((n) => n.notificationId === 1)?.read, true);
+    assert.equal(items.length, ITEMS.length);
   });
 
   test('한 건만 바꾸고 되돌릴 수 있다', () => {
@@ -195,11 +241,6 @@ describe('링크 · 읽음', () => {
     assert.equal(read.find((n) => n.notificationId === 1)?.read, true);
     assert.deepEqual(read.filter((n) => n.notificationId !== 1), ITEMS.filter((n) => n.notificationId !== 1));
     assert.equal(withRead(read, 1, false).find((n) => n.notificationId === 1)?.read, false);
-  });
-
-  test('모두 읽음 → 안읽음 0', () => {
-    assert.equal(countByFilter(withAllRead(ITEMS)).UNREAD, 0);
-    assert.equal(countByFilter(withAllRead(ITEMS)).ALL, 6);
   });
 });
 

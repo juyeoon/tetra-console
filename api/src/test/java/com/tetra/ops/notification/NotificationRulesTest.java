@@ -3,6 +3,7 @@ package com.tetra.ops.notification;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -17,6 +18,7 @@ import com.tetra.ops.domain.platform.OperatorNotification;
 import com.tetra.ops.domain.platform.OperatorNotificationRepository.CenterRow;
 import com.tetra.ops.monitoring.DelayStep;
 import com.tetra.ops.notification.NotificationRules.Chip;
+import com.tetra.ops.notification.NotificationRules.Match;
 import com.tetra.ops.notification.NotificationRules.State;
 import com.tetra.ops.notification.NotificationRules.StateKind;
 
@@ -46,6 +48,33 @@ class NotificationRulesTest {
 	private static String link(String category, Long eventId, String tenantId, ApplicationStatus app,
 			Set<Long> trafficEventIds) {
 		return NotificationRules.link(NotificationRules.chip(category, eventId), eventId, tenantId, app, trafficEventIds);
+	}
+
+	@Test
+	void matchSplitsCategoriesByChipRule() {
+		assertThat(NotificationRules.match(Chip.APPLICATION)).isEqualTo(new Match(List.of("APPLICATION"), List.of(), List.of()));
+		assertThat(NotificationRules.match(Chip.EVENT))
+			.isEqualTo(new Match(List.of("HOSTING", "EVENT", "DELAY"), List.of("MAIL"), List.of()));
+		assertThat(NotificationRules.match(Chip.TENANT))
+			.isEqualTo(new Match(List.of("ACCOUNT", "PROVISIONING"), List.of(), List.of("MAIL")));
+		assertThat(NotificationRules.match(Chip.REPORT)).isEqualTo(new Match(List.of("REPORT"), List.of(), List.of()));
+		assertThat(NotificationRules.match(Chip.SYSTEM)).isEqualTo(new Match(List.of("SYSTEM"), List.of(), List.of()));
+	}
+
+	@Test
+	void matchAgreesWithChipForEveryCategory() {
+		// SQL 조건(match)과 항목 칩(chip)이 어긋나지 않는다: 모든 category × 이벤트 있음/없음이 그 칩의 묶음 하나에만 든다
+		for (NotificationService.Category category : NotificationService.Category.values()) {
+			for (boolean hasEvent : new boolean[] { true, false }) {
+				Chip expected = NotificationRules.chip(category.name(), hasEvent);
+				for (Chip chip : Chip.values()) {
+					Match m = NotificationRules.match(chip);
+					boolean matched = m.any().contains(category.name())
+							|| (hasEvent ? m.withEvent() : m.withoutEvent()).contains(category.name());
+					assertThat(matched).as("%s %s → %s", category, hasEvent, chip).isEqualTo(chip == expected);
+				}
+			}
+		}
 	}
 
 	@Test
