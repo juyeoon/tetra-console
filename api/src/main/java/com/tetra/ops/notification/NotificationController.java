@@ -48,6 +48,13 @@ public class NotificationController {
 		return service.list(new ListCondition(priority, chip, unreadOnly, q, page, size));
 	}
 
+	@Operation(summary = "OPS-08 안 읽은 알림 수",
+			description = "사이드바 배지. 목록 응답 unreadCount · unreadUrgent와 같은 값(읽음은 운영자 공통)")
+	@GetMapping("/unread-count")
+	public NotificationCenterService.UnreadCount unreadCount() {
+		return service.unreadCount();
+	}
+
 	@Operation(summary = "OPS-08 알림 읽음",
 			description = "본문 없음. 이미 읽은 알림이어도 204. 읽음 여부는 운영자 공통")
 	@ApiErrorCodes({ ErrorCode.INVALID_INPUT, ErrorCode.NOTIFICATION_NOT_FOUND })
