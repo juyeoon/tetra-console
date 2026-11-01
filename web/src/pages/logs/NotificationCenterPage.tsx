@@ -6,6 +6,7 @@ import { errorMessage } from '@/api/client';
 import { fetchNotifications, markAllNotificationsRead, markNotificationRead } from '@/api/notifications';
 import { useApiQuery } from '@/hooks/useApiQuery';
 import { useToast } from '@/store/ToastContext';
+import { useUnreadCount } from '@/store/UnreadCountContext';
 import NotificationCenter from './components/NotificationCenter';
 import { listQuery, pageToFix, paramsFromView, readOptimistically, viewFromParams, withFilters, type NotificationView } from './notificationView';
 
@@ -21,7 +22,16 @@ export default function NotificationCenterPage() {
   const [params, setParams] = useSearchParams();
   const view = viewFromParams(params);
   const query = listQuery(view);
-  const list = useApiQuery((signal) => fetchNotifications(query, signal), [query.toString()]);
+  const unread = useUnreadCount();
+  // 목록 응답의 unreadCount · unreadUrgent로 사이드바 배지를 맞춘다(따로 부르지 않는다) — [모두 읽음] 뒤 다시 조회할 때도
+  const list = useApiQuery(
+    (signal) =>
+      fetchNotifications(query, signal).then((page) => {
+        unread.report({ count: page.unreadCount, urgent: page.unreadUrgent });
+        return page;
+      }),
+    [query.toString()],
+  );
   const [readingAll, setReadingAll] = useState(false);
 
   // 지금 주소에서 바꾼다 — 검색어가 늦게 반영돼도 그사이 바꾼 다른 조건을 덮지 않게
@@ -43,12 +53,13 @@ export default function NotificationCenterPage() {
     );
   }
 
-  // 항목을 누르면 이동(링크)과 함께 부른다 — 기다리지 않으므로 실패해도 이동은 그대로, 되돌리고 토스트만. 목록에서 빠지는 건 다음 조회 때
+  // 항목을 누르면 이동(링크)과 함께 부른다 — 기다리지 않으므로 실패해도 이동은 그대로, 되돌리고 토스트만. 목록에서 빠지는 건 다음 조회 때,
+  // 배지는 성공 직후 다시 받는다
   const read = (notificationId: number) => {
     void readOptimistically(
       notificationId,
       (change) => list.setData((prev) => prev && { ...prev, items: change(prev.items) }),
-      markNotificationRead,
+      (id) => markNotificationRead(id).then(unread.refresh),
       (e) => toast(errorMessage(e), 'error'),
     );
   };

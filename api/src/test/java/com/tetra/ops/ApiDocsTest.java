@@ -35,9 +35,9 @@ class ApiDocsTest extends IntegrationTest {
 				"/api/ops/events/{eventId}/result", "/api/ops/events/{eventId}/result/history-csv", "/api/ops/tenants",
 				"/api/ops/tenants/{tenantId}", "/api/ops/tenants/{tenantId}/events",
 				"/api/ops/tenants/{tenantId}/resources", "/api/ops/tenants/email-availability",
-				"/api/ops/notifications", "/api/ops/notifications/{notificationId}/read",
-				"/api/ops/notifications/read-all", "/api/ops/reports", "/api/ops/reports/{reportId}/download",
-				"/api/ops/reports/{reportId}/email" }) {
+				"/api/ops/notifications", "/api/ops/notifications/unread-count",
+				"/api/ops/notifications/{notificationId}/read", "/api/ops/notifications/read-all", "/api/ops/reports",
+				"/api/ops/reports/{reportId}/download", "/api/ops/reports/{reportId}/email" }) {
 			assertThat(paths.has(path)).as(path).isTrue();
 		}
 		paths.propertyNames().forEach(p -> assertThat(p).startsWith("/api/"));

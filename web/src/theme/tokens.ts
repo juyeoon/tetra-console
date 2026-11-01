@@ -53,6 +53,17 @@ export const onNavy = {
   active: v('on-navy-active'),
 };
 
+/** 사이드바 '알림센터'의 안 읽은 알림 수 배지 */
+export const navBadge = {
+  h: v('nav-badge-h'),
+  padX: v('nav-badge-pad-x'),
+  fs: v('nav-badge-fs'),
+  bg: v('nav-badge-bg'),
+  fg: v('nav-badge-fg'),
+  urgentBg: v('nav-badge-urgent-bg'),
+  urgentFg: v('nav-badge-urgent-fg'),
+};
+
 const tone = (name: string) => ({ bg: v(`tone-${name}-bg`), fg: v(`tone-${name}-fg`), dot: v(`tone-${name}-dot`) });
 
 /** 상태 배지 톤 */

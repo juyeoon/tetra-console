@@ -738,6 +738,13 @@ export interface NotificationItem {
   state: NotificationState | null;
 }
 
+/** GET /notifications/unread-count — 사이드바 배지. 목록 응답 unreadCount · unreadUrgent와 같은 값 */
+export interface UnreadCount {
+  count: number;
+  /** 안 읽은 긴급 알림이 있는지 */
+  urgent: boolean;
+}
+
 /**
  * GET /notifications — 조건(우선순위 AND 분류 AND 안 읽은 것만 AND 내용 검색)에 맞는 한 페이지(최신순)와 화면 건수.
  * 범위 밖 page면 items가 비고 totalCount · totalPages는 그대로

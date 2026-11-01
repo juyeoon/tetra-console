@@ -327,3 +327,11 @@
 - 테스트: NotificationCenterApiTest(페이지 · 필터 AND · 검색 이스케이프 · 건수 규칙 · 400 경계 · 그 페이지만 DLQ · unreadUrgent), NotificationRulesTest(match), notificationView.test.ts(주소 쿼리 · 목록 요청 · 페이지 보정 · 빈 목록 · 분류 메뉴), trafficMonitoringView.test.ts(E 링크)
 - 파일: src/main/java/com/tetra/ops/{domain/platform/OperatorNotificationRepository, notification/NotificationCenterService, notification/NotificationController, notification/NotificationRules}.java, 테스트 위 목록, ../web/src/api/{types, notifications}.ts, ../web/src/pages/logs/{NotificationCenterPage.tsx, components/NotificationCenter.tsx, notificationView.ts, notificationView.test.ts}, ../web/src/pages/monitoring/trafficMonitoringView{,.test}.ts
 - 남은 것: MR2(GET /notifications/unread-count · 사이드바 배지 · 홈 최근 알림 다시 받기)
+
+## 2026-11-01 KST — 알림센터 MR2: 사이드바 안 읽음 배지 · unread-count API · 홈 다시 받기(api · web)
+- 한 일: GET /api/ops/notifications/unread-count → {count, urgent}(MR1 unreadCount() 그대로 — 목록 unreadCount · unreadUrgent와 같은 값)
+- web: store/unreadCount.ts(배지 글자 · 읽기 이름 · 색 · 갱신 판단, 순수) + UnreadCountContext.tsx(Portal과 같은 갱신: 로그인 · 라우트 이동(/logs/notifications · /login · /preview/… 제외) · 보이는 동안 60초 · 읽음 직후, 알림센터는 목록 응답으로 맞춤, 실패 시 마지막 값 · 늦은 응답 버림 · 로그아웃이면 지움). 사이드바 '알림센터' 배지(0 숨김, 100 이상 99+, aria-hidden, 링크 읽기 이름 · 툴팁 "알림센터, 안 읽은 알림 N건(긴급 포함)")
+- 배지 색(토큰 --nav-badge-*, 글자 배율 미적용): 긴급 = tone-red-fg + 흰 숫자(5.06:1), 그 밖 = 페리윙클 + 남색 숫자(5.95:1). 선택 줄에서도 페리윙클 — 남색 배지는 Console 선택 줄 바탕(남색 위 흰 10%)과 1.33:1이라 구분 안 됨(페리윙클은 4.47:1)
+- 홈: 배지 수가 바뀌면 GET /dashboard를 다시 받는다(따로 주기 요청 없음). 사이드바 접기가 없어 점 표시는 없음
+- 테스트: NotificationCenterApiTest(unread-count = 목록 값, 긴급 참 · 거짓, 로그인 필요), ApiDocsTest(경로), store/unreadCount.test.ts
+- 파일: src/main/java/com/tetra/ops/notification/NotificationController.java, 테스트 위 목록, ../web/src/{api/types.ts, api/notifications.ts, store/unreadCount.ts(신규), store/unreadCount.test.ts(신규), store/UnreadCountContext.tsx(신규), main.tsx, components/layout/Sidebar.tsx, styles/tokens.css, theme/tokens.ts, pages/logs/NotificationCenterPage.tsx, pages/dashboard/DashboardPage.tsx}

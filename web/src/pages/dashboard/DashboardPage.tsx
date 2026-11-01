@@ -1,4 +1,4 @@
-import { useMemo, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, type ReactNode } from 'react';
 import { Link as RouterLink } from 'react-router-dom';
 import { Box, ButtonBase, Card, Link, Stack, Typography } from '@mui/material';
 import ErrorOutlineRoundedIcon from '@mui/icons-material/ErrorOutlineRounded';
@@ -13,6 +13,8 @@ import { fetchMonitoringOverview } from '@/api/monitoring';
 import type { NotificationPriority } from '@/api/types';
 import { useApiQuery } from '@/hooks/useApiQuery';
 import { usePolling } from '@/hooks/usePolling';
+import { useUnreadCount } from '@/store/UnreadCountContext';
+import { shouldReloadDashboard } from '@/store/unreadCount';
 import { ink, layout, radius, size, text, tones } from '@/theme/theme';
 import { formatDateTime } from '@/utils/datetime';
 import { priorityMeta } from '@/utils/status';
@@ -32,11 +34,18 @@ const alertIcon: Record<NotificationPriority, ReactNode> = {
 };
 
 /**
- * OPS-02 대시보드 — 테넌트 수 · 진행 중 이벤트 · 최근 알림은 GET /dashboard(들어올 때 한 번),
+ * OPS-02 대시보드 — 테넌트 수 · 진행 중 이벤트 · 최근 알림은 GET /dashboard(들어올 때 한 번 + 사이드바 배지 수가 바뀌면 다시),
  * 클러스터 · 실시간 트래픽 · 테넌트 별 처리 현황은 GET /monitoring/overview(15초 폴링, 탭이 숨겨지면 멈춤)
  */
 export default function DashboardPage() {
   const query = useApiQuery((signal) => fetchDashboard(signal), []);
+  // 최근 알림 — 따로 주기 요청을 만들지 않고 배지 갱신(60초 · 라우트 이동)을 따라간다
+  const unreadCount = useUnreadCount().unread?.count ?? null;
+  const lastUnread = useRef(unreadCount);
+  useEffect(() => {
+    if (shouldReloadDashboard(lastUnread.current, unreadCount)) query.reload();
+    lastUnread.current = unreadCount;
+  }, [unreadCount]);
   const monitoring = usePolling((signal) => fetchMonitoringOverview(signal), POLL_MS);
   const alerts = useMemo(() => (query.data ? query.data.recentNotifications.map((n) => alertView(n, new Date())) : []), [query.data]);
   const updated = updatedView(monitoring.data, monitoring.failed);

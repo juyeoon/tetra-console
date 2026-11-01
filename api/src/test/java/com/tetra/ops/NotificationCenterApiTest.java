@@ -443,6 +443,41 @@ class NotificationCenterApiTest extends IntegrationTest {
 		mvc.perform(listRequest("q= " + "가".repeat(100) + " &page=10000&size=50")).andExpect(status().isOk());
 	}
 
+	private JsonNode unreadCount() throws Exception {
+		String body = mvc.perform(get("/api/ops/notifications/unread-count").cookie(operatorCookie()))
+			.andExpect(status().isOk())
+			.andReturn()
+			.getResponse()
+			.getContentAsString();
+		return JsonMapper.builder().build().readTree(body);
+	}
+
+	@Test
+	void unreadCountMatchesListAndTellsUrgent() throws Exception {
+		assertThat(unreadCount().toString()).isEqualTo("{\"count\":0,\"urgent\":false}");
+
+		var t = TestData.BASE;
+		long urgent = insert("HOSTING", "URGENT", null, false, t, "안 읽은 긴급");
+		insert("REPORT", "INFO", null, false, t.plusMinutes(1), "안 읽은 정보");
+		insert("PROVISIONING", "URGENT", null, true, t.plusMinutes(2), "읽은 긴급");
+
+		JsonNode badge = unreadCount();
+		assertThat(badge.path("count").asLong()).isEqualTo(2);
+		assertThat(badge.path("urgent").asBoolean()).isTrue();
+		// 목록 조건과 무관하게 같은 값
+		JsonNode filtered = page("priority=INFO&chip=REPORT&unreadOnly=true");
+		assertThat(filtered.path("unreadCount").asLong()).isEqualTo(badge.path("count").asLong());
+		assertThat(filtered.path("unreadUrgent").asBoolean()).isEqualTo(badge.path("urgent").asBoolean());
+
+		// 안 읽은 긴급을 읽으면 긴급 없음(읽은 긴급은 세지 않는다)
+		mvc.perform(patch("/api/ops/notifications/{id}/read", urgent).cookie(operatorCookie()))
+			.andExpect(status().isNoContent());
+		assertThat(unreadCount().toString()).isEqualTo("{\"count\":1,\"urgent\":false}");
+		JsonNode after = page("");
+		assertThat(after.path("unreadCount").asLong()).isEqualTo(1);
+		assertThat(after.path("unreadUrgent").asBoolean()).isFalse();
+	}
+
 	@Test
 	void emptyListIsItemsArray() throws Exception {
 		mvc.perform(get("/api/ops/notifications").cookie(operatorCookie()))
@@ -494,6 +529,7 @@ class NotificationCenterApiTest extends IntegrationTest {
 	@Test
 	void requiresLogin() throws Exception {
 		mvc.perform(get("/api/ops/notifications")).andExpect(status().isUnauthorized());
+		mvc.perform(get("/api/ops/notifications/unread-count")).andExpect(status().isUnauthorized());
 		mvc.perform(patch("/api/ops/notifications/read-all")).andExpect(status().isUnauthorized());
 		mvc.perform(patch("/api/ops/notifications/{id}/read", 1)).andExpect(status().isUnauthorized());
 	}
