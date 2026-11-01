@@ -25,6 +25,7 @@ import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 
 import com.tetra.ops.monitoring.AwsMonitoringException;
 import com.tetra.ops.monitoring.AwsMonitoringGateway;
@@ -34,7 +35,7 @@ import com.tetra.ops.support.TestData;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
-/** OPS-08 알림센터: 목록(최신순 · 테넌트명 · 칩 · 이동 경로 · 현재 상태) · 읽음 · 모두 읽음. */
+/** OPS-08 알림센터: 목록(페이지 · 필터 · 건수 · 최신순 · 테넌트명 · 칩 · 이동 경로 · 현재 상태) · 읽음 · 모두 읽음. */
 @ExtendWith(OutputCaptureExtension.class)
 class NotificationCenterApiTest extends IntegrationTest {
 
@@ -74,20 +75,58 @@ class NotificationCenterApiTest extends IntegrationTest {
 		return data.jdbc().queryForObject("SELECT MAX(notification_id) FROM tetra_platform.operator_notification", Long.class);
 	}
 
-	private String listBody() throws Exception {
-		return mvc.perform(get("/api/ops/notifications").cookie(operatorCookie()))
+	/** 조건 하나로 넣는다(내용 · 시각 · 읽음을 정해서) */
+	private long insert(String category, String priority, Long eventId, boolean read, LocalDateTime occurredAt,
+			String content) {
+		data.jdbc().update("""
+				INSERT INTO tetra_platform.operator_notification
+				    (tenant_id, event_id, category, priority, occurred_at, content, is_read)
+				VALUES (NULL, ?, ?, ?, ?, ?, ?)""", eventId, category, priority, occurredAt, content, read);
+		return data.jdbc().queryForObject("SELECT MAX(notification_id) FROM tetra_platform.operator_notification", Long.class);
+	}
+
+	/** "k=v&k=v" — 값은 인코딩하지 않은 그대로(%, 공백, 한글)를 파라미터로 넣는다 */
+	private MockHttpServletRequestBuilder listRequest(String query) {
+		MockHttpServletRequestBuilder request = get("/api/ops/notifications").cookie(operatorCookie());
+		for (String pair : query.split("&")) {
+			if (!pair.isEmpty()) {
+				int eq = pair.indexOf('=');
+				request.param(pair.substring(0, eq), pair.substring(eq + 1));
+			}
+		}
+		return request;
+	}
+
+	private String listBody(String query) throws Exception {
+		return mvc.perform(listRequest(query))
 			.andExpect(status().isOk())
 			.andReturn()
 			.getResponse()
 			.getContentAsString();
 	}
 
-	/** 목록 응답을 notificationId → 항목으로 */
+	private JsonNode page(String query) throws Exception {
+		return JsonMapper.builder().build().readTree(listBody(query));
+	}
+
+	/** 목록 응답(한 페이지 최대 50건)을 notificationId → 항목으로 */
 	private Map<Long, JsonNode> list() throws Exception {
 		Map<Long, JsonNode> items = new HashMap<>();
-		JsonMapper.builder().build().readTree(listBody()).path("items")
-			.forEach(n -> items.put(n.path("notificationId").asLong(), n));
+		page("size=50").path("items").forEach(n -> items.put(n.path("notificationId").asLong(), n));
 		return items;
+	}
+
+	private static List<Long> ids(JsonNode page) {
+		List<Long> ids = new ArrayList<>();
+		page.path("items").forEach(n -> ids.add(n.path("notificationId").asLong()));
+		return ids;
+	}
+
+	/** 건수 맵을 키 순서 그대로 "ALL=3 URGENT=1 …"로 */
+	private static String counts(JsonNode counts) {
+		List<String> parts = new ArrayList<>();
+		counts.properties().forEach(e -> parts.add(e.getKey() + "=" + e.getValue().asLong()));
+		return String.join(" ", parts);
 	}
 
 	/** 칩 · 경로 · 현재 상태를 한 줄로: "EVENT /events/progress/1 HOSTING_STATUS=ENDED" (없으면 -, alert면 끝에 !) */
@@ -212,7 +251,7 @@ class NotificationCenterApiTest extends IntegrationTest {
 		insert(A, null, "MAIL", "WARNING", null);
 		insert(A, null, "ACCOUNT", "INFO", null);
 
-		String body = listBody();
+		String body = listBody("size=50");
 
 		assertThat(fieldNames(JsonMapper.builder().build().readTree(body)))
 			.isNotEmpty()
@@ -252,11 +291,168 @@ class NotificationCenterApiTest extends IntegrationTest {
 	}
 
 	@Test
+	void currentStateIsReadOnlyForThatPage() throws Exception {
+		when(aws.queueDepth(APPROVE_DLQ)).thenReturn(2);
+		var t = TestData.BASE;
+		long system = insert("SYSTEM", "URGENT", null, false, t, "DLQ 알림");
+		data.jdbc().update("UPDATE tetra_platform.operator_notification SET dedupe_key = ? WHERE notification_id = ?",
+				"DLQ:" + APPROVE_DLQ + ":2026-10-01", system);
+		long newer = insert("REPORT", "INFO", null, false, t.plusMinutes(1), "리포트 알림");
+
+		// 1페이지(새 알림 1건)에는 SYSTEM 행이 없어 DLQ를 묻지 않는다
+		assertThat(ids(page("size=1"))).containsExactly(newer);
+		verify(aws, never()).queueDepth(anyString());
+
+		JsonNode second = page("size=1&page=2");
+		assertThat(ids(second)).containsExactly(system);
+		assertThat(view(second.path("items").get(0))).isEqualTo("SYSTEM /monitoring/traffic DLQ_MESSAGES=2!");
+		verify(aws).queueDepth(APPROVE_DLQ);
+	}
+
+	@Test
+	void pagesNewestFirstWithTotalsAndUnreadSummary() throws Exception {
+		var t = TestData.BASE;
+		List<Long> inserted = new ArrayList<>();
+		for (int i = 0; i < 12; i++) {
+			// 0번만 안 읽은 긴급, 1 · 2번은 안 읽은 정보, 나머지는 읽음
+			inserted.add(insert("HOSTING", i == 0 ? "URGENT" : "INFO", null, i > 2, t.plusMinutes(i), "알림 " + i));
+		}
+		List<Long> newestFirst = inserted.reversed();
+
+		JsonNode second = page("size=5&page=2");
+		assertThat(ids(second)).containsExactlyElementsOf(newestFirst.subList(5, 10));
+		assertThat(second.path("page").asInt()).isEqualTo(2);
+		assertThat(second.path("size").asInt()).isEqualTo(5);
+		assertThat(second.path("totalCount").asLong()).isEqualTo(12);
+		assertThat(second.path("totalPages").asInt()).isEqualTo(3);
+		assertThat(second.path("unreadCount").asLong()).isEqualTo(3);
+		assertThat(second.path("unreadUrgent").asBoolean()).isTrue();
+
+		// 기본 10건, 범위 밖 페이지는 빈 items(전체 수 · 페이지 수는 그대로)
+		assertThat(ids(page(""))).containsExactlyElementsOf(newestFirst.subList(0, 10));
+		JsonNode beyond = page("size=5&page=4");
+		assertThat(ids(beyond)).isEmpty();
+		assertThat(beyond.path("totalCount").asLong()).isEqualTo(12);
+		assertThat(beyond.path("totalPages").asInt()).isEqualTo(3);
+
+		// 안 읽은 것만: 안 읽은 3건
+		JsonNode unread = page("unreadOnly=true");
+		assertThat(ids(unread)).containsExactly(inserted.get(2), inserted.get(1), inserted.get(0));
+		assertThat(unread.path("totalCount").asLong()).isEqualTo(3);
+
+		// 긴급을 읽으면 unreadUrgent는 false(목록 조건과 무관)
+		mvc.perform(patch("/api/ops/notifications/{id}/read", inserted.get(0)).cookie(operatorCookie()))
+			.andExpect(status().isNoContent());
+		JsonNode afterRead = page("priority=INFO");
+		assertThat(afterRead.path("unreadCount").asLong()).isEqualTo(2);
+		assertThat(afterRead.path("unreadUrgent").asBoolean()).isFalse();
+	}
+
+	/** 이벤트 알림용(event_id FK) — 끝난 이벤트라 OPS-05 드롭다운 밖 */
+	private void endedEvent7301() {
+		data.tenant(A, "A사", "ACTIVE", "READY");
+		data.event(7301, A).approved("ENDED", "EXPIRED", "slug7301").startAt(TestData.BASE).insert();
+	}
+
+	@Test
+	void filtersCombineWithAnd() throws Exception {
+		endedEvent7301();
+		var t = TestData.BASE;
+		long urgentEventUnread = insert("HOSTING", "URGENT", 7301L, false, t, "배포에 실패했습니다");
+		long urgentEventRead = insert("EVENT", "URGENT", 7301L, true, t.plusMinutes(1), "준비에 실패했습니다");
+		long urgentTenantUnread = insert("PROVISIONING", "URGENT", null, false, t.plusMinutes(2), "환경 준비에 실패했습니다");
+		long infoEventUnread = insert("HOSTING", "INFO", 7301L, false, t.plusMinutes(3), "배포가 완료되었습니다");
+		long passwordMail = insert("MAIL", "WARNING", null, false, t.plusMinutes(4), "비밀번호 설정 메일 실패");
+		long privateKeyMail = insert("MAIL", "URGENT", 7301L, false, t.plusMinutes(5), "개인키 메일 실패");
+		insert("SLACK", "INFO", null, false, t.plusMinutes(6), "모르는 분류");
+
+		assertThat(ids(page("priority=URGENT"))).containsExactly(privateKeyMail, urgentTenantUnread, urgentEventRead,
+				urgentEventUnread);
+		assertThat(ids(page("priority=URGENT&chip=EVENT"))).containsExactly(privateKeyMail, urgentEventRead,
+				urgentEventUnread);
+		assertThat(ids(page("priority=URGENT&chip=EVENT&unreadOnly=true"))).containsExactly(privateKeyMail,
+				urgentEventUnread);
+		assertThat(ids(page("priority=URGENT&chip=EVENT&unreadOnly=true&q=배포"))).containsExactly(urgentEventUnread);
+		// 메일은 이벤트가 있으면 이벤트, 없으면 테넌트
+		assertThat(ids(page("chip=TENANT"))).containsExactly(passwordMail, urgentTenantUnread);
+		assertThat(ids(page("chip=EVENT&priority=INFO"))).containsExactly(infoEventUnread);
+		assertThat(ids(page("chip=SYSTEM"))).isEmpty();
+	}
+
+	@Test
+	void searchIsLiteralTrimmedAndCaseInsensitive() throws Exception {
+		var t = TestData.BASE;
+		long percent = insert("REPORT", "INFO", null, false, t, "할인율 100% 리포트");
+		long underscore = insert("REPORT", "INFO", null, false, t.plusMinutes(1), "파일 report_v2");
+		long bang = insert("REPORT", "INFO", null, false, t.plusMinutes(2), "확인 필요!");
+		long plain = insert("REPORT", "INFO", null, false, t.plusMinutes(3), "Deploy 완료 100건");
+
+		assertThat(ids(page("q=%"))).containsExactly(percent);
+		assertThat(ids(page("q=_"))).containsExactly(underscore);
+		assertThat(ids(page("q=!"))).containsExactly(bang);
+		assertThat(ids(page("q=  deploy "))).containsExactly(plain);
+		assertThat(ids(page("q=100"))).containsExactly(plain, percent);
+		// 공백뿐이면 검색하지 않음
+		assertThat(ids(page("q=  "))).hasSize(4);
+	}
+
+	@Test
+	void countsFollowPriorityAndUnreadOnlyButNotChipOrSearch() throws Exception {
+		endedEvent7301();
+		var t = TestData.BASE;
+		insert("HOSTING", "URGENT", 7301L, false, t, "a");
+		insert("HOSTING", "INFO", 7301L, true, t, "b");
+		insert("APPLICATION", "WARNING", 7301L, false, t, "c");
+		insert("MAIL", "URGENT", 7301L, true, t, "d");
+		insert("MAIL", "WARNING", null, false, t, "e");
+		insert("ACCOUNT", "INFO", null, false, t, "f");
+		insert("SYSTEM", "URGENT", null, false, t, "g");
+		insert("SLACK", "INFO", null, false, t, "h");
+
+		JsonNode all = page("").path("counts");
+		assertThat(counts(all.path("priority"))).isEqualTo("ALL=8 URGENT=3 WARNING=2 INFO=3");
+		assertThat(counts(all.path("chip"))).isEqualTo("ALL=8 APPLICATION=1 EVENT=3 TENANT=2 REPORT=0 SYSTEM=1");
+
+		// 안 읽은 것만: 우선순위 · 분류 모두 안 읽은 것만
+		JsonNode unread = page("unreadOnly=true").path("counts");
+		assertThat(counts(unread.path("priority"))).isEqualTo("ALL=6 URGENT=2 WARNING=2 INFO=2");
+		assertThat(counts(unread.path("chip"))).isEqualTo("ALL=6 APPLICATION=1 EVENT=1 TENANT=2 REPORT=0 SYSTEM=1");
+
+		// 우선순위를 고르면 분류 건수만 따른다. 고른 분류 · 검색은 건수에 영향 없음
+		JsonNode urgent = page("priority=URGENT&chip=TENANT&q=없는말").path("counts");
+		assertThat(counts(urgent.path("priority"))).isEqualTo("ALL=8 URGENT=3 WARNING=2 INFO=3");
+		assertThat(counts(urgent.path("chip"))).isEqualTo("ALL=3 APPLICATION=0 EVENT=2 TENANT=0 REPORT=0 SYSTEM=1");
+	}
+
+	@Test
+	void rejectsInvalidParameters() throws Exception {
+		for (String query : List.of("priority=LOW", "chip=FOO", "unreadOnly=maybe", "page=abc", "size=x")) {
+			mvc.perform(listRequest(query))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.code").value("INVALID_INPUT"));
+		}
+		Map<String, String> fields = Map.of("q=" + "가".repeat(101), "q", "page=0", "page", "page=10001", "page", "size=0",
+				"size", "size=51", "size");
+		for (var e : fields.entrySet()) {
+			mvc.perform(listRequest(e.getKey()))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.code").value("INVALID_INPUT"))
+				.andExpect(jsonPath("$.fields." + e.getValue()).exists());
+		}
+		// 경계값은 통과(앞뒤 공백을 지운 100자)
+		mvc.perform(listRequest("q= " + "가".repeat(100) + " &page=10000&size=50")).andExpect(status().isOk());
+	}
+
+	@Test
 	void emptyListIsItemsArray() throws Exception {
 		mvc.perform(get("/api/ops/notifications").cookie(operatorCookie()))
 			.andExpect(status().isOk())
 			.andExpect(jsonPath("$.items").isArray())
-			.andExpect(jsonPath("$.items.length()").value(0));
+			.andExpect(jsonPath("$.items.length()").value(0))
+			.andExpect(jsonPath("$.totalCount").value(0))
+			.andExpect(jsonPath("$.totalPages").value(0))
+			.andExpect(jsonPath("$.unreadCount").value(0))
+			.andExpect(jsonPath("$.unreadUrgent").value(false));
 	}
 
 	@Test

@@ -1,8 +1,9 @@
 import { apiRequest } from './client.ts';
-import type { NotificationListResponse } from './types.ts';
+import type { NotificationPage } from './types.ts';
 
-/** OPS-08 알림 목록 — 전체, 최신순 */
-export const fetchNotifications = (signal?: AbortSignal) => apiRequest<NotificationListResponse>('/notifications', { signal });
+/** OPS-08 알림 목록 — 조건 · 페이지는 notificationView.listQuery가 만든다 */
+export const fetchNotifications = (query: URLSearchParams, signal?: AbortSignal) =>
+  apiRequest<NotificationPage>(`/notifications?${query.toString()}`, { signal });
 
 /** 알림 읽음(204). 이미 읽었어도 204, 없는 id면 404 NOTIFICATION_NOT_FOUND */
 export const markNotificationRead = (notificationId: number) =>

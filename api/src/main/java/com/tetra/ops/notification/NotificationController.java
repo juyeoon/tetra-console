@@ -5,17 +5,21 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.tetra.ops.common.error.ApiErrorCodes;
 import com.tetra.ops.common.error.ErrorCode;
+import com.tetra.ops.notification.NotificationCenterService.ListCondition;
+import com.tetra.ops.notification.NotificationRules.Chip;
+import com.tetra.ops.notification.NotificationService.Priority;
 
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 
-/** OPS-08 알림센터. Tetra Portal 알림센터(UI-TP-13)와 같은 화면. Slack 연동은 예정이라 없음. */
+/** OPS-08 알림센터. Tetra Portal 알림센터(UI-TP-13)와 같은 화면 · 응답 모양. 필터 · 검색 · 페이지 · 건수는 서버에서. Slack 연동은 예정이라 없음. */
 @Tag(name = "알림센터", description = "OPS-08 알림 목록 · 읽음 처리")
 @RestController
 @RequestMapping("/api/ops/notifications")
@@ -28,11 +32,20 @@ public class NotificationController {
 	}
 
 	@Operation(summary = "OPS-08 알림 목록",
-			description = "운영자 알림 전체(종류 무관), 최신순(occurredAt · notificationId 내림차순). 페이지네이션 없음 — "
-					+ "우선순위 · 안읽음 필터, 내용 검색, 건수는 화면이 계산. tenantName은 테넌트 무관 알림이면 null")
+			description = "운영자 알림(종류 무관) 최신순(occurredAt · notificationId 내림차순) 한 페이지와 화면 건수. 조건은 모두 AND. "
+					+ "범위 밖 page는 빈 items(전체 수 · 페이지 수는 그대로). tenantName은 테넌트 무관 알림이면 null")
+	@ApiErrorCodes({ ErrorCode.INVALID_INPUT })
 	@GetMapping
-	public NotificationCenterService.NotificationListResponse list() {
-		return service.list();
+	public NotificationCenterService.NotificationPage list(
+			@Parameter(description = "URGENT · WARNING · INFO. 없으면 전체") @RequestParam(required = false) Priority priority,
+			@Parameter(description = "APPLICATION · EVENT · TENANT · REPORT · SYSTEM. 없으면 전체") @RequestParam(required = false) Chip chip,
+			@Parameter(description = "안 읽은 것만") @RequestParam(defaultValue = "false") boolean unreadOnly,
+			@Parameter(description = "내용 부분 일치 — 앞뒤 공백 · 대소문자 무시, "
+					+ NotificationCenterService.QUERY_MAX + "자 이하") @RequestParam(required = false) String q,
+			@Parameter(description = "1부터, " + NotificationCenterService.PAGE_MAX + " 이하") @RequestParam(defaultValue = "1") int page,
+			@Parameter(description = "1~" + NotificationCenterService.SIZE_MAX) @RequestParam(defaultValue = ""
+					+ NotificationCenterService.PAGE_SIZE) int size) {
+		return service.list(new ListCondition(priority, chip, unreadOnly, q, page, size));
 	}
 
 	@Operation(summary = "OPS-08 알림 읽음",

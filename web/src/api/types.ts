@@ -738,9 +738,29 @@ export interface NotificationItem {
   state: NotificationState | null;
 }
 
-/** GET /notifications — 전체, 최신순(페이지네이션 없음). 필터 · 검색 · 건수는 화면이 계산 */
-export interface NotificationListResponse {
+/**
+ * GET /notifications — 조건(우선순위 AND 분류 AND 안 읽은 것만 AND 내용 검색)에 맞는 한 페이지(최신순)와 화면 건수.
+ * 범위 밖 page면 items가 비고 totalCount · totalPages는 그대로
+ */
+export interface NotificationPage {
   items: NotificationItem[];
+  /** 1부터 */
+  page: number;
+  size: number;
+  /** 조건(검색 포함)에 맞는 전체 수 */
+  totalCount: number;
+  /** 0이면 맞는 알림 없음 */
+  totalPages: number;
+  /** 안 읽은 알림 수(조건과 무관) — [모두 읽음] */
+  unreadCount: number;
+  /** 안 읽은 긴급 알림이 있는지(조건과 무관) */
+  unreadUrgent: boolean;
+  counts: {
+    /** ALL · URGENT · WARNING · INFO — 안 읽은 것만만 따른다 */
+    priority: Record<'ALL' | NotificationPriority, number>;
+    /** ALL + 칩 5종 — 우선순위 · 안 읽은 것만을 따른다(고른 분류 · 검색과 무관). 칩이 없는 알림은 ALL에만 */
+    chip: Record<'ALL' | NotificationChip, number>;
+  };
 }
 
 // ---------------------------------------------------------------- 리포트 (ReportController)

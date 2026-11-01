@@ -1,5 +1,7 @@
 package com.tetra.ops.notification;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -13,7 +15,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
 /**
  * OPS-08 알림센터 항목의 칩 · 이동 경로 · 현재 상태(목록 API가 계산하고 화면은 그대로 쓴다). 순수 규칙만 — DB · AWS 값은 부르는 쪽이 넘긴다.
  * - 칩 5개: 신청 = APPLICATION, 이벤트 = HOSTING · EVENT · DELAY · MAIL(event_id 있음), 테넌트 = ACCOUNT · PROVISIONING · MAIL(event_id 없음),
- *   리포트 = REPORT, 시스템 = SYSTEM. 모르는 category는 null(칩 필터 "전체"에서만 보임).
+ *   리포트 = REPORT, 시스템 = SYSTEM. 모르는 category는 null(분류 "전체"에서만 보임). 목록 필터 · 건수도 이 규칙 하나로 판정한다({@link #match}).
  * - 이동 경로: 필요한 id가 없으면 null(읽음만). 이벤트는 OPS-05 드롭다운 범위면 트래픽 모니터링, 아니면 진행 현황 상세 —
  *   진행 현황 상세는 APPROVED만 열리므로 그 밖은 신청 현황 상세.
  * - 현재 상태: "복구됨"을 판정하지 않고 관련 열의 지금 값을 그대로 준다. 실패 값(FAILED · *_FAILED)이나 DLQ 메시지가 있으면 alert.
@@ -61,6 +63,11 @@ public final class NotificationRules {
 	static final String PASSWORD_NOT_SET = "NOT_SET";
 
 	static Chip chip(String category, Long eventId) {
+		return chip(category, eventId != null);
+	}
+
+	/** 칩은 category와 event_id 유무만 본다(목록 필터 · 건수도 이 규칙으로 — {@link #match}) */
+	static Chip chip(String category, boolean hasEvent) {
 		Category known = category(category);
 		if (known == null) {
 			return null;
@@ -70,10 +77,38 @@ public final class NotificationRules {
 			case HOSTING, EVENT, DELAY -> Chip.EVENT;
 			case ACCOUNT, PROVISIONING -> Chip.TENANT;
 			// 개인키 메일(이벤트) · 비밀번호 설정 메일(테넌트)
-			case MAIL -> eventId != null ? Chip.EVENT : Chip.TENANT;
+			case MAIL -> hasEvent ? Chip.EVENT : Chip.TENANT;
 			case REPORT -> Chip.REPORT;
 			case SYSTEM -> Chip.SYSTEM;
 		};
+	}
+
+	/**
+	 * 칩 하나에 드는 category 묶음 — 목록 필터의 SQL 조건이 쓴다.
+	 * any = 이벤트와 상관없이, withEvent = event_id가 있을 때만, withoutEvent = event_id가 없을 때만.
+	 */
+	record Match(List<String> any, List<String> withEvent, List<String> withoutEvent) {
+	}
+
+	/** {@link #chip(String, boolean)}을 모든 Category × 이벤트 있음/없음에 돌려 나눈다(규칙을 SQL에 따로 쓰지 않는다, Portal과 같은 방식) */
+	static Match match(Chip chip) {
+		List<String> any = new ArrayList<>();
+		List<String> withEvent = new ArrayList<>();
+		List<String> withoutEvent = new ArrayList<>();
+		for (Category c : Category.values()) {
+			boolean with = chip(c.name(), true) == chip;
+			boolean without = chip(c.name(), false) == chip;
+			if (with && without) {
+				any.add(c.name());
+			}
+			else if (with) {
+				withEvent.add(c.name());
+			}
+			else if (without) {
+				withoutEvent.add(c.name());
+			}
+		}
+		return new Match(List.copyOf(any), List.copyOf(withEvent), List.copyOf(withoutEvent));
 	}
 
 	/**
