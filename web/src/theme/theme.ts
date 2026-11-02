@@ -1,5 +1,5 @@
 import { createTheme } from '@mui/material/styles';
-import { color, font, ink, layout, line, radius, shadow, size, text, tones } from './tokens';
+import { color, font, ink, layout, line, mono, radius, shadow, size, text, tones } from './tokens';
 
 /**
  * MUI 테마 — 모든 값은 src/styles/tokens.css 의 CSS 변수를 참조한다.
@@ -108,12 +108,21 @@ const theme = createTheme({
           '&.Mui-error .MuiOutlinedInput-notchedOutline': { borderColor: tones.red.dot },
           '&.Mui-disabled': { backgroundColor: ink[5] },
           '&.Mui-disabled .MuiOutlinedInput-notchedOutline': { borderColor: 'transparent' },
+          // 자동 완성되면 아이콘(비밀번호 보기 등) 칸까지 같은 바탕
+          '&:has(input:-webkit-autofill)': { backgroundColor: mono[100] },
         },
         input: {
           height: font.lineHeight.body,
           paddingBlock: 'calc((var(--control-h) - var(--lh-body)) / 2)',
           paddingInline: 'calc(1.75 * var(--space-unit))',
           '&::placeholder': { color: text.tertiary, opacity: 1 },
+          // 브라우저 자동 완성 색(파랑 바탕 + 흰 글자) 대신 테마 색 — 바탕은 inset 그림자로 덮는다
+          '&:-webkit-autofill, &:-webkit-autofill:hover, &:-webkit-autofill:focus, &:-webkit-autofill:active': {
+            boxShadow: `0 0 0 1000px ${mono[100]} inset`,
+            WebkitTextFillColor: mono[900],
+            caretColor: mono[900],
+            borderRadius: 'inherit',
+          },
         },
         inputMultiline: { paddingBlock: 0, paddingInline: 0 },
         multiline: { padding: 'calc(1.5 * var(--space-unit)) calc(1.75 * var(--space-unit))' },
