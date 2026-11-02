@@ -8,7 +8,7 @@ import { chartColors, font, line, radius, text, tones } from '@/theme/theme';
 import { formatClock, formatClockMinute } from '@/utils/datetime';
 import { MARKER_LABEL_OFFSET, MARKER_LEVEL_PX, markerLabels, timeTicks, tooltipValue, Y_AXIS_WIDTH, type ChartView, type SeriesRole } from './trafficMonitoringView';
 
-/** 주 지표 남색, 보조 지표 연보라. 이벤트 그래프에는 빨강을 쓰지 않는다 */
+/** 주 지표 진보라, 보조 지표 연보라. 이벤트 그래프에는 빨강을 쓰지 않는다 */
 export const ROLE_COLOR: Record<SeriesRole, string> = { primary: chartColors.primary, secondary: chartColors.secondary };
 
 const THRESHOLD_COLOR = tones.amber.dot;

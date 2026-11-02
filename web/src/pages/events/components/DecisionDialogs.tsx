@@ -8,9 +8,10 @@ import { formatPeriod } from '@/utils/format';
 import { applicationStatusMeta, eventStatusMeta, hostingStatusMeta } from '@/utils/status';
 import type { EventView } from '../eventView';
 
+/** 대상 이벤트 상자(바탕 100) 안 한 줄 — 흐린 글자는 secondary */
 const Row = ({ label, children }: { label: string; children: React.ReactNode }) => (
   <Stack direction="row" alignItems="center" spacing={2}>
-    <Typography variant="body2" sx={{ width: size.infoLabelMobile, flexShrink: 0, color: text.tertiary }}>
+    <Typography variant="body2" sx={{ width: size.infoLabelMobile, flexShrink: 0, color: text.secondary }}>
       {label}
     </Typography>
     <Box sx={{ typography: 'body2' }}>{children}</Box>
@@ -23,7 +24,7 @@ function EventTarget({ event }: { event: EventView }) {
   return (
     <Box sx={{ px: 2, py: 1.5, borderRadius: radius.lg, bgcolor: color.card }}>
       <Typography variant="subtitle1">{event.name}</Typography>
-      <Typography variant="caption">
+      <Typography variant="caption" sx={{ color: text.secondary }}>
         {event.id} · {event.tenantName}
       </Typography>
       <Stack spacing={0.75} sx={{ mt: 1.5 }}>
@@ -47,7 +48,7 @@ function ApprovedTarget({ event, result }: { event: EventView; result: ApproveRe
   return (
     <Box sx={{ px: 2, py: 1.5, borderRadius: radius.lg, bgcolor: color.card }}>
       <Typography variant="subtitle1">{event.name}</Typography>
-      <Typography variant="caption">
+      <Typography variant="caption" sx={{ color: text.secondary }}>
         {event.id} · {event.tenantName}
       </Typography>
       <Stack spacing={0.75} sx={{ mt: 1.5 }}>

@@ -1,5 +1,5 @@
 import { Box, type SxProps, type Theme } from '@mui/material';
-import { color } from '@/theme/theme';
+import { mono } from '@/theme/theme';
 
 /**
  * Canva 시안의 픽셀 체커 패턴 (브랜드 시그니처).
@@ -15,14 +15,14 @@ const PATTERN = {
 interface CheckerMarkProps {
   corner?: keyof typeof PATTERN;
   cell?: number;
-  /** 두 번째 톤(기본: 페리윙클) */
+  /** 두 번째 톤(기본: mono 800) */
   tone?: string;
-  /** 첫 번째 톤(기본: 네이비) */
+  /** 첫 번째 톤(기본: mono 700) — 기본값은 어두운 바탕(사이드바 · 로그인 패널)용 */
   base?: string;
   sx?: SxProps<Theme>;
 }
 
-export default function CheckerMark({ corner = 'top-right', cell = 10, tone = color.peri, base = color.navy, sx }: CheckerMarkProps) {
+export default function CheckerMark({ corner = 'top-right', cell = 10, tone = mono[800], base = mono[700], sx }: CheckerMarkProps) {
   const rows = PATTERN[corner];
   const cols = rows[0].length;
   return (

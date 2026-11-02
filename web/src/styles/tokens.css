@@ -7,24 +7,40 @@
 
 :root {
   /* ------------------------------------------------------------------
-     1. 브랜드 색 (Canva 시안 기준: 네이비 + 페리윙클)
+     0. 단계 색 — 보라 기운이 살짝 도는 모노톤 (Portal과 구분되는 Console 테마)
+        아래 의미 토큰은 이 단계를 가리킨다. 파랑은 상태 톤(tone-blue)에만 남긴다
      ------------------------------------------------------------------ */
-  --color-navy: #10225e;          /* 사이드바, 주요 버튼, 활성 탭 */
-  --color-navy-deep: #0b1844;     /* 주요 버튼 hover */
-  --color-peri: #86a1f3;          /* 포인트: 활성 표시, 차트 강조, 포커스 */
-  --color-peri-deep: #4a64c6;     /* 흰 배경 위 페리윙클 텍스트 */
-  --color-peri-tint: #e6ebfd;     /* KPI 카드 A, 정보 배지 */
-  --color-peri-line: #c9d4fa;
-  --color-blue-tint: #e5ecf6;     /* KPI 카드 B */
-  --color-mist: #a8c5da;          /* 차트 3번째 시리즈 */
+  --mono-50: #fafafd;    /* 페이지 바탕 */
+  --mono-100: #f4f3f9;   /* 상단바, hover·선택 줄, 카드 안 블록, 그래프 격자 */
+  --mono-200: #e4e3ec;   /* 테두리·구분선 */
+  --mono-300: #d4d3de;
+  --mono-400: #a09ead;   /* 비활성·장식 */
+  --mono-500: #727081;   /* 흐린 글자(흰 바탕), 축 글자, 기준 점선. 100 이상 바탕 위 작은 글자는 600 */
+  --mono-600: #535162;   /* 보조 글자 */
+  --mono-700: #403d4e;   /* 사이드바 선택 줄 */
+  --mono-800: #272533;
+  --mono-900: #181623;   /* 본문 글자, 주 버튼·선택 탭·현재 페이지, 사이드바 바탕 */
+  --mono-950: #0d0c15;
 
   /* ------------------------------------------------------------------
-     2. 중립 — 텍스트·선은 ink 한 색의 투명도로만 위계를 만든다
+     1. 브랜드 색 — 이름은 이전 테마(네이비 + 페리윙클) 그대로, 값은 단계 색 (이름 정리는 다음 MR)
      ------------------------------------------------------------------ */
-  --color-ink: #1c1f3b;
-  --color-page: #ffffff;
-  --color-card: #f7f9fb;
-  --color-surface: #ffffff;
+  --color-navy: var(--mono-900);        /* 사이드바, 주요 버튼, 활성 탭 */
+  --color-navy-deep: var(--mono-800);   /* 주요 버튼 hover */
+  --color-peri: var(--mono-900);        /* 포인트: 포커스 링, 입력 포커스 테두리 */
+  --color-peri-deep: var(--mono-600);   /* 링크 hover */
+  --color-peri-tint: var(--mono-100);   /* MUI secondary.light만 — 이름 정리 MR에서 정리 */
+  --color-peri-line: var(--mono-200);   /* 글자 선택 영역 전용 (100은 상단바·hover 바탕과 같아 안 보임) */
+  --color-blue-tint: var(--mono-100);   /* 쓰는 곳 없음 — 이름 정리 MR에서 삭제 */
+  --color-mist: var(--mono-500);        /* 차트 3번째 이후 시리즈 */
+
+  /* ------------------------------------------------------------------
+     2. 중립 — 텍스트·선은 단계 색, 그림자·툴팁·배경 막은 ink 투명도
+     ------------------------------------------------------------------ */
+  --color-ink: var(--mono-900);
+  --color-page: var(--mono-50);
+  --color-card: var(--mono-100);   /* hover, 카드 안 블록 (카드 자체는 surface) */
+  --color-surface: #ffffff;        /* 카드 · 패널 · 입력칸 */
 
   --ink-88: color-mix(in srgb, var(--color-ink) 88%, transparent);
   --ink-64: color-mix(in srgb, var(--color-ink) 64%, transparent);
@@ -32,41 +48,42 @@
   --ink-24: color-mix(in srgb, var(--color-ink) 24%, transparent);
   --ink-20: color-mix(in srgb, var(--color-ink) 20%, transparent);
   --ink-10: color-mix(in srgb, var(--color-ink) 10%, transparent);
-  --ink-5: color-mix(in srgb, var(--color-ink) 5%, transparent);
+  --ink-5: var(--mono-100);   /* hover·비활성 바탕 */
 
   --text-primary: var(--color-ink);
-  --text-secondary: var(--ink-64);
-  --text-tertiary: var(--ink-40);
-  --text-disabled: var(--ink-24);
+  --text-secondary: var(--mono-600);
+  --text-tertiary: var(--mono-500);
+  --text-disabled: var(--mono-400);
 
-  --line-strong: var(--ink-20);
-  --line-base: var(--ink-10);
-  --line-soft: var(--ink-5);
+  --line-strong: var(--mono-300);
+  --line-base: var(--mono-200);
+  --line-soft: var(--mono-100);
 
-  /* 네이비 배경(사이드바·로그인 패널) 위 */
-  --on-navy-primary: #ffffff;
-  --on-navy-secondary: rgb(255 255 255 / 72%);
-  --on-navy-tertiary: rgb(255 255 255 / 40%);
-  --on-navy-line: rgb(255 255 255 / 10%);
-  --on-navy-active: rgb(255 255 255 / 10%);
-  --on-navy-hover: rgb(255 255 255 / 5%);
+  /* 어두운 배경(사이드바·로그인 패널, --color-navy) 위 */
+  --on-navy-primary: var(--mono-50);     /* 선택 줄 글자·아이콘·왼쪽 바, hover 글자 */
+  --on-navy-secondary: var(--mono-200);  /* 메뉴 글자 */
+  --on-navy-tertiary: var(--mono-400);   /* 구역 이름, 메뉴 아이콘, ADMIN */
+  --on-navy-line: var(--mono-700);
+  --on-navy-active: var(--mono-700);     /* 선택 줄 바탕 */
+  --on-navy-hover: var(--mono-800);
 
   /* 사이드바 '알림센터'의 안 읽은 알림 수 — 동그라미(100 이상 99+). 크기는 Portal과 같아 --type-scale을 따르지 않는다.
-     선택 줄(남색 위 흰 10%)에서도 페리윙클 — 남색 배지는 선택 줄 바탕과 1.33:1이라 구분되지 않는다 */
+     선택 줄에서도 같은 색 */
   --nav-badge-h: 22px;                              /* 높이 = 최소 폭 */
   --nav-badge-pad-x: 7px;
   --nav-badge-fs: 12px;
-  --nav-badge-bg: var(--color-peri);                /* 남색 숫자 5.95:1, 사이드바와 5.95:1 · 선택 줄과 4.47:1 */
-  --nav-badge-fg: var(--color-navy);
+  --nav-badge-bg: var(--mono-200);                  /* 숫자 14.0:1, 사이드바와 14.0:1 · 선택 줄과 8.3:1 */
+  --nav-badge-fg: var(--mono-900);
   --nav-badge-urgent-bg: var(--tone-red-fg);        /* 안 읽은 긴급 — 흰 숫자 5.06:1 (red-dot은 3.91:1이라 쓰지 않음) */
   --nav-badge-urgent-fg: #ffffff;
 
   /* ------------------------------------------------------------------
      3. 상태 톤 — 파스텔 배경(bg) + 진한 글자(fg) + 범례 점(dot)
      ------------------------------------------------------------------ */
-  --tone-blue-bg: var(--color-peri-tint);
+  /* 파랑은 상태 표시(정보 · 승인 대기 · 진행 중 등)에만 — 브랜드 색과 분리해 값으로 고정 */
+  --tone-blue-bg: #e6ebfd;
   --tone-blue-fg: #3e56b8;
-  --tone-blue-dot: var(--color-peri);
+  --tone-blue-dot: #86a1f3;
 
   --tone-amber-bg: #fff3d6;
   --tone-amber-fg: #8f6200;
@@ -87,9 +104,9 @@
   /* ------------------------------------------------------------------
      4. 차트
      ------------------------------------------------------------------ */
-  --chart-1: var(--color-navy);
-  --chart-2: var(--color-peri);
-  --chart-3: var(--color-mist);
+  --chart-1: #5b21b6;           /* 주 지표 */
+  --chart-2: #9b72f2;           /* 보조 지표 — 한 그래프에 보라 선은 이 2개까지 */
+  --chart-3: var(--color-mist); /* 3번째 이후 선(회색 실선) */
   --chart-neutral: var(--ink-10);
 
   /* 이벤트 화면 미리보기 테마 (Tetra Portal tokens.css와 같은 값 — 신청 내용 [이벤트 미리보기]) */
@@ -156,8 +173,8 @@
 
   --shadow-float: 0 0 16px var(--ink-10);   /* 모달·메뉴·토스트만 */
   --shadow-modal: 0 0 16px var(--ink-10), 0 24px 48px -24px var(--ink-24);
-  --focus-ring: 0 0 0 3px color-mix(in srgb, var(--color-peri) 45%, transparent);
-  --focus-ring-soft: 0 0 0 3px color-mix(in srgb, var(--color-peri) 25%, transparent);
+  --focus-ring: 0 0 0 3px color-mix(in srgb, var(--mono-900) 45%, transparent);
+  --focus-ring-soft: 0 0 0 3px color-mix(in srgb, var(--mono-900) 25%, transparent);
   --backdrop: var(--ink-20);
 
   /* ------------------------------------------------------------------
@@ -174,7 +191,7 @@
   --card-gap: 28px;
 
   /* 상단바 (경로 · 페이지 제목 · 사용자) */
-  --topbar-bg: color-mix(in srgb, var(--color-peri) 9%, #ffffff);
+  --topbar-bg: var(--mono-100);
   --topbar-border: var(--line-base);
   --topbar-padding-y: 20px;
 
@@ -211,13 +228,16 @@
   --modal-sm: 420px;         /* 테넌트 정보 수정 모달 */
 
   /* ------------------------------------------------------------------
-     9. KPI 카드 강조 (A안: Canva 표지처럼 값에 네이비 띠 + 흰 글자)
-        강조를 끄려면 bg → transparent, fg → var(--text-primary), pad-x → 0
+     9. KPI 카드 (요약 카드 — 홈 · 이벤트 진행 결과)
+        값은 글자 배경 없이 일반 글자 (11-02 모노톤 테마로 A안 '네이비 띠' 번복).
+        띠를 다시 켜려면 value-bg · value-fg · value-pad-x를 바꾼다
      ------------------------------------------------------------------ */
+  --kpi-card-bg: #efeef5;
+  --kpi-card-border: var(--mono-200);
   --kpi-label-color: var(--text-primary);
-  --kpi-value-bg: var(--color-navy);
-  --kpi-value-fg: #ffffff;
-  --kpi-value-pad-x: 0.3em;
+  --kpi-value-bg: transparent;
+  --kpi-value-fg: var(--text-primary);
+  --kpi-value-pad-x: 0;
   --kpi-value-radius: 0;
   /* 값은 한 줄 유지 — 카드가 좁으면 카드 폭 비율(cqi)만큼 줄어들고, 최대 크기는 --fs-page */
   --kpi-value-fluid: 8.6cqi;

@@ -14,7 +14,7 @@ import logoWhite from '@/assets/logo-white.png';
 import CheckerMark from '@/components/common/CheckerMark';
 import { useUnreadCount } from '@/store/UnreadCountContext';
 import { NOTIFICATIONS_PATH, badgeText, badgeTone, navAriaLabel } from '@/store/unreadCount';
-import { color, font, layout, navBadge, onNavy, radius, size, type } from '@/theme/theme';
+import { color, font, layout, mono, navBadge, onNavy, radius, size, type } from '@/theme/theme';
 
 interface NavItem {
   label: string;
@@ -27,7 +27,7 @@ interface NavItem {
   unreadBadge?: boolean;
 }
 
-/** 안 읽은 알림 수 동그라미 — 색은 badgeTone(긴급이면 빨강, 아니면 페리윙클 — 선택 줄에서도) */
+/** 안 읽은 알림 수 동그라미 — 색은 badgeTone(긴급이면 빨강, 아니면 연회색 바탕 + 진한 숫자 — 선택 줄에서도) */
 const BADGE_SX = {
   ml: 'auto',
   boxSizing: 'border-box',
@@ -76,7 +76,7 @@ const NAV: { section?: string; items: NavItem[] }[] = [
 ];
 
 /**
- * 네이비 고정 사이드바 (접기 없음 — 배지를 점으로 줄이는 상태도 없다) — 로고 형식은 Portal과 같고, 활성 메뉴는 밝은 배경 + 페리윙클 바.
+ * 어두운 고정 사이드바 (접기 없음 — 배지를 점으로 줄이는 상태도 없다) — 로고 형식은 Portal과 같고, 활성 메뉴는 밝은 배경 + 밝은 바.
  * '알림센터' 옆에 안 읽은 알림 수(0이면 없음, 100 이상 99+). 수는 링크 읽기 이름에만 두고 배지는 aria-hidden
  */
 export default function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
@@ -85,7 +85,7 @@ export default function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
 
   return (
     <Box sx={{ position: 'relative', width: layout.sidebarWidth, height: '100%', display: 'flex', flexDirection: 'column', bgcolor: color.navy, color: onNavy.primary }}>
-      {/* 브랜드 영역 — 흰 로고 + CONSOLE (Portal 사이드바와 같은 형식). 클릭 시 홈 대시보드 */}
+      {/* 브랜드 영역 — 흰 로고 + ADMIN (Portal 사이드바와 같은 형식). 클릭 시 홈 대시보드 */}
       <ButtonBase
         component={Link}
         to="/"
@@ -94,8 +94,8 @@ export default function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
         sx={{ justifyContent: 'flex-start', alignItems: 'flex-end', gap: 1, mx: 2, mt: 3, mb: 3, px: 1.5, py: 1, borderRadius: radius.md, '&:hover': { bgcolor: onNavy.hover } }}
       >
         <Box component="img" src={logoWhite} alt="TETRA" sx={{ height: 26, display: 'block' }} />
-        <Typography component="span" sx={{ ...type.caption, fontFamily: font.heading, fontWeight: font.weight.bold, letterSpacing: font.letterSpacing.overline, color: color.peri, lineHeight: 1, pb: '2px' }}>
-          CONSOLE
+        <Typography component="span" sx={{ ...type.caption, fontFamily: font.heading, fontWeight: font.weight.bold, letterSpacing: font.letterSpacing.overline, color: onNavy.tertiary, lineHeight: 1, pb: '2px' }}>
+          ADMIN
         </Typography>
       </ButtonBase>
 
@@ -138,7 +138,7 @@ export default function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
                       bgcolor: onNavy.active,
                       color: onNavy.primary,
                       fontWeight: font.weight.semibold,
-                      '& svg': { color: color.peri },
+                      '& svg': { color: onNavy.primary },
                       '&::before': {
                         content: '""',
                         position: 'absolute',
@@ -147,7 +147,7 @@ export default function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
                         bottom: 10,
                         width: 4,
                         borderRadius: 2,
-                        bgcolor: color.peri,
+                        bgcolor: onNavy.primary,
                       },
                     },
                   }}
@@ -172,7 +172,7 @@ export default function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
         ))}
       </Box>
 
-      <CheckerMark corner="top-right" cell={10} base={color.peri} tone={color.navyDeep} sx={{ position: 'absolute', right: 0, bottom: 0, transform: 'scaleY(-1)', opacity: 0.5 }} />
+      <CheckerMark corner="top-right" cell={10} base={mono[700]} tone={mono[800]} sx={{ position: 'absolute', right: 0, bottom: 0, transform: 'scaleY(-1)', opacity: 0.5 }} />
     </Box>
   );
 }

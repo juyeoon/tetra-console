@@ -9,7 +9,7 @@ interface HighlightValueProps {
   sx?: SxProps<Theme>;
 }
 
-/** 강조 숫자 — Canva 표지처럼 네이비 띠 + 흰 글자. 스타일은 tokens.css의 --kpi-* 변수 */
+/** 강조 숫자 — 지금은 글자 배경 없이 일반 글자(모노톤 테마). 띠 · 글자색 · 여백은 tokens.css의 --kpi-value-* 변수 */
 export default function HighlightValue({ children, variant = 'h2', sx }: HighlightValueProps) {
   return (
     <Typography

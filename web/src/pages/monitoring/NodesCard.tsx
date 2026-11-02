@@ -4,7 +4,7 @@ import { chartColors, font, line, radius, text, tones } from '@/theme/theme';
 import MetricChart from './MetricChart';
 import { percentText, USAGE_DANGER, type HistoryView, type NodeCellView, type PoolView, type UsageTone } from './trafficMonitoringView';
 
-/** 노드 막대 색: 평소 CPU 남색 · 메모리 연보라, 70~80% 주황, 80% 이상 빨강 */
+/** 노드 막대 색: 평소 CPU 진보라 · 메모리 연보라, 70~80% 주황, 80% 이상 빨강 */
 const barColor = (tone: UsageTone, normal: string) => (tone === 'danger' ? tones.red.dot : tone === 'warn' ? tones.amber.dot : normal);
 
 const toneText = (tone: UsageTone) => (tone === 'danger' ? tones.red.fg : tone === 'warn' ? tones.amber.fg : text.primary);
@@ -55,7 +55,7 @@ function NodeCell({ node }: { node: NodeCellView }) {
           opacity: node.ready ? 1 : 0.5,
         }}
       >
-        <Box sx={{ position: 'absolute', left: 2, right: 2, bottom: `${USAGE_DANGER * 100}%`, borderTop: `1px dashed ${text.disabled}` }} />
+        <Box sx={{ position: 'absolute', left: 2, right: 2, bottom: `${USAGE_DANGER * 100}%`, borderTop: `1px dashed ${text.tertiary}` }} />
         <Box sx={{ width: 8, height: `${node.cpu}%`, minHeight: 2, bgcolor: barColor(node.cpuTone, chartColors.primary) }} />
         <Box sx={{ width: 8, height: `${node.memory}%`, minHeight: 2, bgcolor: barColor(node.memoryTone, chartColors.secondary) }} />
       </Box>

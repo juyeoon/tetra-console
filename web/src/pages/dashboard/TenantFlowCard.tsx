@@ -2,7 +2,7 @@ import { Box, Card, Stack, Tooltip, Typography } from '@mui/material';
 import { keyframes } from '@mui/material/styles';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import SectionTitle from '@/components/common/SectionTitle';
-import { color, line, radius, size, text, tones } from '@/theme/theme';
+import { chartColors, color, line, radius, size, text, tones } from '@/theme/theme';
 import { LANE_SECONDS, NO_EVENT_TEXT, type TenantFlowView, type UpdatedView } from './monitoringView';
 import UpdatedIndicator from './UpdatedIndicator';
 
@@ -52,6 +52,8 @@ function FlowRowView({ row }: { row: TenantFlowView }) {
         p: 2,
         borderRadius: radius.lg,
         bgcolor: color.surface,
+        // 카드도 흰색이라 테두리로 행을 구분
+        border: `1px solid ${line.base}`,
       }}
     >
       <Box sx={{ minWidth: 0, maxWidth: 140 }}>
@@ -65,16 +67,18 @@ function FlowRowView({ row }: { row: TenantFlowView }) {
         )}
       </Box>
 
-      <Lane dot={color.peri} dots={row.dots.inflow} />
+      <Lane dot={chartColors.primary} dots={row.dots.inflow} />
 
-      {/* 네임스페이스 원 — 이름은 툴팁, 안에는 api Pod ready/max */}
+      {/* 네임스페이스 원 — 이름은 툴팁, 안에는 api Pod ready/max. 바탕은 100 */}
       <Tooltip title={row.namespaceTitle}>
-        <Box sx={{ width: size.flowNode, height: size.flowNode, borderRadius: '50%', display: 'grid', placeItems: 'center', textAlign: 'center', bgcolor: color.periTint, px: 1 }}>
+        <Box sx={{ width: size.flowNode, height: size.flowNode, borderRadius: '50%', display: 'grid', placeItems: 'center', textAlign: 'center', bgcolor: color.card, px: 1 }}>
           <Box sx={{ minWidth: 0 }}>
             <Typography variant="h3" component="p" sx={{ whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums', lineHeight: 1.2 }}>
               {row.podCount}
             </Typography>
-            <Typography variant="caption">Pod</Typography>
+            <Typography variant="caption" sx={{ color: text.secondary }}>
+              Pod
+            </Typography>
           </Box>
         </Box>
       </Tooltip>

@@ -4,7 +4,7 @@ import { Link as RouterLink } from 'react-router-dom';
 import { Box, IconButton, Link, Stack, Typography } from '@mui/material';
 import ArrowBackRoundedIcon from '@mui/icons-material/ArrowBackRounded';
 import MenuRoundedIcon from '@mui/icons-material/MenuRounded';
-import { layout, size, text, type } from '@/theme/theme';
+import { layout, mono, size, text, type } from '@/theme/theme';
 import { NAV_DRAWER_ID, SIDEBAR_BREAKPOINT, useLayout } from './LayoutContext';
 import UserMenu from './UserMenu';
 
@@ -33,8 +33,8 @@ export default function PageHeader({ breadcrumbs, back, title, actions }: PageHe
   return createPortal(
     <Box sx={{ maxWidth: layout.pageMaxWidth, mx: 'auto', px: { xs: layout.pagePaddingXMobile, md: layout.pagePaddingX }, py: layout.topbarPaddingY }}>
       <Stack direction="row" alignItems="flex-start" spacing={1}>
-        {/* 햄버거 — 고정 사이드바가 없는 좁은 화면에서만(헤더 왼쪽) */}
-        <IconButton onClick={openNav} sx={{ display: { [SIDEBAR_BREAKPOINT]: 'none' }, ml: -1 }} aria-label="메뉴 열기" aria-controls={NAV_DRAWER_ID} aria-expanded={navOpen}>
+        {/* 햄버거 — 고정 사이드바가 없는 좁은 화면에서만(헤더 왼쪽). 상단바(바탕 100) 안이라 hover는 200 */}
+        <IconButton onClick={openNav} sx={{ display: { [SIDEBAR_BREAKPOINT]: 'none' }, ml: -1, '&:hover': { bgcolor: mono[200] } }} aria-label="메뉴 열기" aria-controls={NAV_DRAWER_ID} aria-expanded={navOpen}>
           <MenuRoundedIcon />
         </IconButton>
 
@@ -48,7 +48,8 @@ export default function PageHeader({ breadcrumbs, back, title, actions }: PageHe
                       /
                     </Typography>
                   )}
-                  <Typography variant="body2" sx={{ color: text.tertiary, whiteSpace: 'nowrap' }}>
+                  {/* 상단바 바탕이 100이라 흐린 글자는 secondary */}
+                  <Typography variant="body2" sx={{ color: text.secondary, whiteSpace: 'nowrap' }}>
                     {crumb}
                   </Typography>
                 </Fragment>

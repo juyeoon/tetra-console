@@ -3,7 +3,7 @@ import PageHeader from '@/components/layout/PageHeader';
 import InfoList from '@/components/common/InfoList';
 import SectionTitle from '@/components/common/SectionTitle';
 import { useAuth, useOperator } from '@/store/AuthContext';
-import { color, font, size, text, type } from '@/theme/theme';
+import { color, font, mono, size, text, type } from '@/theme/theme';
 
 /** Tetra Portal의 시스템 설정 레이아웃을 재사용 (계정 정보 + 로그아웃) */
 export default function SystemSettingsPage() {
@@ -15,7 +15,7 @@ export default function SystemSettingsPage() {
       <Box sx={{ maxWidth: size.contentForm }}>
         <Card sx={{ p: 3 }}>
           <Stack direction="row" alignItems="center" spacing={1.5} sx={{ mb: 3 }}>
-            <Avatar sx={{ width: size.avatarMd, height: size.avatarMd, bgcolor: color.periTint, color: color.navy, ...type.body, fontWeight: font.weight.semibold }}>{operator.name.slice(0, 1)}</Avatar>
+            <Avatar sx={{ width: size.avatarMd, height: size.avatarMd, bgcolor: mono[200], color: color.navy, ...type.body, fontWeight: font.weight.semibold }}>{operator.name.slice(0, 1)}</Avatar>
             <Box>
               <Typography variant="subtitle1">{operator.name}</Typography>
               <Typography variant="body2" sx={{ color: text.tertiary }}>

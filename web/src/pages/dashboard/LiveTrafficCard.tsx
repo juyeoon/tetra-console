@@ -8,8 +8,8 @@ import { formatClockMinute } from '@/utils/datetime';
 import { type TrafficView, type UpdatedView } from './monitoringView';
 import UpdatedIndicator from './UpdatedIndicator';
 
-/** 테넌트가 색 수보다 많으면 색을 반복한다 */
-const seriesColor = (i: number) => chartColors.series[i % chartColors.series.length];
+/** 1·2번째 테넌트는 보라 두 색, 3번째부터는 모두 회색 실선(chart-3) — 반복하지 않는다 */
+const seriesColor = (i: number) => chartColors.series[Math.min(i, chartColors.series.length - 1)];
 
 /** 실시간 트래픽 처리 현황 — 발급 API가 처리한 초당 요청 수(테넌트별, 최근 30분 · 15초 간격) */
 export default function LiveTrafficCard({ view, updated }: { view: TrafficView; updated: UpdatedView }) {
@@ -72,7 +72,7 @@ export default function LiveTrafficCard({ view, updated }: { view: TrafficView; 
               sx={{
                 '& .MuiChartsAxis-line, & .MuiChartsAxis-tick': { stroke: 'transparent !important' },
                 '& .MuiChartsAxis-tickLabel': { fill: `${text.tertiary} !important`, fontSize: `${font.size.caption} !important` },
-                '& .MuiChartsGrid-line': { stroke: line.base },
+                '& .MuiChartsGrid-line': { stroke: line.soft },
                 '& .MuiLineElement-root': { strokeWidth: 2 },
               }}
             >

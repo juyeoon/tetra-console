@@ -7,7 +7,7 @@ import CheckerMark from '@/components/common/CheckerMark';
 import FormField from '@/components/common/FormField';
 import { useAuth } from '@/store/AuthContext';
 import { loginTarget, type LoginRedirectState } from '@/store/authState';
-import { color, onNavy, radius, size, text } from '@/theme/theme';
+import { color, mono, onNavy, radius, size, text } from '@/theme/theme';
 
 export default function LoginPage() {
   const navigate = useNavigate();
@@ -54,10 +54,10 @@ export default function LoginPage() {
           minHeight: { xs: 260, md: 'auto' },
         }}
       >
-        <CheckerMark corner="top-right" cell={14} base={color.peri} tone={color.white} sx={{ position: 'absolute', top: 0, right: 0 }} />
-        <CheckerMark corner="bottom-left" cell={14} base={color.white} tone={color.peri} sx={{ position: 'absolute', bottom: 0, left: 0 }} />
+        <CheckerMark corner="top-right" cell={14} base={mono[700]} tone={mono[800]} sx={{ position: 'absolute', top: 0, right: 0 }} />
+        <CheckerMark corner="bottom-left" cell={14} base={mono[800]} tone={mono[700]} sx={{ position: 'absolute', bottom: 0, left: 0 }} />
 
-        <Typography variant="overline" sx={{ color: color.peri }}>
+        <Typography variant="overline" sx={{ color: onNavy.tertiary }}>
           OPERATOR CONSOLE
         </Typography>
 

@@ -24,7 +24,7 @@ function Facts({ items }: { items: { label: string; value: ReactNode }[] }) {
     <Stack direction={{ xs: 'column', sm: 'row' }} spacing={{ xs: 0.5, sm: 3 }} sx={{ mt: 2, px: 2, py: 1.5, borderRadius: radius.lg, bgcolor: color.card }}>
       {items.map((f) => (
         <Stack key={f.label} direction="row" spacing={1} alignItems="baseline">
-          <Typography variant="body2" sx={{ color: text.tertiary }}>
+          <Typography variant="body2" sx={{ color: text.secondary }}>
             {f.label}
           </Typography>
           <Typography variant="subtitle2">{f.value}</Typography>
@@ -58,10 +58,9 @@ function DoneView({ r }: { r: DoneResult }) {
   return (
     <Stack spacing={3.5}>
       <Box sx={{ display: 'grid', gap: 3.5, gridTemplateColumns: { xs: '1fr', md: 'repeat(3, 1fr)' } }}>
-        <StatCard fill="peri" label="발급 성공 / 총 재고" value={`${formatNumber(r.issued)} / ${formatNumber(r.stock)}`} sub={`소진율 ${formatPercent(r.issued, r.stock, 0)}`} />
-        <StatCard fill="blue" label="품절로 못 받은 수" value={`${formatNumber(r.soldOut)}명`} sub="재고 소진 후 발급 시도" />
+        <StatCard label="발급 성공 / 총 재고" value={`${formatNumber(r.issued)} / ${formatNumber(r.stock)}`} sub={`소진율 ${formatPercent(r.issued, r.stock, 0)}`} />
+        <StatCard label="품절로 못 받은 수" value={`${formatNumber(r.soldOut)}명`} sub="재고 소진 후 발급 시도" />
         <StatCard
-          fill="peri"
           label={
             <>
               최대 동시 접속자 / 플랜 수용 인원
@@ -130,7 +129,7 @@ function DoneView({ r }: { r: DoneResult }) {
           sx={{
             '& .MuiChartsAxis-line, & .MuiChartsAxis-tick': { stroke: 'transparent !important' },
             '& .MuiChartsAxis-tickLabel': { fill: `${text.tertiary} !important`, fontSize: `${font.size.caption} !important` },
-            '& .MuiChartsGrid-line': { stroke: line.base },
+            '& .MuiChartsGrid-line': { stroke: line.soft },
           }}
         />
       </Card>
@@ -149,7 +148,6 @@ export default function EventResultPanel({ result }: { result: ResultView }) {
       return (
         <StateMessage
           icon={<EventAvailableOutlinedIcon />}
-          tone="blue"
           title="이벤트 오픈 전입니다"
           description={
             <>

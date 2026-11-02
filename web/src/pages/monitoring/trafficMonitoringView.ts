@@ -746,7 +746,7 @@ export function endedKpiTiles(summary: TrafficSummaryKpi | null | undefined): Kp
 
 // ---------------------------------------------------------------- D-2 그래프 8개
 
-/** 주 지표 남색(primary), 보조 지표 연보라(secondary). 이벤트 그래프에는 빨강을 쓰지 않는다(Pending도 보조색) */
+/** 주 지표 진보라(primary), 보조 지표 연보라(secondary). 이벤트 그래프에는 빨강을 쓰지 않는다(Pending도 보조색) */
 export type SeriesRole = 'primary' | 'secondary';
 
 export interface ChartSeriesView {
