@@ -27,9 +27,11 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
+import org.springframework.context.ApplicationContext;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.util.StringUtils;
 
+import com.tetra.ops.common.DbLock;
 import com.tetra.ops.common.time.Kst;
 import com.tetra.ops.domain.platform.EventRegistryRepository;
 import com.tetra.ops.domain.platform.OperatorNotification;
@@ -86,7 +88,7 @@ class AutomationAlertJobTest extends IntegrationTest {
 
 	private final EventExecutionService executions = mock(EventExecutionService.class);
 
-	private final AlertLock lock = mock(AlertLock.class);
+	private final DbLock lock = mock(DbLock.class);
 
 	@BeforeEach
 	void lockAlwaysAcquired() {
@@ -296,6 +298,12 @@ class AutomationAlertJobTest extends IntegrationTest {
 
 		assertThat(rows()).extracting(AutomationAlertJobTest::kind).containsExactly("DELAY/URGENT DELAY:7311:ENTRY_OPEN");
 		assertThat(StringUtils.countOccurrencesOf(output.getAll(), "Step Functions 실행을 읽지 못해")).isEqualTo(1);
+	}
+
+	/** 스위치: tetra.alerts.enabled=false(테스트 프로필)면 작업 빈이 없다 — 스케줄은 항상 켜져 있고 작업마다 따로 켜고 끈다 */
+	@Test
+	void jobBeanIsOffWhenSwitchedOff(@Autowired ApplicationContext context) {
+		assertThat(context.getBeansOfType(AutomationAlertJob.class)).isEmpty();
 	}
 
 }

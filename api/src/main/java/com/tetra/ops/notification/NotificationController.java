@@ -19,7 +19,10 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 
-/** OPS-08 알림센터. Tetra Portal 알림센터(UI-TP-13)와 같은 화면 · 응답 모양. 필터 · 검색 · 페이지 · 건수는 서버에서. Slack 연동은 예정이라 없음. */
+/**
+ * OPS-08 알림센터. Tetra Portal 알림센터(UI-TP-13)와 같은 화면 · 응답 모양. 필터 · 검색 · 페이지 · 건수는 서버에서.
+ * Slack 발송은 API가 아니라 주기 작업(SlackNotifyJob)이 한다 — Slack 메시지의 링크가 이 화면(/logs/notifications)이다.
+ */
 @Tag(name = "알림센터", description = "OPS-08 알림 목록 · 읽음 처리")
 @RestController
 @RequestMapping("/api/ops/notifications")

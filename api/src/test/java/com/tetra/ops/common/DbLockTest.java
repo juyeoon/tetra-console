@@ -1,4 +1,4 @@
-package com.tetra.ops.monitoring;
+package com.tetra.ops.common;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -12,20 +12,22 @@ import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import com.tetra.ops.support.MySqlTestDatabase;
 
 /**
- * 1분 주기 자동화 확인의 전역 잠금(GET_LOCK, 기다리지 않음). 태스크 둘을 커넥션을 따로 주는 DataSource 둘로 흉내 낸다
+ * 회차 작업의 전역 잠금(GET_LOCK, 기다리지 않음). 태스크 둘을 커넥션을 따로 주는 DataSource 둘로 흉내 낸다
  * (통합 테스트의 커넥션 풀은 1개라 쓰지 않는다).
  */
-class AlertLockTest {
+class DbLockTest {
 
-	private static AlertLock taskA;
+	private static final String NAME = "tetra:test-lock";
 
-	private static AlertLock taskB;
+	private static DbLock taskA;
+
+	private static DbLock taskB;
 
 	@BeforeAll
 	static void locks() {
 		MySqlTestDatabase.start();
-		taskA = new AlertLock(dataSource());
-		taskB = new AlertLock(dataSource());
+		taskA = new DbLock(dataSource(), NAME);
+		taskB = new DbLock(dataSource(), NAME);
 	}
 
 	private static DriverManagerDataSource dataSource() {
@@ -57,6 +59,19 @@ class AlertLockTest {
 
 		assertThat(taskB.runIfAcquired(() -> {
 		})).isTrue();
+	}
+
+	/** 자동화 확인 · Slack 발송처럼 이름이 다른 작업은 서로 막지 않는다 */
+	@Test
+	void differentNamesDoNotBlockEachOther() {
+		DbLock other = new DbLock(dataSource(), "tetra:test-other-lock");
+		AtomicBoolean otherRan = new AtomicBoolean();
+
+		boolean ran = taskA.runIfAcquired(() -> otherRan.set(other.runIfAcquired(() -> {
+		})));
+
+		assertThat(ran).isTrue();
+		assertThat(otherRan).isTrue();
 	}
 
 }

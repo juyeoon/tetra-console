@@ -210,7 +210,7 @@ public class TenantCommandService {
 
 	/**
 	 * 비밀번호 설정 메일(OPS-07-1). 상태 커밋 뒤 트랜잭션 밖에서 현재 테넌트 정보(이메일 · 담당자 · 테넌트명)로 보낸다.
-	 * 링크 만료(24시간)는 지금 기준. 실패하면 운영자 알림(MAIL/URGENT)만 남기고 다시 던지지 않는다. 링크는 로그에 남기지 않는다.
+	 * 링크 만료(24시간)는 지금 기준. 실패하면 운영자 알림(MAIL/WARNING, 10-30 결정)만 남기고 다시 던지지 않는다. 링크는 로그에 남기지 않는다.
 	 */
 	private void sendPasswordSetupMail(String tenantId) {
 		boolean sent;
