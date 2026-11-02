@@ -10,14 +10,17 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
 import org.springframework.validation.annotation.Validated;
 
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.AssertTrue;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 
 /**
  * 모든 값은 환경 변수(ConfigMap·Secret)로 들어온다 (CLAUDE.md §10).
  * 비밀 값(auth.jwtSecret, passwordLink.hmacSecret, dbMigration.password)은 기본값이 없고, 비어 있으면 기동이 실패한다.
+ * slack.botToken만 예외 — Slack 발송이 켜져 있을 때만 필수다(Slack).
  * toString에 비밀 값이 나오지 않도록 비밀을 담은 record는 toString을 덮어쓴다.
  */
 @Validated
@@ -34,11 +37,17 @@ public record TetraProperties(
 		@Valid @NotNull @DefaultValue Approve approve,
 		@Valid @NotNull @DefaultValue Monitoring monitoring,
 		@Valid @NotNull @DefaultValue Alerts alerts,
+		@Valid @NotNull @DefaultValue Slack slack,
 		@Valid @NotNull Auth auth,
 		@Valid @NotNull PasswordLink passwordLink,
 		@Valid @NotNull DbMigration dbMigration,
 		/** 이벤트 도메인 루트. 이벤트 주소는 {slug}.{tenant_id}.{platformDomain} (ops-workflows 10-17 결정). 기본값은 application.yml */
 		@NotBlank String platformDomain) {
+
+	/** Slack 채널 ID 형식(비어 있으면 Slack 발송이 꺼져 있을 때만 통과 — Slack.isCompleteWhenEnabled) */
+	static final String SLACK_CHANNEL_ID = "[A-Z0-9]{0,20}";
+
+	static final String SLACK_CHANNEL_ID_MESSAGE = "Slack 채널 ID(대문자 · 숫자 20자 이내, 예: C0123456789)여야 합니다.";
 
 	public record Aws(@NotBlank String region) {
 	}
@@ -65,7 +74,7 @@ public record TetraProperties(
 	public record Portal(@NotBlank String baseUrl) {
 	}
 
-	/** 운영 콘솔 주소(선택, 예: https://console.example.com). 리포트 메일의 화면 링크에 쓴다. 비우면 링크 대신 메뉴 경로 */
+	/** 운영 콘솔 주소(선택, 예: https://console.example.com). 리포트 메일 · Slack 알림의 화면 링크에 쓴다. 비우면 링크 없이 */
 	public record Console(@DefaultValue("") String baseUrl) {
 	}
 
@@ -149,6 +158,66 @@ public record TetraProperties(
 	 */
 	public record Alerts(@DefaultValue("true") boolean enabled, @NotNull @DefaultValue("PT1M") Duration interval,
 			@NotNull @DefaultValue("PT24H") Duration delayWindow) {
+	}
+
+	/**
+	 * 운영자 알림 Slack 발송(SlackNotifyJob, chat.postMessage). 기본 꺼짐 — 꺼져 있으면 작업 빈이 없어 DB · HTTP를 건드리지 않고
+	 * 토큰 · 채널이 비어 있어도 기동한다. 켜져 있으면 봇 토큰과 우선순위별 채널 3개가 모두 있어야 기동한다(설정 오류를 바로 드러냄).
+	 * 비밀(botToken)에 기본값("")을 두는 것은 꺼져 있을 때 기동하려고 — 켜져 있으면 비어 있을 수 없다.
+	 * interval = 회차 간격(앞 회차가 끝난 뒤부터). maxAge = 켠 뒤 한 번도 시도하지 않은 알림을 건너뛸(SKIPPED · STALE) 나이 —
+	 * 꺼 둔 동안 · 멈춘 동안 쌓인 알림이 한꺼번에 가지 않게. apiUrl은 테스트(FakeSlack)만 바꾼다.
+	 */
+	public record Slack(@DefaultValue("false") boolean enabled, @DefaultValue("") String botToken,
+			@Valid @NotNull @DefaultValue SlackChannels channels,
+			@NotNull @DefaultValue("PT10S") Duration interval,
+			@NotNull @DefaultValue("PT10M") Duration maxAge,
+			@NotNull @DefaultValue("PT2S") Duration connectTimeout,
+			@NotNull @DefaultValue("PT5S") Duration readTimeout,
+			@NotBlank @DefaultValue("https://slack.com/api") String apiUrl) {
+
+		/** 켜져 있으면 토큰 · 채널 3개가 모두 있어야 한다. 메시지에 값은 넣지 않는다 */
+		@AssertTrue(message = "SLACK_NOTIFY_ENABLED=true면 SLACK_BOT_TOKEN · SLACK_CHANNEL_URGENT · SLACK_CHANNEL_WARNING · "
+				+ "SLACK_CHANNEL_INFO가 모두 있어야 합니다.")
+		public boolean isCompleteWhenEnabled() {
+			return !enabled || (hasText(botToken) && channels != null && hasText(channels.urgent())
+					&& hasText(channels.warning()) && hasText(channels.info()));
+		}
+
+		private static boolean hasText(String value) {
+			return value != null && !value.isBlank();
+		}
+
+		@Override
+		public String toString() {
+			return "Slack[enabled=" + enabled + ", botToken=****, channels=" + channels + ", interval=" + interval
+					+ ", maxAge=" + maxAge + ", connectTimeout=" + connectTimeout + ", readTimeout=" + readTimeout
+					+ ", apiUrl=" + apiUrl + "]";
+		}
+
+	}
+
+	/**
+	 * 우선순위별 Slack 채널 ID(채널 이름 아님 — 보낸 채널을 operator_notification.slack_channel 20자에 남긴다).
+	 * 운영자 알림 priority(URGENT · WARNING · INFO) 그대로 고른다 — Portal 신청 접수(APPLICATION/WARNING)는 warning 채널로 간다.
+	 */
+	public record SlackChannels(
+			@Pattern(regexp = SLACK_CHANNEL_ID, message = SLACK_CHANNEL_ID_MESSAGE) @DefaultValue("") String urgent,
+			@Pattern(regexp = SLACK_CHANNEL_ID, message = SLACK_CHANNEL_ID_MESSAGE) @DefaultValue("") String warning,
+			@Pattern(regexp = SLACK_CHANNEL_ID, message = SLACK_CHANNEL_ID_MESSAGE) @DefaultValue("") String info) {
+
+		/** 모르는 우선순위면 null */
+		public String forPriority(String priority) {
+			if (priority == null) {
+				return null;
+			}
+			return switch (priority) {
+				case "URGENT" -> urgent;
+				case "WARNING" -> warning;
+				case "INFO" -> info;
+				default -> null;
+			};
+		}
+
 	}
 
 	// TODO(미정): CSV presigned URL 만료. 임시 5분

@@ -21,6 +21,15 @@ spring:
     timeout-per-shutdown-phase: 30s
   flyway:
     enabled: false        # 기동 때 마이그레이션하지 않는다. 테넌트 스키마는 등록 때 TenantSchemaCreator가 만든다
+  # 회차 작업(SchedulingConfig) 스레드: 작업마다 1개(자동화 확인 · Slack 발송 · 리포트 예정) — 한 작업이 길어져도 다른 작업이 기다리지 않는다.
+  # 종료 때 도는 회차를 10초까지 기다린다(Slack 발송 중에 끊겨 '보냈는지 모름'이 되는 일을 줄인다)
+  task:
+    scheduling:
+      pool:
+        size: 3
+      shutdown:
+        await-termination: true
+        await-termination-period: 10s
 
 server:
   shutdown: graceful
@@ -68,7 +77,7 @@ tetra:
     from: ${MAIL_FROM}
   portal:
     base-url: ${PORTAL_BASE_URL}
-  # 선택. 리포트 메일에 넣는 콘솔 화면 링크({base-url}/logs/reports). 비우면 링크 대신 메뉴 경로만
+  # 선택. 리포트 메일 · Slack 알림에 넣는 콘솔 화면 링크({base-url}/logs/reports · /logs/notifications). 비우면 링크 없이
   console:
     base-url: ${CONSOLE_BASE_URL:}
   # 이벤트 도메인 루트: {slug}.{tenant_id}.{platform-domain}. 환경별로 다르면 PLATFORM_DOMAIN으로 덮어쓴다
@@ -112,6 +121,19 @@ tetra:
     enabled: ${AUTOMATION_ALERTS_ENABLED:true}
     interval: ${AUTOMATION_ALERTS_INTERVAL:PT1M}
     delay-window: ${AUTOMATION_ALERTS_DELAY_WINDOW:PT24H}
+  # 운영자 알림 Slack 발송(10초 주기, 자동화 확인과 따로). 기본 꺼짐 — 꺼져 있으면 DB · HTTP를 건드리지 않고 토큰이 없어도 기동한다.
+  # 켜져 있으면 봇 토큰 · 채널 3개가 모두 있어야 기동한다. max-age = 켠 뒤 한 번도 시도하지 않은 알림을 건너뛸 나이
+  slack:
+    enabled: ${SLACK_NOTIFY_ENABLED:false}
+    bot-token: ${SLACK_BOT_TOKEN:}
+    channels:
+      urgent: ${SLACK_CHANNEL_URGENT:}
+      warning: ${SLACK_CHANNEL_WARNING:}
+      info: ${SLACK_CHANNEL_INFO:}
+    interval: ${SLACK_NOTIFY_INTERVAL:PT10S}
+    max-age: ${SLACK_NOTIFY_MAX_AGE:PT10M}
+    connect-timeout: ${SLACK_CONNECT_TIMEOUT:PT2S}
+    read-timeout: ${SLACK_READ_TIMEOUT:PT5S}
   auth:
     jwt-secret: ${OPS_JWT_SECRET}
   password-link:

@@ -33,6 +33,8 @@ import com.tetra.ops.tenancy.TenantContext;
  * 1분 주기 확인(DLQ · 단계 지연)은 상태 전이가 없어 중복 방지 키(dedupe_key)로 한 번만 남긴다 — 자체 트랜잭션, 트랜잭션 밖에서 부른다.
  * 문구: 운영자는 [테넌트명] [id:이벤트명], 테넌트는 [id:이벤트명]으로 시작한다. 시각은 HH:mm(DB의 KST 값 그대로).
  * 고정 문구(라벨 + 정해진 문장)는 120자 이내로 두고, 반려 사유 · 원인은 자르지 않고 붙인다(1000자 상한만).
+ * 반려 사유는 " 반려 사유: ", 실패 원인은 " 원인: " 뒤에 붙인다 — Slack 발송(SlackMessage)이 이 표지부터는 보내지 않는다.
+ * 운영자 알림의 Slack 발송은 여기서 하지 않는다: 새 행은 slack_status 기본값(PENDING)이고 SlackNotifyJob이 따로 보낸다(Portal 행도 같다).
  */
 @Service
 public class NotificationService {
@@ -279,7 +281,7 @@ public class NotificationService {
 	 * DLQ에 메시지가 있음(1분 주기 확인). 운영자 SYSTEM/URGENT, 테넌트 · 이벤트 없음. 같은 키가 이미 있으면 남기지 않고 false.
 	 * 자체 트랜잭션 — 트랜잭션 밖에서 부른다. 다른 태스크와 동시에 같은 키를 넣으면 1062(uk_operator_notif_dedupe)가 이 메서드 밖으로
 	 * 나가고 이 트랜잭션은 롤백된다(부른 쪽이 1062만 잡아 false로 본다).
-	 * @return 새로 남겼으면 true(Slack 연동 등은 이때만)
+	 * @return 새로 남겼으면 true
 	 */
 	@Transactional
 	public boolean dlqDetected(DlqQueue queue, int messages, LocalDate day) {

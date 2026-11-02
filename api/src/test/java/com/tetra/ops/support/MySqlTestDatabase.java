@@ -32,8 +32,8 @@ public final class MySqlTestDatabase {
 	public static final String MIGRATION_PASSWORD = "ops_migration_pw";
 
 	/**
-	 * 테스트 DDL = db-schema 저장소 V1 사본(src/main/resources/db/README.md). tenant는 등록 API가 실행하는 바로 그 파일,
-	 * platform은 src/test/resources에 있다. 시드 V2는 넣지 않는다 — 이 테스트는 seed/platform_base.sql로 요금제 · 템플릿을 직접 넣는다.
+	 * 테스트 DDL = db-schema 저장소 사본(src/main/resources/db/README.md). tenant는 등록 API가 실행하는 바로 그 파일(V1),
+	 * platform은 src/test/resources에 있다(V1 · V4 · V5). 시드 V2 · V3은 넣지 않는다 — 이 테스트는 seed/platform_base.sql로 요금제 · 템플릿을 직접 넣는다.
 	 */
 	private static final String DDL_DIR = "db/migration/";
 
@@ -72,6 +72,7 @@ public final class MySqlTestDatabase {
 			root.setCatalog("tetra_platform");
 			run(root, ddl("platform/V1__init_platform_schema.sql"));
 			run(root, ddl("platform/V4__add_operator_notification_dedupe_key.sql"));
+			run(root, ddl("platform/V5__add_operator_notification_slack_status.sql"));
 			for (String tenantId : new String[] { TENANT_A, TENANT_B }) {
 				String schema = "t_" + tenantId;
 				st.execute("CREATE SCHEMA " + schema + " DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci");

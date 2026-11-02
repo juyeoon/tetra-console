@@ -51,7 +51,7 @@ class MonitoringServiceTest {
 		when(collector.unavailable()).thenReturn(UNAVAILABLE);
 		var monitoring = new TetraProperties.Monitoring("http://prometheus:9090", Duration.ofSeconds(2),
 				Duration.ofSeconds(3), ttl, refreshTimeout, null, "");
-		var properties = new TetraProperties("test", null, null, null, null, null, null, null, null, monitoring, null, null, null,
+		var properties = new TetraProperties("test", null, null, null, null, null, null, null, null, monitoring, null, null, null, null,
 				null, "tetraops.cloud");
 		MonitoringService service = new MonitoringService(collector, properties);
 		services.add(service);

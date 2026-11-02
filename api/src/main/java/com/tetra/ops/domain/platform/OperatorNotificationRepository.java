@@ -4,11 +4,13 @@ import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
 
+import org.springframework.data.domain.Limit;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+import org.springframework.transaction.annotation.Transactional;
 
 import com.tetra.ops.domain.AccountStatus;
 import com.tetra.ops.domain.ApplicationStatus;
@@ -101,5 +103,118 @@ public interface OperatorNotificationRepository
 	@Modifying(flushAutomatically = true, clearAutomatically = true)
 	@Query("update OperatorNotification n set n.read = true where n.read = false")
 	int markAllRead();
+
+	// ---- Slack 발송: SlackNotifyJob에서만 부른다(idx_operator_notif_slack). 메서드마다 짧은 트랜잭션 — HTTP는 그 밖에서.
+	// 상태는 조건부 UPDATE로 바꾸고 바뀐 행 수로 판단한다. 선점 뒤 결과는 SENDING이고 slack_next_at이 그 선점의 만료 시각(lease)일 때만
+	// 바뀐다 — 선점이 만료돼 다른 태스크가 처리한 행을 늦게 끝난 앞 태스크가 덮어쓰지 않게. ----
+
+	/** 보낼 행: PENDING이고 다음 시도 시각이 없거나 지남, id 순 */
+	@Query("""
+			select n from OperatorNotification n
+			 where n.slackStatus = com.tetra.ops.domain.SlackStatus.PENDING
+			   and (n.slackNextAt is null or n.slackNextAt <= :now)
+			 order by n.notificationId""")
+	List<OperatorNotification> findSlackDue(@Param("now") LocalDateTime now, Limit limit);
+
+	/** 선점이 만료된 SENDING(보내는 중에 태스크가 멈춤) — 보냈는지 모른다 */
+	@Query("""
+			select n from OperatorNotification n
+			 where n.slackStatus = com.tetra.ops.domain.SlackStatus.SENDING and n.slackNextAt < :now
+			 order by n.notificationId""")
+	List<OperatorNotification> findSlackLeaseExpired(@Param("now") LocalDateTime now);
+
+	/** 한 번도 시도하지 않고(429로 미룬 적도 없이) cutoff보다 오래된 PENDING → SKIPPED(STALE). 켜기 전 · 멈춘 동안 쌓인 행 */
+	@Transactional
+	@Modifying
+	@Query("""
+			update OperatorNotification n
+			   set n.slackStatus = com.tetra.ops.domain.SlackStatus.SKIPPED, n.slackError = 'STALE'
+			 where n.slackStatus = com.tetra.ops.domain.SlackStatus.PENDING
+			   and n.slackAttempts = 0 and n.slackNextAt is null and n.occurredAt < :cutoff""")
+	int skipStaleSlack(@Param("cutoff") LocalDateTime cutoff);
+
+	/** 선점: PENDING → SENDING, 시도 수 +1, slack_next_at = 선점 만료 시각. 1행이면 이 태스크가 보낸다 */
+	@Transactional
+	@Modifying
+	@Query("""
+			update OperatorNotification n
+			   set n.slackStatus = com.tetra.ops.domain.SlackStatus.SENDING,
+			       n.slackAttempts = n.slackAttempts + 1, n.slackNextAt = :lease
+			 where n.notificationId = :id and n.slackStatus = com.tetra.ops.domain.SlackStatus.PENDING
+			   and (n.slackNextAt is null or n.slackNextAt <= :now)""")
+	int claimSlack(@Param("id") Long id, @Param("now") LocalDateTime now, @Param("lease") LocalDateTime lease);
+
+	/** 보냄. slack_error는 지우지 않는다(재시도 · 재전송 전 마지막 원인이 남는다) */
+	@Transactional
+	@Modifying
+	@Query("""
+			update OperatorNotification n
+			   set n.slackStatus = com.tetra.ops.domain.SlackStatus.SENT, n.slackSentAt = :sentAt,
+			       n.slackChannel = :channel, n.slackTs = :ts, n.slackNextAt = null
+			 where n.notificationId = :id and n.slackStatus = com.tetra.ops.domain.SlackStatus.SENDING
+			   and n.slackNextAt = :lease""")
+	int markSlackSent(@Param("id") Long id, @Param("lease") LocalDateTime lease, @Param("sentAt") LocalDateTime sentAt,
+			@Param("channel") String channel, @Param("ts") String ts);
+
+	/** 확실히 안 보낸 실패 → PENDING, nextAt 뒤 다시(시도 수는 선점 때 센 그대로) */
+	@Transactional
+	@Modifying
+	@Query("""
+			update OperatorNotification n
+			   set n.slackStatus = com.tetra.ops.domain.SlackStatus.PENDING, n.slackNextAt = :nextAt,
+			       n.slackError = :error
+			 where n.notificationId = :id and n.slackStatus = com.tetra.ops.domain.SlackStatus.SENDING
+			   and n.slackNextAt = :lease""")
+	int retrySlack(@Param("id") Long id, @Param("lease") LocalDateTime lease, @Param("nextAt") LocalDateTime nextAt,
+			@Param("error") String error);
+
+	/** 속도 제한(429 · ratelimited) → PENDING, Retry-After 뒤 다시. 시도로 세지 않는다(선점 때 더한 1을 되돌림) */
+	@Transactional
+	@Modifying
+	@Query("""
+			update OperatorNotification n
+			   set n.slackStatus = com.tetra.ops.domain.SlackStatus.PENDING, n.slackNextAt = :nextAt,
+			       n.slackAttempts = n.slackAttempts - 1, n.slackError = :error
+			 where n.notificationId = :id and n.slackStatus = com.tetra.ops.domain.SlackStatus.SENDING
+			   and n.slackNextAt = :lease""")
+	int deferSlack(@Param("id") Long id, @Param("lease") LocalDateTime lease, @Param("nextAt") LocalDateTime nextAt,
+			@Param("error") String error);
+
+	/**
+	 * URGENT 첫 '모름' → PENDING, nextAt 뒤 한 번 더(재전송). slack_channel에 보냈을 수 있는 채널을 남긴다 —
+	 * SENT 전 행에 채널이 있으면 재전송 차례라는 표시이고, 재전송은 같은 채널로 간다
+	 */
+	@Transactional
+	@Modifying
+	@Query("""
+			update OperatorNotification n
+			   set n.slackStatus = com.tetra.ops.domain.SlackStatus.PENDING, n.slackNextAt = :nextAt,
+			       n.slackChannel = :channel, n.slackError = :error
+			 where n.notificationId = :id and n.slackStatus = com.tetra.ops.domain.SlackStatus.SENDING
+			   and n.slackNextAt = :lease""")
+	int resendSlack(@Param("id") Long id, @Param("lease") LocalDateTime lease, @Param("nextAt") LocalDateTime nextAt,
+			@Param("channel") String channel, @Param("error") String error);
+
+	/** 보내지 못함(다시 해도 안 될 오류 · 횟수를 다 씀) → FAILED. 채널은 그대로(재전송이 실패했으면 첫 시도 채널이 남음) */
+	@Transactional
+	@Modifying
+	@Query("""
+			update OperatorNotification n
+			   set n.slackStatus = com.tetra.ops.domain.SlackStatus.FAILED, n.slackNextAt = null, n.slackError = :error
+			 where n.notificationId = :id and n.slackStatus = com.tetra.ops.domain.SlackStatus.SENDING
+			   and n.slackNextAt = :lease""")
+	int failSlack(@Param("id") Long id, @Param("lease") LocalDateTime lease, @Param("error") String error);
+
+	/** 보냈는지 모름 → UNKNOWN(다시 보내지 않음). channel = 보냈을 수 있는 채널 */
+	@Transactional
+	@Modifying
+	@Query("""
+			update OperatorNotification n
+			   set n.slackStatus = com.tetra.ops.domain.SlackStatus.UNKNOWN, n.slackNextAt = null,
+			       n.slackChannel = :channel, n.slackError = :error
+			 where n.notificationId = :id and n.slackStatus = com.tetra.ops.domain.SlackStatus.SENDING
+			   and n.slackNextAt = :lease""")
+	int unknownSlack(@Param("id") Long id, @Param("lease") LocalDateTime lease, @Param("channel") String channel,
+			@Param("error") String error);
 
 }

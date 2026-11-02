@@ -14,14 +14,18 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.function.BooleanSupplier;
 
+import javax.sql.DataSource;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 import com.tetra.ops.common.DbErrors;
+import com.tetra.ops.common.DbLock;
 import com.tetra.ops.common.time.Kst;
 import com.tetra.ops.config.TetraProperties;
 import com.tetra.ops.domain.platform.EventRegistry;
@@ -40,16 +44,21 @@ import com.tetra.ops.tenancy.TenantRouter;
  * - DLQ: MONITORING_DLQ_NAMES 큐마다 SQS ApproximateNumberOfMessages가 0보다 크면 SYSTEM/URGENT(같은 큐 · 같은 날(KST) 1건).
  *   종류는 이름 접미사({@link DlqQueue}), 맞지 않는 이름은 기동 때 WARN 한 줄만 남기고 보지 않는다.
  * - 단계 지연 5종({@link TrafficRules#delays}, OPS-05 자동화 칸과 같은 규칙): DELAY/URGENT · WARNING(이벤트 · 단계마다 1건).
- * 여러 태스크면 {@link AlertLock}(GET_LOCK)을 잡은 하나만 돈다. 중복 방지 키(dedupe_key)가 2중 안전장치 — 이미 있으면 남기지 않고,
+ * 여러 태스크면 {@link DbLock}(GET_LOCK tetra:automation-alerts)을 잡은 하나만 돈다. 중복 방지 키(dedupe_key)가 2중 안전장치 — 이미 있으면 남기지 않고,
  * 동시에 넣어 1062가 나면 그 알림만 건너뛴다(D4 ①: 알림 저장은 NotificationService의 자체 트랜잭션, 1062는 그 밖에서 잡는다).
  * 조회: registry 한 번(상태 · 호스팅 시작 시각으로 거른 후보) + 종료 단계를 볼 이벤트가 있을 때만 그 테넌트들 이름과 테넌트마다 event 한 번.
  * Step Functions(WF2-2 · WF4 실행 여부)는 판정 시각에 걸린 이벤트가 있고 아직 알림을 남기지 않았을 때만 EventExecutionService 캐시로 본다.
  * AWS 실패 · 시간 상한 초과는 그 부분만 이번 회차에서 건너뛰고 WARN 한 줄. 정상 회차는 로그를 남기지 않는다(알림을 남겼거나 오류일 때만).
+ * 스위치: tetra.alerts.enabled(AUTOMATION_ALERTS_ENABLED, 기본 true)가 false면 이 빈이 없다(테스트 프로필 — run()을 직접 부른다).
+ * Slack 발송(SlackNotifyJob)과는 스위치 · 잠금 · 스케줄러 스레드가 따로다(SchedulingConfig).
  */
 @Component
+@ConditionalOnProperty(prefix = "tetra.alerts", name = "enabled", havingValue = "true", matchIfMissing = true)
 class AutomationAlertJob {
 
 	private static final Logger log = LoggerFactory.getLogger(AutomationAlertJob.class);
+
+	static final String LOCK_NAME = "tetra:automation-alerts";
 
 	static final String DEDUPE_INDEX = "uk_operator_notif_dedupe";
 
@@ -59,7 +68,7 @@ class AutomationAlertJob {
 	 */
 	static final Duration AWS_BUDGET = Duration.ofSeconds(40);
 
-	private final AlertLock lock;
+	private final DbLock lock;
 
 	private final AwsMonitoringGateway aws;
 
@@ -84,16 +93,16 @@ class AutomationAlertJob {
 	private final Clock clock;
 
 	@Autowired
-	AutomationAlertJob(AlertLock lock, AwsMonitoringGateway aws, EventExecutionService executions,
+	AutomationAlertJob(DataSource dataSource, AwsMonitoringGateway aws, EventExecutionService executions,
 			EventRegistryRepository registries, TenantRepository tenants, TenantRouter router, TrafficEventReader reader,
 			OperatorNotificationRepository notificationRows, NotificationService notifications, TetraProperties properties,
 			Clock clock) {
-		this(lock, aws, executions, registries, tenants, router, reader, notificationRows, notifications,
-				properties.monitoring().aws().dlqNameList(), properties.alerts().delayWindow(), clock);
+		this(new DbLock(dataSource, LOCK_NAME), aws, executions, registries, tenants, router, reader, notificationRows,
+				notifications, properties.monitoring().aws().dlqNameList(), properties.alerts().delayWindow(), clock);
 	}
 
-	/** 테스트용: 큐 이름 · 지연 기간 · 시계를 직접 준다 */
-	AutomationAlertJob(AlertLock lock, AwsMonitoringGateway aws, EventExecutionService executions,
+	/** 테스트용: 잠금 · 큐 이름 · 지연 기간 · 시계를 직접 준다 */
+	AutomationAlertJob(DbLock lock, AwsMonitoringGateway aws, EventExecutionService executions,
 			EventRegistryRepository registries, TenantRepository tenants, TenantRouter router, TrafficEventReader reader,
 			OperatorNotificationRepository notificationRows, NotificationService notifications, List<String> dlqNames,
 			Duration delayWindow, Clock clock) {
