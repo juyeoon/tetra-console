@@ -435,6 +435,8 @@ export interface TrafficUpcoming {
 export interface TrafficPlatformResponse {
   prometheus: MonitoringSource;
   aws: MonitoringSource;
+  /** 'Grafana에서 자세히' 링크의 Grafana 주소(서버 GRAFANA_URL, 기본 http://localhost:13000). null이면 링크를 숨긴다 */
+  grafanaUrl: string | null;
   /** 4칸 고정 순서: CLUSTER · EVENT · AUTOMATION · PLATFORM */
   summary: {
     area: 'CLUSTER' | 'EVENT' | 'AUTOMATION' | 'PLATFORM';
@@ -537,7 +539,11 @@ export interface TrafficLiveKpi {
   redisOpsPerSec: number | null;
   redisRestarts: number | null;
   redisConnections: number | null;
-  redisUp: boolean | null;
+  /**
+   * Redis 연결 — 판정과 같은 값. UP 연결됨(이벤트 정리 중 포함) · CHECKING 끊긴 지 1분 안(주의) · DOWN 1분 내내 끊김(위험).
+   * Redis 지표가 없으면 null
+   */
+  redisConnection: 'UP' | 'CHECKING' | 'DOWN' | null;
 }
 
 export interface TrafficPeak {
@@ -570,7 +576,7 @@ export interface TrafficKpi {
   /** 입장 직전 ~ 마무리만(호스팅 종료 뒤는 null) */
   level: MonitoringLevel | null;
   reason: string | null;
-  /** 주의 값인 KPI 키: errorRatio · p95 · pods · redisMemory · redisRestarts · redisUp */
+  /** 주의 값인 KPI 키: errorRatio · p95 · pods · redisMemory · redisRestarts · redisConnection */
   warn: string[];
   live: TrafficLiveKpi | null;
   summary: TrafficSummaryKpi | null;

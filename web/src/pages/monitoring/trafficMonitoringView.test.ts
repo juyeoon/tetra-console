@@ -20,11 +20,16 @@ import {
   ERROR_RATIO_WARN,
   ERROR_RULE_TEXT,
   eventBody,
+  eventGrafanaLinks,
   eventOptions,
   eventStatusText,
   failureRows,
+  GRAFANA_PORT_FORWARD_HINT,
+  grafanaBase,
+  grafanaHint,
   headerView,
   isClosedPhase,
+  kstEpochMs,
   liveKpiGroups,
   MARKER_MAX_LEVELS,
   markerLabels,
@@ -35,6 +40,7 @@ import {
   parseEventId,
   percentText,
   PHASE_META,
+  platformGrafanaLink,
   poolViews,
   rangeButtons,
   rdsText,
@@ -60,6 +66,7 @@ const NOW = new Date('2026-10-26T15:10:00+09:00');
 const platform = (patch: Partial<TrafficPlatformResponse> = {}): TrafficPlatformResponse => ({
   prometheus: { asOf: '2026-10-26T15:12:14+09:00', stale: false, staleReason: null },
   aws: { asOf: '2026-10-26T15:12:00+09:00', stale: false, staleReason: null },
+  grafanaUrl: 'http://localhost:13000',
   summary: [
     { area: 'CLUSTER', level: 'OK', reason: '노드 16 Ready', openCount: null, eventId: null },
     { area: 'EVENT', level: 'WARN', reason: '7번 5xx 0.8%', openCount: 3, eventId: 7 },
@@ -572,13 +579,13 @@ describe('구역 상태별 표시(명세 4절)', () => {
     const kpi: TrafficKpi = {
       level: 'WARN',
       reason: '5xx 0.8%',
-      warn: ['errorRatio', 'redisUp'],
+      warn: ['errorRatio', 'redisConnection'],
       summary: null,
       live: {
         rps: null, errorRatio: null, p95Ms: null, p95IssuanceMs: null, p95TicketMs: null,
         podsReady: 6, podsMax: 12, podsMin: 6, podsPending: 0, cpuCores: 0.4, cpuRequestCores: 3, memoryBytes: 2.8 * 1024 ** 3, memoryRequestBytes: 6 * 1024 ** 3,
         waiting: null, stockRemaining: 5000, stockTotal: 5000, redisMemoryRatio: 0.02, redisMemoryUsedBytes: 0.1 * 1024 ** 3, redisMemoryMaxBytes: 4 * 1024 ** 3,
-        redisOpsPerSec: 100, redisRestarts: 0, redisConnections: 12, redisUp: false,
+        redisOpsPerSec: 100, redisRestarts: 0, redisConnections: 12, redisConnection: 'DOWN',
       },
     };
     const groups = liveKpiGroups(kpi, 'PRE_ENTRY');
@@ -645,7 +652,7 @@ describe('구역 상태별 표시(명세 4절)', () => {
       live: {
         rps: 1, errorRatio: 0, p95Ms: null, p95IssuanceMs: null, p95TicketMs: null, podsReady: 2, podsMax: 4, podsMin: 2, podsPending: 0, cpuCores: 0.2, cpuRequestCores: 1,
         memoryBytes: 1, memoryRequestBytes: 2, waiting: 0, stockRemaining: 5, stockTotal: 15, redisMemoryRatio: null, redisMemoryUsedBytes: null, redisMemoryMaxBytes: null,
-        redisOpsPerSec: null, redisRestarts: null, redisConnections: null, redisUp: null,
+        redisOpsPerSec: null, redisRestarts: null, redisConnections: null, redisConnection: null,
       },
     };
     assert.deepEqual(liveKpiGroups(kpi, 'LIVE')[3].tiles.map((t) => [t.label, t.value, t.sub]), [
@@ -653,6 +660,20 @@ describe('구역 상태별 표시(명세 4절)', () => {
       ['처리량', EMPTY, undefined],
       ['재시작', EMPTY, `연결 ${EMPTY}`],
     ]);
+  });
+  test('Redis 칸 연결: 판정과 같은 말 — 연결됨은 연결 수, 1분 안은 확인 중, 1분 이어지면 끊김(둘 다 주의 글씨)', () => {
+    const redisTile = (redisConnection: 'UP' | 'CHECKING' | 'DOWN', warn: string[]) =>
+      liveKpiGroups({
+        level: 'OK', reason: '정상', warn, summary: null,
+        live: {
+          rps: 1, errorRatio: 0, p95Ms: null, p95IssuanceMs: null, p95TicketMs: null, podsReady: 2, podsMax: 4, podsMin: 2, podsPending: 0, cpuCores: 0.2, cpuRequestCores: 1,
+          memoryBytes: 1, memoryRequestBytes: 2, waiting: 0, stockRemaining: 5, stockTotal: 15, redisMemoryRatio: 0.1, redisMemoryUsedBytes: 1, redisMemoryMaxBytes: 10,
+          redisOpsPerSec: 5, redisRestarts: 0, redisConnections: 12, redisConnection,
+        },
+      }, 'LIVE')[3].tiles[2];
+    assert.deepEqual([redisTile('UP', []).sub, redisTile('UP', []).warn], ['연결 12', false]);
+    assert.deepEqual([redisTile('CHECKING', ['redisConnection']).sub, redisTile('CHECKING', ['redisConnection']).warn], ['연결 확인 중', true]);
+    assert.deepEqual([redisTile('DOWN', ['redisConnection']).sub, redisTile('DOWN', ['redisConnection']).warn], ['연결 끊김', true]);
   });
   test('범위 버튼', () => {
     assert.deepEqual(
@@ -665,6 +686,76 @@ describe('구역 상태별 표시(명세 4절)', () => {
     );
     assert.deepEqual(rangeButtons({ key: 'full', options: ['full', 'start'], from: '', to: '', stepSeconds: 90, entryAt: '', startAt: '' }).map((b) => b.label), ['전체', '시작 ±10분']);
     assert.deepEqual(rangeButtons(null), []);
+  });
+});
+
+describe('Grafana 링크(새 탭)', () => {
+  const BASE = 'http://localhost:13000';
+  // 준비(prepareAt) 13:30 − 5분 — 준비 시각은 서버 값(TEST-LEAD가 켜져 있어도 맞다)
+  const FROM = Date.parse('2026-10-26T13:25:00+09:00');
+  const INFRA = `${BASE}/d/tetra-event-infra?var-tenant=aaaaaaaaaaaa&var-event=7&from=${FROM}&to=now&refresh=10s`;
+  const links = (phase: TrafficEventResponse['event']['phase'], patch: Partial<TrafficEventResponse> = {}, now = NOW) =>
+    eventGrafanaLinks(eventResponse(phase, patch), BASE, now).map((l) => [l.label, l.href, l.danger]);
+  const kpi = (level: TrafficKpi['level']): TrafficKpi => ({ level, reason: '', warn: [], live: null, summary: null });
+
+  test('주소: http(s)만, 끝 / 없이 — 아니면 링크 숨김', () => {
+    assert.equal(grafanaBase(' http://localhost:13000/ '), BASE);
+    assert.equal(grafanaBase('https://grafana.example.com'), 'https://grafana.example.com');
+    assert.equal(grafanaBase(null), null);
+    assert.equal(grafanaBase(''), null);
+    assert.equal(grafanaBase('javascript:alert(1)'), null);
+  });
+  test('안내: 주소가 localhost(포트 포워딩)일 때만', () => {
+    assert.equal(grafanaHint(BASE), GRAFANA_PORT_FORWARD_HINT);
+    assert.equal(grafanaHint('http://127.0.0.1:13000'), GRAFANA_PORT_FORWARD_HINT);
+    assert.equal(grafanaHint('https://grafana.example.com'), null);
+    assert.equal(grafanaHint(null), null);
+  });
+  test('준비 ~ 진행 중: 관제(10초 갱신), 준비 − 5분 ~ now. 위험 판정이면 장애 대응(now-15m ~ now)', () => {
+    for (const phase of ['PRE_ENTRY', 'ENTRY_OPEN', 'LIVE', 'WRAP_UP'] as const) {
+      assert.deepEqual(links(phase, { kpi: kpi('OK') }), [['Grafana에서 자세히 ↗', INFRA, false]]);
+    }
+    assert.deepEqual(links('LIVE', { kpi: kpi('DANGER') }), [
+      ['Grafana에서 자세히 ↗', INFRA, false],
+      ['장애 대응 ↗', `${BASE}/d/tetra-incident?var-tenant=aaaaaaaaaaaa&var-event=7&from=now-15m&to=now`, true],
+    ]);
+    // 주의 · 확인 불가는 관제만
+    assert.equal(links('LIVE', { kpi: kpi('WARN') }).length, 1);
+    assert.equal(links('PRE_ENTRY', { kpi: kpi('UNKNOWN') }).length, 1);
+  });
+  test('준비 전은 없음, 준비가 지난 예정은 관제', () => {
+    assert.deepEqual(links('SCHEDULED', {}, new Date('2026-10-26T13:29:59+09:00')), []);
+    assert.deepEqual(links('SCHEDULED', {}, new Date('2026-10-26T13:30:00+09:00')), [['Grafana에서 자세히 ↗', INFRA, false]]);
+  });
+  test('종료(종료 처리 중 · 종료): 지표 상세, 준비 − 5분 ~ hosting_end_at + 5분', () => {
+    const graph = `${BASE}/d/tetra-event-graph?var-tenant=aaaaaaaaaaaa&var-event=7&from=${FROM}&to=${Date.parse('2026-10-26T15:45:00+09:00')}`;
+    assert.deepEqual(links('ENDING'), [['Grafana에서 자세히 ↗', graph, false]]);
+    assert.deepEqual(links('ENDED'), [['Grafana에서 자세히 ↗', graph, false]]);
+    // hosting_end_at이 없으면 ~ now
+    assert.ok(String(links('ENDED', { event: { ...eventResponse('ENDED').event, endAt: null } })[0][1]).endsWith('&to=now'));
+  });
+  test('준비 실패 · 종료 실패: 관제만(준비 − 5분 ~ now), 장애 대응 없음', () => {
+    for (const phase of ['PREPARE_FAILED', 'END_FAILED'] as const) {
+      assert.deepEqual(links(phase), [['Grafana에서 자세히 ↗', INFRA, false]]);
+      assert.deepEqual(links(phase, { kpi: kpi('DANGER') }), [['Grafana에서 자세히 ↗', INFRA, false]]);
+    }
+  });
+  test('배포 · 호스팅 실패, 준비 시각 · 주소 없음은 링크 없음', () => {
+    for (const phase of ['DEPLOY_FAILED', 'HOSTING_FAILED'] as const) {
+      assert.deepEqual(links(phase), []);
+    }
+    for (const prepareAt of ['', null as unknown as string, '날짜 아님']) {
+      assert.deepEqual(links('PREPARE_FAILED', { event: { ...eventResponse('PREPARE_FAILED').event, prepareAt } }), []);
+    }
+    assert.deepEqual(eventGrafanaLinks(eventResponse('LIVE'), null, NOW), []);
+  });
+  test('시각: DB DATETIME(KST, 시간대 없음)은 +09:00으로 본다', () => {
+    assert.equal(kstEpochMs('2026-10-26T13:30:00'), Date.parse('2026-10-26T04:30:00Z'));
+    assert.equal(kstEpochMs('2026-10-26T13:30:00+09:00'), Date.parse('2026-10-26T04:30:00Z'));
+  });
+  test('플랫폼: 변수 없는 플랫폼 대시보드', () => {
+    assert.deepEqual(platformGrafanaLink(BASE), { key: 'platform', label: 'Grafana ↗', href: `${BASE}/d/tetra-platform`, danger: false });
+    assert.equal(platformGrafanaLink(null), null);
   });
 });
 

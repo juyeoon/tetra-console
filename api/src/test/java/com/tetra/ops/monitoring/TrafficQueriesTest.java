@@ -33,6 +33,25 @@ class TrafficQueriesTest {
 	}
 
 	@Test
+	void redisDownSkipsCleanupAndCountsOneMinute() {
+		// Grafana 이벤트 인프라 · 장애 대응과 같은 식(2026-11-02). 이벤트 하나는 event_id · issuance-<id>만 바꾼다
+		TrafficQueries.EventQueries q = TrafficQueries.forEvent("aaaaaaaaaaaa", 7);
+		String one = "((min by (tenant_id, event_id) (redis_up{event_id=\"7\"}) == 0)"
+				+ " or (min by (tenant_id, event_id) (up{job=~\".*redis.*\",event_id=\"7\"}) == 0))"
+				+ " unless on(tenant_id, event_id) label_replace(label_replace("
+				+ "kube_deployment_deletion_timestamp{deployment=\"issuance-7\"}"
+				+ " or kube_deployment_spec_replicas{deployment=\"issuance-7\"} == 0,"
+				+ " \"event_id\", \"$1\", \"deployment\", \"issuance-([0-9]+)\"), \"tenant_id\", \"$1\", \"namespace\", \"tenant-(.*)\")";
+		assertThat(q.redisDown()).isEqualTo(one);
+		assertThat(q.redisDownPoints()).isEqualTo("count_over_time((" + one + ")[1m:15s])");
+		assertThat(TrafficQueries.REDIS_DOWN_BY_EVENT)
+			.isEqualTo(one.replace("event_id=\"7\"", "event_id!=\"\"").replace("deployment=\"issuance-7\"",
+					"deployment=~\"issuance-[0-9]+\""));
+		assertThat(TrafficQueries.REDIS_DOWN_POINTS_BY_EVENT)
+			.isEqualTo("count_over_time((" + TrafficQueries.REDIS_DOWN_BY_EVENT + ")[1m:15s])");
+	}
+
+	@Test
 	void p95UriRegexIsEscapedForPromqlString() {
 		String expected = "uri=~\"/api/issuance/events/\\\\{eventId\\\\}/(coupons/claim|ticket)\"";
 		assertThat(TrafficQueries.forEvent("aaaaaaaaaaaa", 7).p95ByUri()).contains(expected);

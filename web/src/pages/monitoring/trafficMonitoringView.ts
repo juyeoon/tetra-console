@@ -9,6 +9,7 @@ import type {
   TrafficEventsResponse,
   TrafficFailure,
   TrafficKpi,
+  TrafficLiveKpi,
   TrafficNode,
   TrafficPlatformResponse,
   TrafficPool,
@@ -640,6 +641,99 @@ export function chartsMissingText(prometheus: MonitoringSource | undefined): str
     : '그래프를 만들지 못했어요';
 }
 
+// ---------------------------------------------------------------- Grafana 링크
+
+/** Tetra 대시보드 uid(infra-k8s, 고정). 변수 이름은 tenant · event */
+const GRAFANA_DASHBOARD = {
+  infra: 'tetra-event-infra',
+  graph: 'tetra-event-graph',
+  incident: 'tetra-incident',
+  platform: 'tetra-platform',
+} as const;
+
+/** 범위 앞뒤 여유: 준비 − 5분 ~ hosting_end_at + 5분 */
+const GRAFANA_MARGIN_MS = 5 * 60_000;
+
+/** Grafana는 밖에 열려 있지 않다 — 주소가 이 PC(localhost)면 포트 포워딩 안내 */
+export const GRAFANA_PORT_FORWARD_HINT = '포트포워딩(pf-grafana)이 켜져 있어야 열립니다';
+
+export interface GrafanaLink {
+  key: keyof typeof GRAFANA_DASHBOARD;
+  label: string;
+  href: string;
+  /** 장애 대응(위험 판정) — 빨강 글자 */
+  danger: boolean;
+}
+
+/** 서버 grafanaUrl → 링크 앞부분(끝 '/' 없이). http(s) 주소가 아니면 null — 링크를 숨긴다 */
+export function grafanaBase(url: string | null | undefined): string | null {
+  const base = url?.trim().replace(/\/+$/, '');
+  return base && /^https?:\/\/\S+$/i.test(base) ? base : null;
+}
+
+/** 주소의 호스트가 이 PC(localhost · 127.0.0.1 · ::1)면 포트 포워딩 안내, 아니면 null */
+export function grafanaHint(base: string | null): string | null {
+  if (!base) return null;
+  try {
+    return ['localhost', '127.0.0.1', '[::1]'].includes(new URL(base).hostname) ? GRAFANA_PORT_FORWARD_HINT : null;
+  } catch {
+    return null;
+  }
+}
+
+/** 서버 시각(DB DATETIME = KST, 응답은 +09:00) → epoch ms. 시간대가 빠진 값도 KST로 본다 */
+export function kstEpochMs(value: string): number {
+  return Date.parse(/(Z|[+-]\d{2}:?\d{2})$/i.test(value) ? value : `${value}+09:00`);
+}
+
+function eventDashboard(base: string, key: GrafanaLink['key'], e: TrafficEventResponse['event'], from: number | string, to: number | string, refresh?: string): string {
+  const params = [`var-tenant=${encodeURIComponent(e.tenantId)}`, `var-event=${e.eventId}`, `from=${from}`, `to=${to}`];
+  if (refresh) params.push(`refresh=${refresh}`);
+  return `${base}/d/${GRAFANA_DASHBOARD[key]}?${params.join('&')}`;
+}
+
+/** 준비 ~ 진행 중(관제 + 위험이면 장애 대응): 예정(준비 뒤) · 입장 직전 · 입장 중 · 진행 중 · 마무리 */
+const GRAFANA_LIVE_PHASES: readonly EventPhase[] = ['SCHEDULED', 'PRE_ENTRY', 'ENTRY_OPEN', 'LIVE', 'WRAP_UP'];
+
+/** 관제만: 준비 실패(WF2-2) · 종료 실패(WF4) — Pod 기동 · 정리 구간을 본다 */
+const GRAFANA_FAILED_PHASES: readonly EventPhase[] = ['PREPARE_FAILED', 'END_FAILED'];
+
+/**
+ * 이벤트 구역 머리의 Grafana 링크(새 탭, 2026-11-02). 준비 시각은 서버 prepareAt(시작 − 준비 리드, TEST-LEAD 반영) — 없으면 링크 없음.
+ * - 준비 전: 없음
+ * - 준비 ~ 진행 중: 관제(10초 갱신), 준비 − 5분 ~ now. 위험 판정(kpi.level)이면 + 장애 대응, now-15m ~ now
+ * - 종료(종료 처리 중 · 종료): 지표 상세, 준비 − 5분 ~ hosting_end_at + 5분(hosting_end_at이 없으면 now)
+ * - 준비 실패 · 종료 실패: 관제, 준비 − 5분 ~ now(장애 대응 없음)
+ * - 배포 · 호스팅 실패: 없음(이벤트 Pod가 없다)
+ */
+export function eventGrafanaLinks(event: TrafficEventResponse, base: string | null, now: Date): GrafanaLink[] {
+  const e = event.event;
+  if (!base || !e.prepareAt) return [];
+  const prepare = kstEpochMs(e.prepareAt);
+  if (!Number.isFinite(prepare) || now.getTime() < prepare) return [];
+  const from = prepare - GRAFANA_MARGIN_MS;
+  const detail = (key: GrafanaLink['key'], to: number | string, refresh?: string): GrafanaLink =>
+    ({ key, label: 'Grafana에서 자세히 ↗', href: eventDashboard(base, key, e, from, to, refresh), danger: false });
+  if (GRAFANA_LIVE_PHASES.includes(e.phase)) {
+    const links = [detail('infra', 'now', '10s')];
+    if (event.kpi?.level === 'DANGER') {
+      links.push({ key: 'incident', label: '장애 대응 ↗', href: eventDashboard(base, 'incident', e, 'now-15m', 'now'), danger: true });
+    }
+    return links;
+  }
+  if (GRAFANA_FAILED_PHASES.includes(e.phase)) return [detail('infra', 'now', '10s')];
+  if (e.phase === 'ENDING' || e.phase === 'ENDED') {
+    const hostingEnd = e.endAt ? kstEpochMs(e.endAt) : NaN;
+    return [detail('graph', Number.isFinite(hostingEnd) ? hostingEnd + GRAFANA_MARGIN_MS : 'now')];
+  }
+  return [];
+}
+
+/** 플랫폼 카드 제목 줄 — 변수 없는 플랫폼 대시보드 */
+export function platformGrafanaLink(base: string | null): GrafanaLink | null {
+  return base ? { key: 'platform', label: 'Grafana ↗', href: `${base}/d/${GRAFANA_DASHBOARD.platform}`, danger: false } : null;
+}
+
 // ---------------------------------------------------------------- D 범위 버튼 · KPI
 
 export const RANGE_LABEL: Record<TrafficRangeKey, string> = {
@@ -668,6 +762,12 @@ export interface KpiGroup {
 }
 
 const AFTER_ENTRY = '입장 뒤 표시';
+
+/** Redis 칸 연결 문구 — 판정 사유와 같은 말(서버 TrafficRules). 연결됨이면 연결 수를 보여 준다 */
+const REDIS_CONNECTION_TEXT: Partial<Record<NonNullable<TrafficLiveKpi['redisConnection']>, string>> = {
+  CHECKING: '연결 확인 중',
+  DOWN: '연결 끊김',
+};
 
 /** 입장 직전 · 진행 중 KPI 4묶음. 입장 직전은 요청 처리 · 대기 인원이 '–'(입장 뒤 표시) */
 export function liveKpiGroups(kpi: TrafficKpi | null | undefined, phase: EventPhase): KpiGroup[] {
@@ -716,8 +816,8 @@ export function liveKpiGroups(kpi: TrafficKpi | null | undefined, phase: EventPh
         {
           label: '재시작',
           value: countText(live?.redisRestarts),
-          sub: live?.redisUp === false ? '연결 끊김' : `연결 ${countText(live?.redisConnections)}`,
-          warn: warn.has('redisRestarts') || warn.has('redisUp'),
+          sub: REDIS_CONNECTION_TEXT[live?.redisConnection ?? 'UP'] ?? `연결 ${countText(live?.redisConnections)}`,
+          warn: warn.has('redisRestarts') || warn.has('redisConnection'),
         },
       ],
     },

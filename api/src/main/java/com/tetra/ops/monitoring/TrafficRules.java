@@ -10,6 +10,7 @@ import java.util.Map;
 import com.tetra.ops.domain.EventStatus;
 import com.tetra.ops.domain.HostingStatus;
 import com.tetra.ops.event.EntryOpen;
+import com.tetra.ops.monitoring.TrafficEventResponse.RedisConnection;
 
 /**
  * OPS-05 상태 판정(명세 2절, 초안 — 경보 8장 임계값, 부하 시험 뒤 조정). 판정은 백엔드 한 곳에서만 한다(상태 요약 · 드롭다운 기본 선택 ·
@@ -31,6 +32,12 @@ final class TrafficRules {
 	static final double P95_WARN_SECONDS = 0.5;
 
 	static final double REDIS_MEMORY_WARN = 0.8;
+
+	/** Redis 끊김이 이만큼 이어지면 위험(그 전은 주의). 화면 · Grafana 이벤트 인프라 · 장애 대응과 같은 1분(2026-11-02) */
+	static final Duration REDIS_DOWN_FOR = Duration.ofMinutes(1);
+
+	/** REDIS_DOWN_FOR 동안의 15초 점 수 = 1분 내내 끊김 */
+	static final int REDIS_DOWN_POINTS = 4;
 
 	// ---- 클러스터 · 플랫폼 ----
 
@@ -61,13 +68,14 @@ final class TrafficRules {
 	 * 이벤트 판정 재료(Prometheus 순간값). 시리즈가 없으면 null.
 	 * complete = 재료 쿼리가 모두 성공(false면 일부 쿼리 오류로 비어 있음 — 위험이 보이지 않으면 UNKNOWN).
 	 * 5xx 쿼리가 실패하면 rps도 null로 넣는다(요청만 있고 5xx 없음 = 0 규칙이 실패를 0으로 바꾸지 않게).
+	 * redis = {@link #redisConnection}(null이면 끊긴 점을 못 봄 — 끊김 아님으로 본다).
 	 */
 	record EventSignals(Double rps, Double errorRps, Double p95Seconds, Double cursorChanges, Double waiting,
-			Double stock, Double redisUp, Double exporterUp, Integer apiReady, Integer hpaMax, boolean complete) {
+			Double stock, RedisConnection redis, Integer apiReady, Integer hpaMax, boolean complete) {
 
 		EventSignals(Double rps, Double errorRps, Double p95Seconds, Double cursorChanges, Double waiting, Double stock,
-				Double redisUp, Double exporterUp, Integer apiReady, Integer hpaMax) {
-			this(rps, errorRps, p95Seconds, cursorChanges, waiting, stock, redisUp, exporterUp, apiReady, hpaMax, true);
+				RedisConnection redis, Integer apiReady, Integer hpaMax) {
+			this(rps, errorRps, p95Seconds, cursorChanges, waiting, stock, redis, apiReady, hpaMax, true);
 		}
 
 		/** 5xx 비율. 요청 시리즈가 있고 5xx만 없으면 0, 요청 시리즈가 없으면 null */
@@ -76,7 +84,11 @@ final class TrafficRules {
 		}
 
 		boolean redisDown() {
-			return isZero(redisUp) || isZero(exporterUp);
+			return redis == RedisConnection.DOWN;
+		}
+
+		boolean redisChecking() {
+			return redis == RedisConnection.CHECKING;
 		}
 
 		boolean podsAtMax() {
@@ -98,14 +110,24 @@ final class TrafficRules {
 		return (errorRps == null ? 0 : errorRps) / rps;
 	}
 
-	private static boolean isZero(Double v) {
-		return v != null && v == 0;
+	/**
+	 * Redis 연결: 1분(15초 점 {@link #REDIS_DOWN_POINTS}개) 내내 끊김이면 DOWN, 지금 끊겼지만 1분이 안 됐으면 CHECKING, 그 밖은 UP.
+	 * 끊김 = redis_up 또는 exporter up 0, 이벤트 정리 중은 쿼리({@link TrafficQueries#redisDown})에서 빠져 UP —
+	 * 종료 때 exporter가 먼저 사라지며 낸 0 한 점(이벤트 14)을 위험으로 보지 않는다.
+	 * @param downNow 지금 끊김(REDIS_DOWN 시리즈 있음)
+	 * @param downPoints 최근 1분 동안 끊긴 점 수(시리즈 없으면 null)
+	 */
+	static RedisConnection redisConnection(boolean downNow, Double downPoints) {
+		if (downPoints != null && downPoints >= REDIS_DOWN_POINTS) {
+			return RedisConnection.DOWN;
+		}
+		return downNow ? RedisConnection.CHECKING : RedisConnection.UP;
 	}
 
 	/**
 	 * 진행 중(OPEN) 이벤트 하나.
-	 * 위험: 5xx 2% 이상 · p95 2초 이상 · 커서 1분 정지(시작 뒤, 대기 · 재고 있을 때) · Redis 연결 끊김(redis_up = 0 또는 exporter up = 0).
-	 * 주의: 5xx 1% 이상 · p95 500ms 이상 · Pod = KEDA 최대.
+	 * 위험: 5xx 2% 이상 · p95 2초 이상 · 커서 1분 정지(시작 뒤, 대기 · 재고 있을 때) · Redis 연결 끊김(1분 이어짐, {@link #redisConnection}).
+	 * 주의: Redis 연결 확인 중(끊긴 지 1분 안) · 5xx 1% 이상 · p95 500ms 이상 · Pod = KEDA 최대.
 	 * 순서: 보이는 위험 → 재료 일부가 비었으면 UNKNOWN(위험을 배제할 수 없음) → 주의 → 정상.
 	 * @param started 지금 ≥ 시작 시각(그전에는 커서가 움직이지 않는 게 정상)
 	 */
@@ -128,6 +150,9 @@ final class TrafficRules {
 		}
 		if (!s.complete()) {
 			return Judgment.NO_DATA;
+		}
+		if (s.redisChecking()) {
+			return new Judgment(MonitoringLevel.WARN, "Redis 연결 확인 중");
 		}
 		if (ratio != null && ratio >= ERROR_RATIO_WARN) {
 			return new Judgment(MonitoringLevel.WARN, "5xx " + percent(ratio));
@@ -152,6 +177,9 @@ final class TrafficRules {
 		if (!s.complete()) {
 			return Judgment.NO_DATA;
 		}
+		if (s.redisChecking()) {
+			return new Judgment(MonitoringLevel.WARN, "Redis 연결 확인 중");
+		}
 		if (s.podsAtMax()) {
 			return new Judgment(MonitoringLevel.WARN, "Pod 최대 " + s.apiReady() + "/" + s.hpaMax());
 		}
@@ -168,9 +196,9 @@ final class TrafficRules {
 				&& s.stock() != null && s.stock() > 0;
 	}
 
-	/** KPI 중 주의 값(화면은 황토색 글씨) */
+	/** KPI 중 주의 값(화면은 황토색 글씨). Redis 연결은 확인 중 · 끊김 둘 다 */
 	static List<String> kpiWarnings(Double errorRatio, Double p95Seconds, Integer podsReady, Integer podsMax,
-			Double redisMemoryRatio, Double redisRestarts, Boolean redisUp) {
+			Double redisMemoryRatio, Double redisRestarts, RedisConnection redis) {
 		List<String> warn = new ArrayList<>();
 		if (errorRatio != null && errorRatio >= ERROR_RATIO_WARN) {
 			warn.add("errorRatio");
@@ -187,8 +215,8 @@ final class TrafficRules {
 		if (redisRestarts != null && redisRestarts > 0) {
 			warn.add("redisRestarts");
 		}
-		if (Boolean.FALSE.equals(redisUp)) {
-			warn.add("redisUp");
+		if (redis == RedisConnection.CHECKING || redis == RedisConnection.DOWN) {
+			warn.add("redisConnection");
 		}
 		return warn;
 	}

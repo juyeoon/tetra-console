@@ -87,6 +87,8 @@ tetra:
     read-timeout: ${PROMETHEUS_READ_TIMEOUT:PT3S}
     cache-ttl: ${MONITORING_CACHE_TTL:PT15S}
     refresh-timeout: ${MONITORING_REFRESH_TIMEOUT:PT8S}
+    # OPS-05 'Grafana에서 자세히' 링크. Grafana는 밖에 열려 있지 않아 운영자 PC의 포트 포워딩(pf-grafana) 주소가 기본. 비우면 링크 숨김
+    grafana-url: ${GRAFANA_URL:http://localhost:13000}
     # OPS-05 AWS 지표(읽기 전용). 모두 선택 — 비어 있는 값의 항목만 null
     aws:
       cache-ttl: ${MONITORING_AWS_CACHE_TTL:PT60S}

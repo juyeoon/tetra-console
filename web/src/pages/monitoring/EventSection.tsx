@@ -7,6 +7,7 @@ import type { TrafficEventResponse, TrafficRangeKey } from '@/api/types';
 import { line, radius, text, tones } from '@/theme/theme';
 import ExecutionPanel from './ExecutionPanel';
 import { executionStepsKey } from './executionView';
+import GrafanaLinks from './GrafanaLinks';
 import { KpiGroups, KpiTiles } from './KpiPanels';
 import MetricChart from './MetricChart';
 import StepTimeline from './StepTimeline';
@@ -17,6 +18,8 @@ import {
   chartViews,
   endedKpiTiles,
   eventBody,
+  eventGrafanaLinks,
+  grafanaHint,
   isClosedPhase,
   LIST_ORDER_TEXT,
   liveKpiGroups,
@@ -40,6 +43,8 @@ interface EventSectionProps {
   listLoading: boolean;
   onRange: (range: TrafficRangeKey) => void;
   now: Date;
+  /** Grafana 주소(grafanaBase로 거른 값). null이면 링크 없음 */
+  grafana: string | null;
 }
 
 function Notice({ title, description, tone, action }: { title: string; description: string; tone: 'grey' | 'red'; action?: ReactNode }) {
@@ -66,9 +71,10 @@ function Notice({ title, description, tone, action }: { title: string; descripti
 }
 
 /** C · D 이벤트 구역 — 드롭다운 · 진행 단계 8개 · (상태에 따라) KPI · 그래프 8개 */
-export default function EventSection({ options, selected, onSelect, detail, failed, listLoading, onRange, now }: EventSectionProps) {
+export default function EventSection({ options, selected, onSelect, detail, failed, listLoading, onRange, now, grafana }: EventSectionProps) {
   const status = sectionStatus(detail);
   const noEvents = !listLoading && options.length === 0;
+  const grafanaLinks = detail ? eventGrafanaLinks(detail, grafana, now) : [];
   return (
     <Card sx={{ p: 3 }}>
       {/* 왼쪽: 제목 · 드롭다운(남는 폭, 긴 항목은 말줄임) + 아래 줄 목록 순서 안내. 오른쪽: 상태 칩 · 갱신(줄지 않음) */}
@@ -99,6 +105,8 @@ export default function EventSection({ options, selected, onSelect, detail, fail
           </Typography>
         </Box>
         <Stack direction="row" alignItems="center" spacing={1} flexWrap="wrap" useFlexGap sx={{ flexShrink: 0, pt: { md: 0.75 } }}>
+          {/* Grafana 바로 가기(새 탭) — 상태 칩 왼쪽 */}
+          <GrafanaLinks links={grafanaLinks} hint={grafanaHint(grafana)} />
           {status.chips.map((c) => (
             <StatusChip key={c.label} label={c.label} tone={c.tone} />
           ))}

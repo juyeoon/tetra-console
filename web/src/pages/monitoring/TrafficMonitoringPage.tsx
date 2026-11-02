@@ -16,6 +16,7 @@ import {
   awsDelayed,
   eventOptions,
   failureRows,
+  grafanaBase,
   headerView,
   historyView,
   poolViews,
@@ -63,6 +64,8 @@ export default function TrafficMonitoringPage() {
   const cells = useMemo(() => summaryCells(p), [p]);
   const pools = useMemo(() => poolViews(p?.nodes.pools), [p]);
   const history = useMemo(() => historyView(p), [p]);
+  // Grafana 주소는 서버 설정(GRAFANA_URL) — /monitoring/platform 응답으로 받는다
+  const grafana = grafanaBase(p?.grafanaUrl);
 
   const select = (id: number) => {
     const next = new URLSearchParams(params);
@@ -79,7 +82,7 @@ export default function TrafficMonitoringPage() {
         <Box sx={{ display: 'grid', gap: layout.cardGap, gridTemplateColumns: { xs: '1fr', lg: 'minmax(0, 1fr) minmax(320px, 34%)' }, alignItems: 'stretch' }}>
           <NodesCard cpu={p?.nodes.cpu ?? null} memory={p?.nodes.memory ?? null} history={history} pools={pools} />
           <Box sx={{ display: 'flex', flexDirection: 'column', gap: layout.cardGap, minWidth: 0 }}>
-            <PlatformCard addons={addonsView(p)} rds={rdsText(p)} services={serviceTexts(p?.platform.services)} awsDelayed={awsDelayed(p?.aws)} />
+            <PlatformCard addons={addonsView(p)} rds={rdsText(p)} services={serviceTexts(p?.platform.services)} awsDelayed={awsDelayed(p?.aws)} grafana={grafana} />
             <UpcomingCard items={upcomingViews(p?.upcoming, now)} />
           </Box>
         </Box>
@@ -93,6 +96,7 @@ export default function TrafficMonitoringPage() {
           listLoading={!events.data && !events.failed}
           onRange={(key) => setRange({ eventId, key })}
           now={now}
+          grafana={grafana}
         />
 
         <FailuresCard rows={failureRows(p?.failures)} />

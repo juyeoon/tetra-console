@@ -68,19 +68,33 @@ public record TrafficEventResponse(MonitoringSource prometheus,
 			Long durationSeconds, StepState state, String reason) {
 	}
 
-	/** warn = 주의 값인 KPI 키(errorRatio · p95 · pods · redisMemory · redisRestarts · redisUp) */
+	/** warn = 주의 값인 KPI 키(errorRatio · p95 · pods · redisMemory · redisRestarts · redisConnection) */
 	public record Kpi(MonitoringLevel level, String reason, List<String> warn, Live live, Summary summary) {
 	}
 
 	/**
+	 * Redis 연결(판정 · KPI 칸 공통, {@link TrafficRules#redisConnection}). redis_up 또는 exporter up 0을 끊김으로 보고,
+	 * 이벤트 정리 중(issuance Deployment 삭제 표시 · spec 0)은 끊김으로 보지 않는다
+	 */
+	public enum RedisConnection {
+		/** 연결됨(끊긴 점 없음 · 정리 중) */
+		UP,
+		/** 지금 끊겼지만 1분이 안 됨 — 주의 "Redis 연결 확인 중" */
+		CHECKING,
+		/** 1분(15초 점 4개) 내내 끊김 — 위험 "Redis 연결 끊김" */
+		DOWN
+	}
+
+	/**
 	 * 지금 값. PRE_ENTRY는 rps · errorRatio · p95 · waiting이 null("—"). 시리즈가 없으면 null.
-	 * errorRatio 0~1, p95는 ms(발급 · 번호표 중 큰 값), cpu는 코어, memory는 바이트, redisMemoryRatio 0~1
+	 * errorRatio 0~1, p95는 ms(발급 · 번호표 중 큰 값), cpu는 코어, memory는 바이트, redisMemoryRatio 0~1.
+	 * redisConnection은 Redis 지표가 없거나 끊김 쿼리가 실패하면 null
 	 */
 	public record Live(Double rps, Double errorRatio, Long p95Ms, Long p95IssuanceMs, Long p95TicketMs,
 			Integer podsReady, Integer podsMax, Integer podsMin, Integer podsPending, Double cpuCores,
 			Double cpuRequestCores, Double memoryBytes, Double memoryRequestBytes, Long waiting, Long stockRemaining,
 			Long stockTotal, Double redisMemoryRatio, Double redisMemoryUsedBytes, Double redisMemoryMaxBytes,
-			Double redisOpsPerSec, Long redisRestarts, Long redisConnections, Boolean redisUp) {
+			Double redisOpsPerSec, Long redisRestarts, Long redisConnections, RedisConnection redisConnection) {
 	}
 
 	/**

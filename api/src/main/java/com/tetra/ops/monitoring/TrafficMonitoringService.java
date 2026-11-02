@@ -128,6 +128,9 @@ public class TrafficMonitoringService {
 	/** 단계 지연을 보는 기간(예정 시각부터, 1분 주기 확인과 같은 값) */
 	private final Duration delayWindow;
 
+	/** 'Grafana에서 자세히' 링크 주소. 비었으면 null(화면이 링크를 숨김) */
+	private final String grafanaUrl;
+
 	private final Clock clock;
 
 	private final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
@@ -156,6 +159,7 @@ public class TrafficMonitoringService {
 		this.delayWindow = properties.alerts().delayWindow();
 		this.clock = clock;
 		TetraProperties.Monitoring m = properties.monitoring();
+		this.grafanaUrl = m.grafanaUrl() == null || m.grafanaUrl().isBlank() ? null : m.grafanaUrl().strip();
 		Duration ttl = m.cacheTtl();
 		Duration timeout = m.refreshTimeout();
 		Duration awsTtl = m.aws().cacheTtl();
@@ -222,7 +226,7 @@ public class TrafficMonitoringService {
 		summary.add(new StatusCell(Area.AUTOMATION, automation.level(), automation.reason(), null, null));
 		summary.add(platformCell(aws));
 
-		return new TrafficPlatformResponse(prom.source(), aws.source(), summary, nodes(metrics, now),
+		return new TrafficPlatformResponse(prom.source(), aws.source(), grafanaUrl, summary, nodes(metrics, now),
 				new TrafficPlatformResponse.Platform(addons(prom), awsValue.rds(), awsValue.services()), upcoming(db, now),
 				db.failures()
 					.stream()
@@ -546,7 +550,7 @@ public class TrafficMonitoringService {
 				List<String> warn = TrafficRules.kpiWarnings(live.errorRatio(),
 						live.p95Ms() == null ? null : live.p95Ms() / 1000.0, live.podsReady(), live.podsMax(),
 						live.redisMemoryRatio(), live.redisRestarts() == null ? null : live.redisRestarts().doubleValue(),
-						live.redisUp());
+						live.redisConnection());
 				return new Kpi(j.level(), j.reason(), warn, live, null);
 			}
 			case ENDING, ENDED, END_FAILED -> {
