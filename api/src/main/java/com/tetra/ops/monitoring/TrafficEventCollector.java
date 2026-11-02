@@ -24,6 +24,7 @@ import com.tetra.ops.monitoring.PromValues.Grid;
 import com.tetra.ops.monitoring.PrometheusClient.Sample;
 import com.tetra.ops.monitoring.TrafficEventResponse.Live;
 import com.tetra.ops.monitoring.TrafficEventResponse.Peak;
+import com.tetra.ops.monitoring.TrafficEventResponse.RedisConnection;
 import com.tetra.ops.monitoring.TrafficEventResponse.Summary;
 import com.tetra.ops.monitoring.TrafficQueries.EventQueries;
 import com.tetra.ops.monitoring.TrafficRules.EventSignals;
@@ -171,8 +172,8 @@ class TrafficEventCollector {
 				.instant("redisMax", q.redisMemoryMax(), now)
 				.instant("redisOps", q.redisOps(), now)
 				.instant("redisClients", q.redisClients(), now)
-				.instant("redisUp", q.redisUp(), now)
-				.instant("exporterUp", q.redisExporterUp(), now)
+				.instant("redisDown", q.redisDown(), now)
+				.instant("redisDownPoints", q.redisDownPoints(), now)
 				.instant("redisRestarts", q.redisRestarts(), now);
 		}
 		if (req.prepareEvalAt() != null) {
@@ -208,17 +209,22 @@ class TrafficEventCollector {
 	private static Instants instantValues(PromBatch.Results r, boolean live, boolean ksm, Long stockTotal) {
 		Live liveKpi = live(r, live, ksm, stockTotal);
 		// 판정 재료가 하나라도 쿼리 오류면 complete = false(위험이 안 보이면 UNKNOWN). 5xx 오류면 rps도 비운다
-		boolean complete = r.allOk("ksm", "stock", "ready", "hpaMax", "redisUp", "exporterUp")
+		boolean complete = r.allOk("ksm", "stock", "ready", "hpaMax", "redisDown", "redisDownPoints")
 				&& (!live || r.allOk("rps", "errorRps", "p95", "cursorChanges", "waiting"));
 		EventSignals signals = new EventSignals(live && r.ok("errorRps") ? liveKpi.rps() : null,
 				live ? PromValues.single(r.instant("errorRps")) : null,
 				liveKpi.p95Ms() == null ? null : liveKpi.p95Ms() / 1000.0,
 				live ? PromValues.single(r.instant("cursorChanges")) : null,
 				liveKpi.waiting() == null ? null : liveKpi.waiting().doubleValue(),
-				liveKpi.stockRemaining() == null ? null : liveKpi.stockRemaining().doubleValue(),
-				PromValues.single(r.instant("redisUp")), PromValues.single(r.instant("exporterUp")),
+				liveKpi.stockRemaining() == null ? null : liveKpi.stockRemaining().doubleValue(), redis(r),
 				liveKpi.podsReady(), liveKpi.podsMax(), complete);
 		return new Instants(liveKpi, signals);
+	}
+
+	/** Redis 연결(판정 · KPI 칸 공통). 끊김 쿼리가 실패하면 UP으로 나온다 — 판정은 complete = false, 칸은 null로 따로 막는다 */
+	private static RedisConnection redis(PromBatch.Results r) {
+		return TrafficRules.redisConnection(!r.instant("redisDown").isEmpty(),
+				PromValues.single(r.instant("redisDownPoints")));
 	}
 
 	private static Long prepareSeconds(PromBatch.Results r) {
@@ -319,14 +325,15 @@ class TrafficEventCollector {
 		Double waiting = live ? PromValues.single(r.instant("waiting")) : null;
 		Double used = PromValues.single(r.instant("redisUsed"));
 		Double max = PromValues.single(r.instant("redisMax"));
-		Double redisUp = PromValues.single(r.instant("redisUp"));
-		Double exporterUp = PromValues.single(r.instant("exporterUp"));
-		Boolean up = redisUp == null && exporterUp == null ? null
-				: !((redisUp != null && redisUp == 0) || (exporterUp != null && exporterUp == 0));
 		Double ops = PromValues.single(r.instant("redisOps"));
 		Double clients = PromValues.single(r.instant("redisClients"));
+		// 연결은 판정과 같은 값(끊긴 지 1분 안 = 확인 중, 1분 이어짐 = 끊김, 정리 중은 연결됨). 끊기면 메모리 등 다른 Redis 지표가 사라지므로
+		// 끊김 · 확인 중도 Redis 지표가 있는 것으로 본다
+		RedisConnection redis = redis(r);
 		// 재시작 수는 kube-state-metrics 값이라 Redis 지표(redis-exporter)가 없어도 0으로 나온다 — 그때는 다른 Redis 칸처럼 비운다
-		boolean redisMetrics = used != null || max != null || ops != null || clients != null || redisUp != null;
+		boolean redisMetrics = used != null || max != null || ops != null || clients != null
+				|| redis != RedisConnection.UP;
+		RedisConnection connection = redisMetrics && r.allOk("redisDown", "redisDownPoints") ? redis : null;
 		return new Live(rps, errorRatio, p95, p95Issuance, p95Ticket,
 				PromValues.count(PromValues.single(r.instant("ready")), ksm && r.ok("ready")),
 				PromValues.toInt(PromValues.single(r.instant("hpaMax"))),
@@ -340,7 +347,7 @@ class TrafficEventCollector {
 				used == null || max == null || max <= 0 ? null : PromValues.round(used / max, 4), used, max,
 				PromValues.round(ops, 1),
 				redisMetrics ? PromValues.toLong(PromValues.single(r.instant("redisRestarts"))) : null,
-				PromValues.toLong(clients), up);
+				PromValues.toLong(clients), connection);
 	}
 
 	/**

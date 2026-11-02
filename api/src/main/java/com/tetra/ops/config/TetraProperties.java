@@ -81,13 +81,16 @@ public record TetraProperties(
 	 * 홈 모니터링 카드 · OPS-05 트래픽 모니터링(Prometheus HTTP API, 인증 없음). prometheusUrl이 비어 있어도 기동한다 —
 	 * 모니터링만 unavailable(stale). refreshTimeout = 갱신 1회(쿼리 전부) 전체 상한. 넘으면 실패로 보고 마지막 값을 stale로 준다.
 	 * cacheTtl은 Prometheus · DB 공통. AWS는 aws.cacheTtl.
+	 * grafanaUrl = OPS-05 'Grafana에서 자세히' 링크의 Grafana 주소(화면이 /d/<uid>를 붙인다). 기본은 application.yml
+	 * (pf-grafana 포트 포워딩 주소), 비우면 화면이 링크를 숨긴다.
 	 */
 	public record Monitoring(@DefaultValue("") String prometheusUrl,
 			@NotNull @DefaultValue("PT2S") Duration connectTimeout,
 			@NotNull @DefaultValue("PT3S") Duration readTimeout,
 			@NotNull @DefaultValue("PT15S") Duration cacheTtl,
 			@NotNull @DefaultValue("PT8S") Duration refreshTimeout,
-			@Valid @NotNull @DefaultValue MonitoringAws aws) {
+			@Valid @NotNull @DefaultValue MonitoringAws aws,
+			@DefaultValue("") String grafanaUrl) {
 
 		public boolean configured() {
 			return prometheusUrl != null && !prometheusUrl.isBlank();

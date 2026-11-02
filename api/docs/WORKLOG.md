@@ -341,3 +341,17 @@
 - 대상(운영자 알림을 만드는 Console 쓰기): 승인 POST /events/{id}/approve, 반려 POST /events/{id}/reject, 테넌트 등록 POST /tenants — 알림은 응답 전에 커밋되므로 그 화면에 머물러도 300ms 뒤 배지가 바뀐다
 - 테스트: client.test.ts(쓰기 성공 · 실패에 부름, GET · 네트워크 오류 · 취소 · 401은 안 부름), store/unreadCount.test.ts(쓰기 대상 · 제외 경로, 몰리면 한 번, 로그아웃 때 버림)
 - 파일: ../web/src/api/client.ts, ../web/src/api/client.test.ts, ../web/src/store/unreadCount.ts, ../web/src/store/unreadCount.test.ts, ../web/src/store/UnreadCountContext.tsx
+
+## 2026-11-02 KST — OPS-05 Grafana 링크 · Redis 끊김 1분 규칙(api · web)
+- 한 일(링크): 설정 tetra.monitoring.grafana-url(GRAFANA_URL, 기본 http://localhost:13000, 비우면 링크 숨김)을 GET /monitoring/platform 응답 grafanaUrl로 준다. web은 이벤트 구역 머리(상태 칩 왼쪽)에 "Grafana에서 자세히 ↗"(준비 ~ 진행 중 · 종료 실패 = 관제 tetra-event-infra 10초 갱신, 준비 − 5분 ~ now / 종료 = 지표 상세 tetra-event-graph, ~ hosting_end_at + 5분), 위험 판정이면 "장애 대응 ↗"(tetra-incident, now-15m ~ now), 플랫폼 카드 제목 줄에 "Grafana ↗"(tetra-platform). 준비 시각은 응답 prepareAt(TEST-LEAD 반영). 주소가 localhost면 포트 포워딩 툴팁. http(s)만 링크로
+- 한 일(Redis): 재료 redis_up · exporter up(목록 · 이벤트 하나)을 끊김 식 X(정리 중 = issuance-<id> 삭제 표시 · spec 0 제외, Grafana 이벤트 인프라 · 장애 대응과 같은 식)와 count_over_time((X)[1m:15s])로 바꿈. 판정 TrafficRules.redisConnection: 4점(1분 내내) 위험 "Redis 연결 끊김", 지금 끊김 · 1분 안 주의 "Redis 연결 확인 중"(주의 중 가장 먼저). KPI Live.redisUp(Boolean) → redisConnection(UP · CHECKING · DOWN), warn 키 redisUp → redisConnection, Redis 칸 '연결 확인 중' · '연결 끊김'
+- 확인: Prometheus 19090 — 이벤트 14 종료(10-29 15:05~15:45) 새 식 비어 있음(옛 식은 15:07:00 exporter up 0), redis_up × 0 대조 14:32:15 확인 중 → 14:33:00 끊김(+45초)
+- 테스트: TrafficRulesTest(정리 중 exporter 0 → 정상 · 1분 안 → 주의 · 1분 이어짐 → 위험 · 4점 경계), TrafficQueriesTest(식 문자열), TrafficMonitoringApiTest(grafanaUrl · 확인 중 → 끊김 · 상태 요약), trafficMonitoringView.test.ts(링크 상태별 · 주소 · 툴팁 · Redis 칸)
+- 파일: src/main/java/com/tetra/ops/{config/TetraProperties, monitoring/TrafficQueries, monitoring/TrafficRules, monitoring/TrafficPlatformCollector, monitoring/TrafficEventCollector, monitoring/TrafficEventResponse, monitoring/TrafficPlatformResponse, monitoring/TrafficMonitoringService}.java, src/main/resources/application.yml, .env.example, 테스트 위 목록 + MonitoringServiceTest · PrometheusClientTest · TrafficAwsCollectorTest(설정 인자), ../docs/ops05/OPS-05_명세.md, ../web/src/api/types.ts, ../web/src/pages/monitoring/{GrafanaLinks.tsx(신규), EventSection.tsx, PlatformCards.tsx, TrafficMonitoringPage.tsx, trafficMonitoringView.ts, trafficMonitoringView.test.ts}
+- 남은 것: 종료 실패는 판정(level)이 없어 장애 대응 링크가 붙지 않는다. Terraform(infra-aws 35-web)에 GRAFANA_URL은 넣지 않음(기본값 사용)
+
+## 2026-11-02 KST — OPS-05 Grafana 링크: 준비 실패 · 종료 실패 규칙(web)
+- 한 일: 준비 실패에도 관제 링크(tetra-event-infra 10초 갱신, 준비 − 5분 ~ now). 종료 실패와 함께 관제만 — 장애 대응은 준비 ~ 진행 중에서만 붙인다. 응답에 준비 시각이 없거나 날짜가 아니면 링크 없음. 위 항목의 '남은 것'(종료 실패 장애 대응)은 붙이지 않기로 결정(11-02)
+- 확인: kpi.live.redisUp을 쓰던 곳은 이 저장소 api monitoring · web monitoring뿐(모두 바꿈), ../portal은 Console 응답을 쓰지 않음(자기 Prometheus 쿼리 · record)
+- 테스트: trafficMonitoringView.test.ts(준비 실패 · 종료 실패 관제만, 위험이어도 장애 대응 없음, 준비 시각 없음 · 날짜 아님)
+- 파일: ../web/src/pages/monitoring/trafficMonitoringView.ts, ../web/src/pages/monitoring/trafficMonitoringView.test.ts, ../docs/ops05/OPS-05_명세.md(로컬)

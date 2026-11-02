@@ -3,7 +3,8 @@ import { Box, Card, Stack, Typography } from '@mui/material';
 import SectionTitle from '@/components/common/SectionTitle';
 import StatusChip from '@/components/common/StatusChip';
 import { font, line, text } from '@/theme/theme';
-import { EMPTY, type AddonsView, type UpcomingView } from './trafficMonitoringView';
+import GrafanaLinks from './GrafanaLinks';
+import { EMPTY, grafanaHint, platformGrafanaLink, type AddonsView, type UpcomingView } from './trafficMonitoringView';
 
 function Row({ label, children, delayed }: { label: string; children: ReactNode; delayed?: boolean }) {
   return (
@@ -20,11 +21,15 @@ function Row({ label, children, delayed }: { label: string; children: ReactNode;
   );
 }
 
-/** B-2 플랫폼 — 애드온(평소 "정상 6/6" 한 줄, 문제 있는 것만 이름 + Ready 수) · RDS · Portal · Console */
-export function PlatformCard({ addons, rds, services, awsDelayed }: { addons: AddonsView; rds: string; services: { key: string; text: string }[]; awsDelayed: boolean }) {
+/**
+ * B-2 플랫폼 — 애드온(평소 "정상 6/6" 한 줄, 문제 있는 것만 이름 + Ready 수) · RDS · Portal · Console.
+ * 제목 줄 오른쪽에 Grafana 플랫폼 대시보드(새 탭). grafana는 grafanaBase로 거른 주소(null이면 링크 없음)
+ */
+export function PlatformCard({ addons, rds, services, awsDelayed, grafana }: { addons: AddonsView; rds: string; services: { key: string; text: string }[]; awsDelayed: boolean; grafana: string | null }) {
+  const link = platformGrafanaLink(grafana);
   return (
     <Card sx={{ p: 3 }}>
-      <SectionTitle>플랫폼</SectionTitle>
+      <SectionTitle action={link && <GrafanaLinks links={[link]} hint={grafanaHint(grafana)} />}>플랫폼</SectionTitle>
       <Row label="애드온">
         <Typography variant="body2">
           <Box component="span" sx={{ fontWeight: font.weight.semibold }}>

@@ -117,8 +117,8 @@ class TrafficPlatformCollector {
 			.instant("cursorChanges", TrafficQueries.CURSOR_CHANGES_BY_EVENT, now)
 			.instant("waiting", TrafficQueries.WAITING_BY_EVENT, now)
 			.instant("stock", TrafficQueries.STOCK_BY_EVENT, now)
-			.instant("redisUp", TrafficQueries.REDIS_UP_BY_EVENT, now)
-			.instant("exporterUp", TrafficQueries.REDIS_EXPORTER_UP_BY_EVENT, now)
+			.instant("redisDown", TrafficQueries.REDIS_DOWN_BY_EVENT, now)
+			.instant("redisDownPoints", TrafficQueries.REDIS_DOWN_POINTS_BY_EVENT, now)
 			.instant("apiReady", TrafficQueries.API_READY_BY_EVENT, now)
 			.instant("hpaMax", TrafficQueries.HPA_MAX_BY_HPA, now)
 			.execute();
@@ -134,14 +134,14 @@ class TrafficPlatformCollector {
 		}
 		Double pending = PromValues.single(r.instant("pending"));
 		boolean addonsOk = r.allOk("addonAvailable", "addonDesired", "stsReady", "stsDesired");
-		boolean eventsOk = r.allOk("nodeLabels", "rps", "errorRps", "p95", "cursorChanges", "waiting", "stock", "redisUp",
-				"exporterUp", "apiReady", "hpaMax");
+		boolean eventsOk = r.allOk("nodeLabels", "rps", "errorRps", "p95", "cursorChanges", "waiting", "stock",
+				"redisDown", "redisDownPoints", "apiReady", "hpaMax");
 
 		return new Metrics(now, ksm, PromValues.round(PromValues.single(r.instant("cpu")), 4),
 				PromValues.round(PromValues.single(r.instant("memory")), 4), history(r, grid), readyByPool, nodes,
 				addonsOk ? addons(r) : null, ksm && r.ok("pending") ? PromValues.count(pending, true) : null, events(r),
-				new EventSignals(null, null, null, null, null, null, null, null,
-						ksm && r.ok("apiReady") ? 0 : null, null, eventsOk));
+				new EventSignals(null, null, null, null, null, null, null, ksm && r.ok("apiReady") ? 0 : null, null,
+						eventsOk));
 	}
 
 	private static List<HistoryPoint> history(PromBatch.Results r, Grid grid) {
@@ -212,8 +212,8 @@ class TrafficPlatformCollector {
 		Map<Long, Double> cursor = byEvent(r.instant("cursorChanges"), "event_id");
 		Map<Long, Double> waiting = byEvent(r.instant("waiting"), "event_id");
 		Map<Long, Double> stock = byEvent(r.instant("stock"), "event_id");
-		Map<Long, Double> redisUp = byEvent(r.instant("redisUp"), "event_id");
-		Map<Long, Double> exporterUp = byEvent(r.instant("exporterUp"), "event_id");
+		Map<Long, Double> redisDown = byEvent(r.instant("redisDown"), "event_id");
+		Map<Long, Double> redisDownPoints = byEvent(r.instant("redisDownPoints"), "event_id");
 		Map<Long, Double> apiReady = byEvent(r.instant("apiReady"), "label_tetra_io_event_id");
 		Map<Long, Double> hpaMax = new HashMap<>();
 		for (Sample s : r.instant("hpaMax")) {
@@ -226,18 +226,18 @@ class TrafficPlatformCollector {
 		}
 		boolean ksm = !r.instant("nodeLabels").isEmpty();
 		boolean errorOk = r.ok("errorRps");
-		boolean complete = r.allOk("nodeLabels", "rps", "errorRps", "p95", "cursorChanges", "waiting", "stock", "redisUp",
-				"exporterUp", "apiReady", "hpaMax");
+		boolean complete = r.allOk("nodeLabels", "rps", "errorRps", "p95", "cursorChanges", "waiting", "stock",
+				"redisDown", "redisDownPoints", "apiReady", "hpaMax");
 		boolean readyZero = ksm && r.ok("apiReady");
 		Map<Long, EventSignals> events = new HashMap<>();
-		for (Map<Long, Double> m : List.of(rps, errorRps, p95, cursor, waiting, stock, redisUp, exporterUp, apiReady,
-				hpaMax)) {
+		for (Map<Long, Double> m : List.of(rps, errorRps, p95, cursor, waiting, stock, redisDown, redisDownPoints,
+				apiReady, hpaMax)) {
 			for (Long id : m.keySet()) {
 				events.computeIfAbsent(id,
 						k -> new EventSignals(errorOk ? rps.get(k) : null, errorRps.get(k), p95.get(k), cursor.get(k),
-								waiting.get(k) == null ? null : Math.max(0, waiting.get(k)), stock.get(k), redisUp.get(k),
-								exporterUp.get(k), PromValues.count(apiReady.get(k), readyZero),
-								PromValues.toInt(hpaMax.get(k)), complete));
+								waiting.get(k) == null ? null : Math.max(0, waiting.get(k)), stock.get(k),
+								TrafficRules.redisConnection(redisDown.containsKey(k), redisDownPoints.get(k)),
+								PromValues.count(apiReady.get(k), readyZero), PromValues.toInt(hpaMax.get(k)), complete));
 			}
 		}
 		return events;

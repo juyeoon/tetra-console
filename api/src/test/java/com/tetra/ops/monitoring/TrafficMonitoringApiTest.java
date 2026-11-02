@@ -252,6 +252,8 @@ class TrafficMonitoringApiTest extends IntegrationTest {
 			.andExpect(jsonPath("$.prometheus.stale").value(false))
 			.andExpect(jsonPath("$.prometheus.asOf").isString())
 			.andExpect(jsonPath("$.aws.stale").value(false))
+			// 'Grafana에서 자세히' 링크 주소 — GRAFANA_URL이 없으면 pf-grafana 포트 포워딩 주소
+			.andExpect(jsonPath("$.grafanaUrl").value("http://localhost:13000"))
 			// A. 상태 요약
 			.andExpect(jsonPath("$.summary[*].area").value(contains("CLUSTER", "EVENT", "AUTOMATION", "PLATFORM")))
 			.andExpect(jsonPath("$.summary[0].level").value("DANGER"))
@@ -570,8 +572,7 @@ class TrafficMonitoringApiTest extends IntegrationTest {
 		both(q.redisMemoryMax(), "1500000000");
 		both(q.redisOps(), "42000");
 		both(q.redisClients(), "96");
-		both(q.redisUp(), "1");
-		both(q.redisExporterUp(), "1");
+		// Redis 연결됨 = 끊김(redisDown · redisDownPoints) 시리즈 없음
 		both(q.redisRestarts(), "0");
 		both(q.prepareSeconds(), "200.4");
 	}
@@ -617,7 +618,7 @@ class TrafficMonitoringApiTest extends IntegrationTest {
 			.andExpect(jsonPath("$.kpi.live.stockRemaining").value(3100))
 			.andExpect(jsonPath("$.kpi.live.stockTotal").value(10000))
 			.andExpect(jsonPath("$.kpi.live.redisMemoryRatio").value(0.38))
-			.andExpect(jsonPath("$.kpi.live.redisUp").value(true))
+			.andExpect(jsonPath("$.kpi.live.redisConnection").value("UP"))
 			.andExpect(jsonPath("$.kpi.live.redisRestarts").value(0))
 			.andExpect(jsonPath("$.kpi.summary").value(nullValue()))
 			// TEST-LEAD: 서비스 값 80분 → 30초
@@ -641,6 +642,45 @@ class TrafficMonitoringApiTest extends IntegrationTest {
 			.andExpect(jsonPath("$.charts.rds.cpu[0][1]").value(48.0));
 		assertThat(prometheus.requests()).extracting(FakePrometheus.Request::query)
 			.doesNotContain(TrafficQueries.forEvent(B, 7106).rps());
+	}
+
+	@Test
+	void redisDownWithinOneMinuteIsCheckingThenDanger() throws Exception {
+		respondLiveEvent();
+		TrafficQueries.EventQueries q = TrafficQueries.forEvent(A, 7101);
+		// 지금 끊김, 1분 안(15초 점 2개) → 주의(5xx 1.2% 주의보다 먼저) · Redis 칸 '확인 중'
+		prometheus.respond(q.redisDown(), vector("0")).respond(q.redisDownPoints(), vector("2"));
+		mvc.perform(get("/api/ops/monitoring/events/7101").cookie(operatorCookie()))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.kpi.level").value("WARN"))
+			.andExpect(jsonPath("$.kpi.reason").value("Redis 연결 확인 중"))
+			.andExpect(jsonPath("$.kpi.warn").value(contains("errorRatio", "redisConnection")))
+			.andExpect(jsonPath("$.kpi.live.redisConnection").value("CHECKING"));
+		// 1분 내내(4점) → 위험 · '끊김'
+		prometheus.respond(q.redisDownPoints(), vector("4"));
+		mvc.perform(get("/api/ops/monitoring/events/7101").cookie(operatorCookie()))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.kpi.level").value("DANGER"))
+			.andExpect(jsonPath("$.kpi.reason").value("Redis 연결 끊김"))
+			.andExpect(jsonPath("$.kpi.live.redisConnection").value("DOWN"));
+	}
+
+	@Test
+	void redisDownInStatusSummary() throws Exception {
+		respondPlatform();
+		String down = "[{\"metric\":{\"tenant_id\":\"%s\",\"event_id\":\"7102\"},\"value\":[1,\"%s\"]}]";
+		prometheus.respond(TrafficQueries.REDIS_DOWN_BY_EVENT, down.formatted(B, "0"))
+			.respond(TrafficQueries.REDIS_DOWN_POINTS_BY_EVENT, down.formatted(B, "4"));
+		mvc.perform(get("/api/ops/monitoring/platform").cookie(operatorCookie()))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.summary[1].level").value("DANGER"))
+			.andExpect(jsonPath("$.summary[1].reason").value("7102번 Redis 연결 끊김"));
+		// 1분 안: 7101(5xx 주의)과 같은 주의 — 시작이 늦은 7102가 먼저
+		prometheus.respond(TrafficQueries.REDIS_DOWN_POINTS_BY_EVENT, down.formatted(B, "1"));
+		mvc.perform(get("/api/ops/monitoring/platform").cookie(operatorCookie()))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.summary[1].level").value("WARN"))
+			.andExpect(jsonPath("$.summary[1].reason").value("7102번 Redis 연결 확인 중"));
 	}
 
 	@Test

@@ -13,6 +13,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
  */
 public record TrafficPlatformResponse(MonitoringSource prometheus,
 		@Schema(description = "AWS(ALB · RDS · ECS · DLQ). 60초 캐시") MonitoringSource aws,
+		@Schema(description = "'Grafana에서 자세히' 링크의 Grafana 주소(GRAFANA_URL, 기본 http://localhost:13000). 비었으면 null — 링크 숨김") String grafanaUrl,
 		@Schema(description = "4칸 고정 순서: CLUSTER · EVENT · AUTOMATION · PLATFORM") List<StatusCell> summary,
 		Nodes nodes, Platform platform,
 		@Schema(description = "SCHEDULED, 7일 안에 시작, 시작 순 최대 5건") List<Upcoming> upcoming,

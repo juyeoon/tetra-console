@@ -96,10 +96,13 @@ final class TrafficQueries {
 
 	static final String STOCK_BY_EVENT = "max by (event_id) (tetra_event_stock_remaining)";
 
-	static final String REDIS_UP_BY_EVENT = "min by (event_id) (redis_up)";
+	/**
+	 * Redis 끊김(이벤트 정리 중 제외) — 지금 끊긴 (tenant_id, event_id)만 남는다(값 0). 식은 {@link #redisDown}
+	 */
+	static final String REDIS_DOWN_BY_EVENT = redisDown("!=\"\"", "=~\"issuance-[0-9]+\"");
 
-	/** redis-exporter 스크레이프 상태(PodMonitor relabel로 event_id) */
-	static final String REDIS_EXPORTER_UP_BY_EVENT = "min by (event_id) (up{job=~\".*redis.*\"})";
+	/** 최근 1분 동안 Redis가 끊긴 15초 점 수(1~4). 끊긴 점이 없으면 시리즈 없음 */
+	static final String REDIS_DOWN_POINTS_BY_EVENT = downPoints(REDIS_DOWN_BY_EVENT);
 
 	static final String API_READY_BY_EVENT = """
 			sum by (label_tetra_io_event_id) (kube_pod_labels{label_tetra_io_component="api"} \
@@ -133,6 +136,33 @@ final class TrafficQueries {
 		String w = promDuration(window);
 		String born = "(" + bucket + " unless " + bucket + " offset " + w + ")";
 		return "(increase(" + bucket + "[" + w + "]) unless " + born + ") or " + born;
+	}
+
+	/**
+	 * Redis 끊김: redis_up 또는 redis-exporter up(PodMonitor relabel로 tenant_id · event_id)이 0인 (tenant_id, event_id).
+	 * 이벤트 정리 중(그 이벤트의 issuance-<id> Deployment에 삭제 표시가 있거나 spec 0)은 뺀다 — 종료(WF4) 때 exporter가 먼저 사라지며
+	 * 낸 up 0 한 점(이벤트 14, 2026-10-29 15:06:52)이 위험으로 보이던 것. Grafana 이벤트 인프라 · 장애 대응(infra-k8s
+	 * event_common REDIS_DOWN)과 같은 식이다(2026-11-02).
+	 * @param event event_id 비교(목록 != "", 이벤트 하나 = "<id>")
+	 * @param deployment issuance Deployment 비교(목록 =~ "issuance-[0-9]+", 이벤트 하나 = "issuance-<id>")
+	 */
+	static String redisDown(String event, String deployment) {
+		return """
+				((min by (tenant_id, event_id) (redis_up{event_id%1$s}) == 0) \
+				or (min by (tenant_id, event_id) (up{job=~".*redis.*",event_id%1$s}) == 0)) \
+				unless on(tenant_id, event_id) label_replace(label_replace(\
+				kube_deployment_deletion_timestamp{deployment%2$s} or kube_deployment_spec_replicas{deployment%2$s} == 0, \
+				"event_id", "$1", "deployment", "issuance-([0-9]+)"), "tenant_id", "$1", "namespace", "tenant-(.*)")"""
+			.formatted(event, deployment);
+	}
+
+	/**
+	 * 최근 {@link TrafficRules#REDIS_DOWN_FOR}(1분) 동안 끊긴 점 수 — {@link #SUBQUERY_STEP}(15초) 간격 subquery.
+	 * 범위는 왼쪽이 열려 있어(Prometheus 3) 1분 창의 점은 최대 4개
+	 */
+	static String downPoints(String redisDown) {
+		return "count_over_time((" + redisDown + ")[" + promDuration(TrafficRules.REDIS_DOWN_FOR) + ":" + SUBQUERY_STEP
+				+ "])";
 	}
 
 	/** 그래프 창 = max(1분, step) — p95 · 입장 · 입장 허용. step이 1분보다 크면 점 사이 요청 · 변화를 건너뛰지 않게 넓힌다 */
@@ -324,12 +354,14 @@ final class TrafficQueries {
 			return "max(redis_connected_clients{event_id=\"%s\"})".formatted(e);
 		}
 
-		String redisUp() {
-			return "min(redis_up{event_id=\"%s\"})".formatted(e);
+		/** Redis 끊김(이벤트 정리 중 제외) — 지금 끊겼으면 시리즈 하나({@link TrafficQueries#redisDown}) */
+		String redisDown() {
+			return TrafficQueries.redisDown("=\"%s\"".formatted(e), "=\"issuance-%s\"".formatted(e));
 		}
 
-		String redisExporterUp() {
-			return "min(up{job=~\".*redis.*\",event_id=\"%s\"})".formatted(e);
+		/** 최근 1분 동안 Redis가 끊긴 15초 점 수(1~4). 끊긴 점이 없으면 시리즈 없음 */
+		String redisDownPoints() {
+			return downPoints(redisDown());
 		}
 
 		String redisRestarts() {

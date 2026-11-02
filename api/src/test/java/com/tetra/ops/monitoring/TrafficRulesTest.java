@@ -15,6 +15,7 @@ import com.tetra.ops.common.time.Kst;
 import com.tetra.ops.domain.EventStatus;
 import com.tetra.ops.domain.HostingStatus;
 import com.tetra.ops.event.EntryOpen;
+import com.tetra.ops.monitoring.TrafficEventResponse.RedisConnection;
 import com.tetra.ops.monitoring.TrafficRules.AddonMember;
 import com.tetra.ops.monitoring.TrafficRules.EventSignals;
 import com.tetra.ops.monitoring.TrafficRules.Judgment;
@@ -23,7 +24,12 @@ import com.tetra.ops.monitoring.TrafficRules.Judgment;
 class TrafficRulesTest {
 
 	private static EventSignals signals(Double rps, Double errorRps, Double p95) {
-		return new EventSignals(rps, errorRps, p95, 3.0, 100.0, 50.0, 1.0, 1.0, 6, 12);
+		return new EventSignals(rps, errorRps, p95, 3.0, 100.0, 50.0, RedisConnection.UP, 6, 12);
+	}
+
+	/** 다른 재료는 정상, Redis 연결만 redis */
+	private static EventSignals redis(RedisConnection redis) {
+		return new EventSignals(1000.0, 0.0, 0.1, 3.0, 100.0, 50.0, redis, 6, 12);
 	}
 
 	private static Judgment event(EventSignals s) {
@@ -50,39 +56,84 @@ class TrafficRulesTest {
 	@Test
 	void incompleteSignalsAreUnknownUnlessDangerVisible() {
 		// 쿼리 일부 오류: 주의 · 정상은 판단하지 않고 UNKNOWN
-		EventSignals warnButIncomplete = new EventSignals(1000.0, 5.0, 0.18, 3.0, 100.0, 50.0, 1.0, 1.0, 6, 12, false);
+		EventSignals warnButIncomplete = new EventSignals(1000.0, 5.0, 0.18, 3.0, 100.0, 50.0, RedisConnection.UP, 6, 12,
+				false);
 		assertThat(event(warnButIncomplete)).isEqualTo(Judgment.NO_DATA);
 		assertThat(TrafficRules.preEntry(warnButIncomplete)).isEqualTo(Judgment.NO_DATA);
 		// 보이는 위험은 그대로 위험
-		EventSignals dangerIncomplete = new EventSignals(1000.0, 30.0, 0.18, 3.0, 100.0, 50.0, null, null, 6, 12, false);
+		EventSignals dangerIncomplete = new EventSignals(1000.0, 30.0, 0.18, 3.0, 100.0, 50.0, null, 6, 12, false);
 		assertThat(event(dangerIncomplete).level()).isEqualTo(MonitoringLevel.DANGER);
-		EventSignals redisDownIncomplete = new EventSignals(null, null, null, null, null, null, 0.0, null, null, null, false);
+		EventSignals redisDownIncomplete = new EventSignals(null, null, null, null, null, null, RedisConnection.DOWN,
+				null, null, false);
 		assertThat(TrafficRules.preEntry(redisDownIncomplete).level()).isEqualTo(MonitoringLevel.DANGER);
+		// Redis 확인 중(주의)은 다른 주의처럼 UNKNOWN
+		EventSignals redisCheckingIncomplete = new EventSignals(null, null, null, null, null, null,
+				RedisConnection.CHECKING, null, null, false);
+		assertThat(TrafficRules.preEntry(redisCheckingIncomplete)).isEqualTo(Judgment.NO_DATA);
 	}
 
 	@Test
-	void redisDownCursorStallAndPodsAtMax() {
-		EventSignals redisDown = new EventSignals(1000.0, 0.0, 0.1, 3.0, 100.0, 50.0, 0.0, 1.0, 6, 12);
-		assertThat(event(redisDown)).isEqualTo(new Judgment(MonitoringLevel.DANGER, "Redis 연결 끊김"));
-		EventSignals exporterDown = new EventSignals(1000.0, 0.0, 0.1, 3.0, 100.0, 50.0, null, 0.0, 6, 12);
-		assertThat(event(exporterDown).level()).isEqualTo(MonitoringLevel.DANGER);
+	void redisConnectionByDownPoints() {
+		// 정리 중(issuance Deployment 삭제 표시 · spec 0)은 쿼리에서 빠져 끊긴 점이 없다
+		assertThat(TrafficRules.redisConnection(false, null)).isEqualTo(RedisConnection.UP);
+		// 지금 끊김, 1분 안(15초 점 1~3개). subquery 점이 아직 없어도 지금 끊겼으면 확인 중
+		assertThat(TrafficRules.redisConnection(true, null)).isEqualTo(RedisConnection.CHECKING);
+		assertThat(TrafficRules.redisConnection(true, 1.0)).isEqualTo(RedisConnection.CHECKING);
+		assertThat(TrafficRules.redisConnection(true, 3.0)).isEqualTo(RedisConnection.CHECKING);
+		// 1분 내내(4점) 끊김. 막 다시 붙었어도 지난 1분이 4점이면 끊김(Grafana 화면 값 count_over_time >= 4와 같다)
+		assertThat(TrafficRules.redisConnection(true, 4.0)).isEqualTo(RedisConnection.DOWN);
+		assertThat(TrafficRules.redisConnection(false, 4.0)).isEqualTo(RedisConnection.DOWN);
+		// 지난 1분에 끊긴 점이 있었지만 지금은 붙음
+		assertThat(TrafficRules.redisConnection(false, 2.0)).isEqualTo(RedisConnection.UP);
+	}
 
-		EventSignals stalled = new EventSignals(1000.0, 0.0, 0.1, 0.0, 100.0, 50.0, 1.0, 1.0, 6, 12);
+	@Test
+	void exporterBlipWhileCleaningUpIsOk() {
+		// 이벤트 14 종료(2026-10-29 15:07:00): exporter up 0 한 점은 Deployment 삭제 표시(15:06:34) 뒤라 끊김 쿼리가 비어 있다
+		EventSignals cleaning = redis(TrafficRules.redisConnection(false, null));
+		assertThat(event(cleaning)).isEqualTo(new Judgment(MonitoringLevel.OK, "정상"));
+		assertThat(TrafficRules.preEntry(cleaning)).isEqualTo(new Judgment(MonitoringLevel.OK, "정상"));
+	}
+
+	@Test
+	void redisDownWithinOneMinuteIsWarn() {
+		Judgment checking = new Judgment(MonitoringLevel.WARN, "Redis 연결 확인 중");
+		assertThat(event(redis(RedisConnection.CHECKING))).isEqualTo(checking);
+		assertThat(TrafficRules.preEntry(redis(RedisConnection.CHECKING))).isEqualTo(checking);
+		// 주의 중에서는 Redis가 먼저, 위험은 그대로 위험
+		assertThat(event(new EventSignals(1000.0, 10.0, 0.6, 3.0, 100.0, 50.0, RedisConnection.CHECKING, 12, 12)))
+			.isEqualTo(checking);
+		assertThat(event(new EventSignals(1000.0, 30.0, 0.1, 3.0, 100.0, 50.0, RedisConnection.CHECKING, 6, 12)))
+			.isEqualTo(new Judgment(MonitoringLevel.DANGER, "5xx 3.0%"));
+	}
+
+	@Test
+	void redisDownForOneMinuteIsDanger() {
+		Judgment down = new Judgment(MonitoringLevel.DANGER, "Redis 연결 끊김");
+		assertThat(event(redis(RedisConnection.DOWN))).isEqualTo(down);
+		assertThat(TrafficRules.preEntry(redis(RedisConnection.DOWN))).isEqualTo(down);
+		// 다른 위험보다 먼저
+		assertThat(event(new EventSignals(1000.0, 30.0, 2.3, 0.0, 100.0, 50.0, RedisConnection.DOWN, 6, 12)))
+			.isEqualTo(down);
+	}
+
+	@Test
+	void cursorStallAndPodsAtMax() {
+		EventSignals stalled = new EventSignals(1000.0, 0.0, 0.1, 0.0, 100.0, 50.0, RedisConnection.UP, 6, 12);
 		assertThat(event(stalled)).isEqualTo(new Judgment(MonitoringLevel.DANGER, "커서 1분 정지"));
 		// 시작 전에는 커서가 안 움직이는 게 정상, 대기 · 재고가 없으면 정지가 아님
 		// (커서가 번호표 끝보다 앞서면 대기 0 — 테스트 13: 번호표 끝 21, 커서 6,300)
 		assertThat(TrafficRules.event(stalled, false).level()).isEqualTo(MonitoringLevel.OK);
-		assertThat(event(new EventSignals(1000.0, 0.0, 0.1, 0.0, 0.0, 50.0, 1.0, 1.0, 6, 12)).level())
+		assertThat(event(new EventSignals(1000.0, 0.0, 0.1, 0.0, 0.0, 50.0, RedisConnection.UP, 6, 12)).level())
 			.isEqualTo(MonitoringLevel.OK);
-		assertThat(event(new EventSignals(1000.0, 0.0, 0.1, 0.0, 100.0, 0.0, 1.0, 1.0, 6, 12)).level())
+		assertThat(event(new EventSignals(1000.0, 0.0, 0.1, 0.0, 100.0, 0.0, RedisConnection.UP, 6, 12)).level())
 			.isEqualTo(MonitoringLevel.OK);
 
-		EventSignals atMax = new EventSignals(1000.0, 0.0, 0.1, 3.0, 100.0, 50.0, 1.0, 1.0, 12, 12);
+		EventSignals atMax = new EventSignals(1000.0, 0.0, 0.1, 3.0, 100.0, 50.0, RedisConnection.UP, 12, 12);
 		assertThat(event(atMax)).isEqualTo(new Judgment(MonitoringLevel.WARN, "Pod 최대 12/12"));
 		// 입장 직전은 Redis · Pod만
-		EventSignals slowBeforeEntry = new EventSignals(null, null, 3.0, null, null, 50.0, 1.0, 1.0, 6, 12);
+		EventSignals slowBeforeEntry = new EventSignals(null, null, 3.0, null, null, 50.0, RedisConnection.UP, 6, 12);
 		assertThat(TrafficRules.preEntry(slowBeforeEntry).level()).isEqualTo(MonitoringLevel.OK);
-		assertThat(TrafficRules.preEntry(redisDown).level()).isEqualTo(MonitoringLevel.DANGER);
 	}
 
 	@Test
@@ -305,10 +356,13 @@ class TrafficRulesTest {
 
 	@Test
 	void kpiWarnings() {
-		assertThat(TrafficRules.kpiWarnings(0.012, 0.18, 8, 12, 0.38, 0.0, true)).containsExactly("errorRatio");
-		assertThat(TrafficRules.kpiWarnings(0.009, 0.18, 8, 12, 0.38, 0.0, true)).isEmpty();
-		assertThat(TrafficRules.kpiWarnings(0.0, 0.6, 12, 12, 0.85, 1.0, false))
-			.containsExactly("p95", "pods", "redisMemory", "redisRestarts", "redisUp");
+		assertThat(TrafficRules.kpiWarnings(0.012, 0.18, 8, 12, 0.38, 0.0, RedisConnection.UP))
+			.containsExactly("errorRatio");
+		assertThat(TrafficRules.kpiWarnings(0.009, 0.18, 8, 12, 0.38, 0.0, RedisConnection.UP)).isEmpty();
+		assertThat(TrafficRules.kpiWarnings(0.0, 0.6, 12, 12, 0.85, 1.0, RedisConnection.DOWN))
+			.containsExactly("p95", "pods", "redisMemory", "redisRestarts", "redisConnection");
+		assertThat(TrafficRules.kpiWarnings(0.0, 0.18, 8, 12, 0.38, 0.0, RedisConnection.CHECKING))
+			.containsExactly("redisConnection");
 		assertThat(TrafficRules.kpiWarnings(null, null, null, null, null, null, null)).isEmpty();
 	}
 
