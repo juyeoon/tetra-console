@@ -23,7 +23,7 @@ import SearchRoundedIcon from '@mui/icons-material/SearchRounded';
 import StateMessage from '@/components/common/StateMessage';
 import StatusChip from '@/components/common/StatusChip';
 import type { NotificationItem, NotificationPage } from '@/api/types';
-import { color, font, ink, line, onNavy, shadow, size, text, tones, type } from '@/theme/theme';
+import { color, font, ink, line, shadow, size, text, tones, type } from '@/theme/theme';
 import { formatDate, formatTime } from '@/utils/datetime';
 import { priorityMeta, priorityOf } from '@/utils/status';
 import {
@@ -63,7 +63,7 @@ interface Props {
   readingAll: boolean;
 }
 
-/** 우선순위 세그먼트 한 칸 — 선택이면 남색 */
+/** 우선순위 세그먼트 한 칸 — 선택이면 진한 바탕(900) + 흰 글자 */
 const SEGMENT_SX = {
   gap: 0.75,
   height: size.controlSm,
@@ -79,7 +79,7 @@ const SEGMENT_SX = {
   '&.Mui-focusVisible': { boxShadow: shadow.focus, zIndex: 1 },
 } as const;
 
-/** 분류 드롭다운 — '분류: 전체 ▾'. 전체가 아니면 테두리 · 글자를 포인트 색으로. 메뉴는 이름 + 건수, 0건은 흐리게(고를 수는 있다) */
+/** 분류 드롭다운 — '분류: 전체 ▾'. 전체가 아니면 테두리 · 글자를 진한 색(900)으로. 메뉴는 이름 + 건수, 0건은 흐리게(고를 수는 있다) */
 function ChipMenu({ value, items, onChange }: { value: ChipFilter; items: ChipMenuItem[]; onChange: (chip: ChipFilter) => void }) {
   const [anchor, setAnchor] = useState<HTMLElement | null>(null);
   const menuId = useId();
@@ -98,7 +98,7 @@ function ChipMenu({ value, items, onChange }: { value: ChipFilter; items: ChipMe
         sx={{
           height: size.controlSm,
           whiteSpace: 'nowrap',
-          ...(active && { borderColor: color.peri, color: color.periDeep, '&:hover': { borderColor: color.peri, bgcolor: color.periTint } }),
+          ...(active && { borderColor: color.navy, color: color.navy, '&:hover': { borderColor: color.navy, bgcolor: color.card } }),
         }}
       >
         {chipButtonLabel(value)}
@@ -125,7 +125,8 @@ function ChipMenu({ value, items, onChange }: { value: ChipFilter; items: ChipMe
             sx={{ justifyContent: 'space-between', gap: 3, color: c.dim ? text.tertiary : text.primary }}
           >
             {c.label}
-            <Box component="span" sx={{ ...type.caption, fontWeight: font.weight.semibold, color: c.dim ? text.disabled : text.tertiary }}>
+            {/* 선택 항목 바탕(900 8%)은 100보다 진해 흐린 글자는 secondary */}
+            <Box component="span" sx={{ ...type.caption, fontWeight: font.weight.semibold, color: c.dim ? text.disabled : c.key === value ? text.secondary : text.tertiary }}>
               {c.count}
             </Box>
           </MenuItem>
@@ -144,6 +145,8 @@ const ROW_SX = {
   px: 1.5,
   py: 1.75,
   color: 'inherit',
+  // 경로 없는 항목은 <button> — 브라우저 기본 버튼 글꼴 대신 본문 글꼴을 물려받게(안쪽 칩이 글꼴을 따로 정하지 않는다)
+  font: 'inherit',
   '&:hover': { bgcolor: color.card },
 } as const;
 
@@ -306,7 +309,7 @@ export default function NotificationCenter({ data, filters, page, loading, onFil
               {p.label}
               <Box
                 component="span"
-                sx={{ minWidth: 20, px: 0.5, bgcolor: p.key === filters.priority ? onNavy.active : color.card, fontWeight: font.weight.bold }}
+                sx={{ minWidth: 20, px: 0.5, fontWeight: font.weight.bold }}
               >
                 {data.counts.priority[p.key]}
               </Box>

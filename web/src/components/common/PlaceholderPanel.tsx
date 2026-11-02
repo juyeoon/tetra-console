@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { Box, Stack, Typography } from '@mui/material';
-import { color, line, radius, size, text } from '@/theme/theme';
+import { color, line, mono, radius, size, text } from '@/theme/theme';
 import CheckerMark from './CheckerMark';
 
 interface PlaceholderPanelProps {
@@ -27,9 +27,9 @@ export default function PlaceholderPanel({ icon, title, lines, minHeight = 'calc
         border: `1px dashed ${line.strong}`,
       }}
     >
-      <CheckerMark corner="top-right" cell={8} base={color.periLine} tone={color.periTint} sx={{ position: 'absolute', top: 0, right: 0 }} />
+      <CheckerMark corner="top-right" cell={8} base={mono[300]} tone={mono[200]} sx={{ position: 'absolute', top: 0, right: 0 }} />
       <Stack alignItems="center" spacing={1} sx={{ maxWidth: size.contentText, textAlign: 'center' }}>
-        <Box sx={{ width: size.iconBoxLg, height: size.iconBoxLg, mb: 1, borderRadius: radius.lg, display: 'grid', placeItems: 'center', bgcolor: color.periTint, color: color.navy, '& svg': { fontSize: size.iconLg } }}>
+        <Box sx={{ width: size.iconBoxLg, height: size.iconBoxLg, mb: 1, borderRadius: radius.lg, display: 'grid', placeItems: 'center', bgcolor: mono[200], color: color.navy, '& svg': { fontSize: size.iconLg } }}>
           {icon}
         </Box>
         <Typography variant="h3">{title}</Typography>

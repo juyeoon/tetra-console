@@ -19,7 +19,11 @@ interface ListInfoBarProps {
 function Counts({ title, items }: { title?: string; items: CountItem[] }) {
   return (
     <Stack direction="row" alignItems="center" flexWrap="wrap" useFlexGap columnGap={2} rowGap={0.5}>
-      {title && <Typography variant="caption">{title}</Typography>}
+      {title && (
+        <Typography variant="caption" sx={{ color: text.secondary }}>
+          {title}
+        </Typography>
+      )}
       {items.map((item) => (
         <Stack key={item.key} direction="row" alignItems="center" spacing={0.75}>
           <Box sx={{ width: size.dot, height: size.dot, borderRadius: '50%', bgcolor: tones[item.tone].dot }} />

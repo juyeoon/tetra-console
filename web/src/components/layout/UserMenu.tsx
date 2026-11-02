@@ -5,7 +5,7 @@ import KeyboardArrowDownRoundedIcon from '@mui/icons-material/KeyboardArrowDownR
 import LogoutOutlinedIcon from '@mui/icons-material/LogoutOutlined';
 import SettingsOutlinedIcon from '@mui/icons-material/SettingsOutlined';
 import { useAuth, useOperator } from '@/store/AuthContext';
-import { color, font, ink, radius, size, text, tones, type } from '@/theme/theme';
+import { color, font, mono, radius, size, text, tones, type } from '@/theme/theme';
 
 export default function UserMenu() {
   const navigate = useNavigate();
@@ -15,11 +15,12 @@ export default function UserMenu() {
 
   return (
     <>
+      {/* 상단바(바탕 100) 안이라 hover는 200 */}
       <ButtonBase
         onClick={(e) => setAnchor(e.currentTarget)}
-        sx={{ gap: 1, px: 1, py: 0.5, borderRadius: radius.md, '&:hover': { bgcolor: ink[5] } }}
+        sx={{ gap: 1, px: 1, py: 0.5, borderRadius: radius.md, '&:hover': { bgcolor: mono[200] } }}
       >
-        <Avatar sx={{ width: size.avatarSm, height: size.avatarSm, bgcolor: color.periTint, color: color.navy, ...type.caption, fontWeight: font.weight.semibold }}>{operator.name.slice(0, 1)}</Avatar>
+        <Avatar sx={{ width: size.avatarSm, height: size.avatarSm, bgcolor: mono[200], color: color.navy, ...type.caption, fontWeight: font.weight.semibold }}>{operator.name.slice(0, 1)}</Avatar>
         <Typography variant="body1" sx={{ display: { xs: 'none', sm: 'block' }, whiteSpace: 'nowrap', fontWeight: font.weight.medium }}>
           {operator.name}님
         </Typography>

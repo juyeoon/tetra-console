@@ -34,9 +34,8 @@ export function navAriaLabel(unread: UnreadCount | null): string {
 export type BadgeTone = 'urgent' | 'normal';
 
 /**
- * 배지 색 — 안 읽은 긴급이 있으면 빨강(어디서든), 아니면 페리윙클 바탕 + 남색 숫자.
- * Portal은 선택 줄(흰 바탕)에서 남색 바탕으로 바꾸지만, Console 선택 줄 바탕(남색 위 흰 10%)과 남색 배지는 1.33:1이라
- * 구분되지 않아 선택 줄에서도 페리윙클을 쓴다(선택 줄과 4.47:1)
+ * 배지 색 — 안 읽은 긴급이 있으면 빨강(어디서든), 아니면 연회색(mono 200) 바탕 + 진한(mono 900) 숫자.
+ * Portal은 선택 줄(흰 바탕)에서 배지 색을 바꾸지만, Console은 선택 줄(mono 700)에서도 같은 색을 쓴다(선택 줄과 8.3:1)
  */
 export function badgeTone({ urgent }: { urgent: boolean; active: boolean }): BadgeTone {
   return urgent ? 'urgent' : 'normal';

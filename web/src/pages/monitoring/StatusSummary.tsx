@@ -24,7 +24,8 @@ export function HeaderIndicator({ view }: { view: HeaderView }) {
           '@keyframes blink': { '50%': { opacity: 0.3 } },
         }}
       />
-      <Typography variant="body2" sx={{ color: text.tertiary, whiteSpace: 'nowrap' }}>
+      {/* 상단바(바탕 100)에 놓여 흐린 글자는 secondary */}
+      <Typography variant="body2" sx={{ color: text.secondary, whiteSpace: 'nowrap' }}>
         {view.text}
       </Typography>
     </Stack>

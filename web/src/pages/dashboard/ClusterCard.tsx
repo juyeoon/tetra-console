@@ -8,7 +8,6 @@ import { NO_EVENT_TEXT, type ClusterView } from './monitoringView';
 export default function ClusterCard({ view, delayed }: { view: ClusterView; delayed: boolean }) {
   return (
     <StatCard
-      fill="peri"
       label={
         <>
           클러스터 사용량 (전체)
@@ -25,7 +24,7 @@ export default function ClusterCard({ view, delayed }: { view: ClusterView; dela
           <Box component="span" sx={{ display: 'block' }}>
             노드 app {view.appNodes} · redis {view.redisNodes} · system {view.systemNodes}
             {view.noEvent && (
-              <Box component="span" sx={{ color: text.tertiary }}>
+              <Box component="span" sx={{ color: text.secondary }}>
                 {' '}
                 ({NO_EVENT_TEXT})
               </Box>

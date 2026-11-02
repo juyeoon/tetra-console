@@ -4,6 +4,21 @@
  */
 const v = (name: string) => `var(--${name})`;
 
+/** 단계 색(모노톤) — 의미 토큰으로 표현하기 어려운 곳(플랜 배지 · 아바타 · 장식)에만 직접 쓴다 */
+export const mono = {
+  50: v('mono-50'),
+  100: v('mono-100'),
+  200: v('mono-200'),
+  300: v('mono-300'),
+  400: v('mono-400'),
+  500: v('mono-500'),
+  600: v('mono-600'),
+  700: v('mono-700'),
+  800: v('mono-800'),
+  900: v('mono-900'),
+  950: v('mono-950'),
+};
+
 export const color = {
   navy: v('color-navy'),
   navyDeep: v('color-navy-deep'),
@@ -178,8 +193,10 @@ export const size = {
   modalSm: v('modal-sm'),
 };
 
-/** KPI 카드 강조 */
+/** KPI 카드(요약 카드) */
 export const kpi = {
+  cardBg: v('kpi-card-bg'),
+  cardBorder: v('kpi-card-border'),
   labelColor: v('kpi-label-color'),
   valueBg: v('kpi-value-bg'),
   valueFg: v('kpi-value-fg'),

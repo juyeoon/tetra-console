@@ -68,14 +68,13 @@ export default function DashboardPage() {
       <PageHeader breadcrumbs={BREADCRUMBS} />
 
       <Box sx={{ display: 'grid', gap: layout.cardGap, gridTemplateColumns: { xs: '1fr', md: 'repeat(3, 1fr)' }, mb: layout.cardGap }}>
-        <StatCard fill="peri" label="활성 테넌트 수 / 전체 테넌트 수" value={`${tenants.active}개사 / ${tenants.total}개사`} sub={`이번 달 신규 ${tenants.newThisMonth}개사`} />
+        <StatCard label="활성 테넌트 수 / 전체 테넌트 수" value={`${tenants.active}개사 / ${tenants.total}개사`} sub={`이번 달 신규 ${tenants.newThisMonth}개사`} />
         {/* 숫자만 표시, 기준 시각은 카드 제목 옆 괄호 */}
         <StatCard
-          fill="blue"
           label={
             <>
               현재 진행 중인 이벤트{' '}
-              <Box component="span" sx={{ fontWeight: 400, color: text.tertiary, whiteSpace: 'nowrap' }}>
+              <Box component="span" sx={{ fontWeight: 400, color: text.secondary, whiteSpace: 'nowrap' }}>
                 ({formatDateTime(openEvents.asOf)} 기준)
               </Box>
             </>

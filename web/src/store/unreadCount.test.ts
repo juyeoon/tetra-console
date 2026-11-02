@@ -61,7 +61,7 @@ describe('사이드바 안 읽은 알림 배지 — 글자 · 읽기 이름 · �
     assert.equal(navAriaLabel({ count: 120, urgent: true }), '알림센터, 안 읽은 알림 120건(긴급 포함)');
   });
 
-  test('색 — 긴급이 있으면 어디서든 빨강, 아니면 페리윙클(선택 줄에서도 — 남색 배지는 선택 줄과 1.33:1)', () => {
+  test('색 — 긴급이 있으면 어디서든 빨강, 아니면 보통 배지(선택 줄에서도 같은 색)', () => {
     assert.equal(badgeTone({ urgent: true, active: false }), 'urgent');
     assert.equal(badgeTone({ urgent: true, active: true }), 'urgent');
     assert.equal(badgeTone({ urgent: false, active: false }), 'normal');

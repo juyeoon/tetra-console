@@ -16,7 +16,7 @@ function segment(next: StepView | undefined) {
   return reached(next) ? `2px solid ${next.state === 'FAILED' ? tones.red.dot : color.navy}` : `2px dashed ${line.strong}`;
 }
 
-/** 점: 끝남 = 채운 남색, 진행 중 = 빈 남색(굵은 테두리), 실패 = 빨강, 아직 · 진행 안 됨 = 채운 회색 */
+/** 점: 끝남 = 채운 진한 색, 진행 중 = 빈 진한 색(굵은 테두리), 실패 = 빨강, 아직 · 진행 안 됨 = 채운 회색 */
 function dotStyle(state: StepView['state']) {
   switch (state) {
     case 'DONE':

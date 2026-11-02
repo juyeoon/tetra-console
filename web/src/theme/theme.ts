@@ -25,11 +25,12 @@ const theme = createTheme({
   palette: {
     mode: 'light',
     primary: { main: color.navy, dark: color.navyDeep, light: color.periDeep, contrastText: color.white },
-    secondary: { main: color.peri, light: color.periTint, dark: color.periDeep, contrastText: color.navy },
+    secondary: { main: color.peri, light: color.periTint, dark: color.periDeep, contrastText: color.white },
     success: { main: tones.green.dot, light: tones.green.bg, dark: tones.green.fg, contrastText: color.white },
     warning: { main: tones.amber.dot, light: tones.amber.bg, dark: tones.amber.fg, contrastText: color.ink },
     error: { main: tones.red.dot, light: tones.red.bg, dark: tones.red.fg, contrastText: color.white },
-    info: { main: color.peri, light: tones.blue.bg, dark: tones.blue.fg, contrastText: color.navy },
+    // 정보는 상태 표시라 파랑 유지 (브랜드 색과 분리)
+    info: { main: tones.blue.dot, light: tones.blue.bg, dark: tones.blue.fg, contrastText: color.navy },
     text: { primary: text.primary, secondary: text.secondary, disabled: text.disabled },
     divider: line.base,
     background: { default: color.page, paper: color.surface },
@@ -90,8 +91,8 @@ const theme = createTheme({
     MuiPaper: { defaultProps: { elevation: 0 }, styleOverrides: { rounded: { borderRadius: radius.xl } } },
     MuiCard: {
       defaultProps: { elevation: 0 },
-      // Snow: 테두리·그림자 없이 연한 배경으로 구분
-      styleOverrides: { root: { backgroundColor: color.card, borderRadius: radius.xl, border: 0 } },
+      // 흰 카드 + 얇은 테두리 (페이지 바탕과 대비가 낮아 테두리로 구분). 그림자 없음
+      styleOverrides: { root: { backgroundColor: color.surface, borderRadius: radius.xl, border: `1px solid ${line.base}` } },
     },
     MuiOutlinedInput: {
       styleOverrides: {
@@ -182,7 +183,7 @@ const theme = createTheme({
           textUnderlineOffset: 3,
           textDecorationColor: line.strong,
           transition: 'color .15s, text-decoration-color .15s',
-          '&:hover': { color: color.periDeep, textDecorationColor: color.peri },
+          '&:hover': { color: color.periDeep, textDecorationColor: color.periDeep },
         },
       },
     },
