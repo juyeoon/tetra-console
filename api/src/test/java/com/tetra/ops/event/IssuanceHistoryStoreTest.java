@@ -17,12 +17,4 @@ class IssuanceHistoryStoreTest {
 		assertThat(IssuanceHistoryStore.selloutRate(1L, 9, 8)).isEqualByComparingTo("1");
 	}
 
-	@Test
-	void csvFieldQuotesOnlyWhenNeeded() {
-		assertThat(IssuanceHistoryStore.csvField("user-1")).isEqualTo("user-1");
-		assertThat(IssuanceHistoryStore.csvField("a,b")).isEqualTo("\"a,b\"");
-		assertThat(IssuanceHistoryStore.csvField("a\"b")).isEqualTo("\"a\"\"b\"");
-		assertThat(IssuanceHistoryStore.csvField("a\nb")).isEqualTo("\"a\nb\"");
-	}
-
 }

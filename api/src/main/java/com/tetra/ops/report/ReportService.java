@@ -21,9 +21,10 @@ import com.tetra.ops.external.DownloadUrlSigner;
 import com.tetra.ops.external.MailGateway;
 
 /**
- * OPS-09 리포트: 목록 · 다운로드 링크 · 이메일 전송. 리포트를 만드는 쪽은 이 앱이 아니다(범위 밖, 행이 없으면 빈 목록).
- * 파일은 운영자 로그 버킷 tetra-operator-logs-{env}에 있다(S3_CloudFront 버킷 전략: reports/{report_id}.pdf).
- * TODO(미정): 리포트 생성 주체 · 형식, file_path 형식(키만 / s3://버킷/키 — 둘 다 받는다).
+ * OPS-09 리포트: 목록 · 다운로드 링크 · 이메일 전송. 행이 없으면 빈 목록. 리포트를 만들어 넣는 쪽은 리포트 작업(ReportStore, 운영자 감사
+ * 리포트 = CSV, file_path는 키만 — 예 reports/2026/10/operator-audit-202610.csv).
+ * 파일은 운영자 리포트 버킷(tetra.report.operator-bucket, 기본 이름 규칙 tetra-operator-logs-{env})에 있다.
+ * file_path는 키만 또는 s3://버킷/키 둘 다 받는다(예전 형식 reports/{report_id}.pdf 포함).
  */
 @Service
 public class ReportService {
@@ -106,7 +107,7 @@ public class ReportService {
 	}
 
 	String bucket() {
-		return "tetra-operator-logs-" + properties.env();
+		return properties.report().operatorBucket();
 	}
 
 	/** 키만(reports/1.pdf) 또는 s3://{운영자 로그 버킷}/{키}. 다른 버킷 · 빈 키는 데이터 오류(500). */

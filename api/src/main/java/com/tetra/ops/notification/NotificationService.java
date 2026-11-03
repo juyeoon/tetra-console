@@ -3,6 +3,7 @@ package com.tetra.ops.notification;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.YearMonth;
 import java.time.format.DateTimeFormatter;
 import java.util.Arrays;
 import java.util.Optional;
@@ -24,6 +25,7 @@ import com.tetra.ops.domain.tenant.TenantNotificationRepository;
 import com.tetra.ops.event.EntryOpen;
 import com.tetra.ops.monitoring.DelayStep;
 import com.tetra.ops.monitoring.DlqQueue;
+import com.tetra.ops.report.ReportCategory;
 import com.tetra.ops.tenancy.TenantContext;
 
 /**
@@ -31,6 +33,7 @@ import com.tetra.ops.tenancy.TenantContext;
  * 상태 변경은 상태 로그와 같은 트랜잭션에서 부른다(MANDATORY). 한 사건에 알림은 한 번만 남긴다.
  * 메일 발송 실패처럼 커밋 뒤에 생기는 일은 자체 트랜잭션으로 남긴다.
  * 1분 주기 확인(DLQ · 단계 지연)은 상태 전이가 없어 중복 방지 키(dedupe_key)로 한 번만 남긴다 — 자체 트랜잭션, 트랜잭션 밖에서 부른다.
+ * 리포트 생성은 리포트 메타 저장 트랜잭션 안에서 남긴다(같은 리포트 메타가 있으면 남기지 않음, 운영자 리포트는 dedupe_key REPORT:…도).
  * 문구: 운영자는 [테넌트명] [id:이벤트명], 테넌트는 [id:이벤트명]으로 시작한다. 시각은 HH:mm(DB의 KST 값 그대로).
  * 고정 문구(라벨 + 정해진 문장)는 120자 이내로 두고, 반려 사유 · 원인은 자르지 않고 붙인다(1000자 상한만).
  * 반려 사유는 " 반려 사유: ", 실패 원인은 " 원인: " 뒤에 붙인다 — Slack 발송(SlackMessage)이 이 표지부터는 보내지 않는다.
@@ -55,7 +58,7 @@ public class NotificationService {
 		DELAY,
 		/** DLQ 메시지처럼 이벤트 하나에 속하지 않는 자동화 문제(1분 주기 확인) */
 		SYSTEM,
-		/** 리포트 생성(미구현) */
+		/** 리포트 생성(테넌트 · 운영자 리포트 작업 — ReportStore) */
 		REPORT
 
 	}
@@ -325,6 +328,55 @@ public class NotificationService {
 		};
 		operator(tenantId, eventId, Category.DELAY, step.urgent() ? Priority.URGENT : Priority.WARNING, content, key);
 		return true;
+	}
+
+	// ------------------------------------------------------------ 리포트 (REPORT)
+
+	private static final String REPORT_KEY_PREFIX = "REPORT:";
+
+	/** 운영자 리포트 알림 중복 방지 키: REPORT:{분류}:{yyyy-MM}(대상 기간 시작 달) — 같은 리포트는 1건 */
+	public static String reportKey(ReportCategory category, YearMonth period) {
+		return REPORT_KEY_PREFIX + category.name() + ":" + period;
+	}
+
+	/**
+	 * 테넌트 리포트 생성(이벤트 결과 · 월간). 테넌트 REPORT/INFO — 이벤트 결과는 그 이벤트, 월간은 이벤트 없음.
+	 * 리포트 메타 저장 트랜잭션 · 테넌트 스키마 라우팅 안에서 부른다(같은 리포트 메타가 이미 있으면 부르지 않는다 — ReportStore).
+	 * 문구에 버킷 · 키 같은 내부 정보는 넣지 않는다.
+	 */
+	@Transactional(propagation = Propagation.MANDATORY)
+	public void tenantReportCreated(String tenantId, ReportCategory category, Long eventId, LocalDateTime periodStart) {
+		switch (category) {
+			case EVENT_RESULT -> tenant(tenantId, eventId, Category.REPORT, Priority.INFO, eventLabel(eventId,
+					registry(eventId)) + " 이벤트 결과 리포트가 생성되었습니다. 리포트 화면에서 내려받을 수 있습니다.");
+			case MONTHLY -> tenant(tenantId, null, Category.REPORT, Priority.INFO,
+					monthLabel(periodStart) + " 월간 리포트가 생성되었습니다. 리포트 화면에서 내려받을 수 있습니다.");
+			case OPERATOR_AUDIT -> throw new IllegalArgumentException("운영자 리포트는 테넌트 알림을 남기지 않습니다: " + category);
+		}
+	}
+
+	/**
+	 * 운영자 리포트 생성(운영자 감사). 운영자 REPORT/INFO, 테넌트 · 이벤트 없음, 중복 방지 키 {@link #reportKey}.
+	 * 리포트 메타 저장 트랜잭션 안에서 부른다. 같은 키 알림이 이미 있으면(메타만 지워진 뒤 다시 만든 경우) 남기지 않고 false.
+	 * @return 새로 남겼으면 true
+	 */
+	@Transactional(propagation = Propagation.MANDATORY)
+	public boolean operatorReportCreated(ReportCategory category, LocalDateTime periodStart) {
+		if (category != ReportCategory.OPERATOR_AUDIT) {
+			throw new IllegalArgumentException("테넌트 리포트는 운영자 리포트 알림을 남기지 않습니다: " + category);
+		}
+		String key = reportKey(category, YearMonth.from(periodStart));
+		if (operatorNotifications.existsByDedupeKey(key)) {
+			return false;
+		}
+		operator(null, null, Category.REPORT, Priority.INFO,
+				monthLabel(periodStart) + " 운영자 감사 리포트가 생성되었습니다. 리포트 화면에서 내려받을 수 있습니다.", key);
+		return true;
+	}
+
+	/** [yyyy년 M월] (대상 기간 시작 달) */
+	static String monthLabel(LocalDateTime periodStart) {
+		return "[" + periodStart.getYear() + "년 " + periodStart.getMonthValue() + "월]";
 	}
 
 	// ------------------------------------------------------------

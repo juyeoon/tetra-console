@@ -44,6 +44,10 @@ tetra:
   # 1분 주기 자동화 확인은 스케줄로 돌리지 않는다(커넥션 풀 1개를 잡지 않게). 작업 테스트는 run()을 직접 부른다
   alerts:
     enabled: false
+  # 리포트 메타 정리도 스케줄로 돌리지 않는다. 작업 테스트는 run()을 직접 부른다(운영자 리포트 버킷은 기본 규칙 tetra-operator-logs-test)
+  report:
+    meta-cleanup:
+      enabled: false
   auth:
     jwt-secret: test-jwt-secret-0123456789abcdef0123456789
   password-link:

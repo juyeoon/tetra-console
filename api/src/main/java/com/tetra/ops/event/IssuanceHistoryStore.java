@@ -1,9 +1,7 @@
 package com.tetra.ops.event;
 
-import java.io.ByteArrayOutputStream;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 
 import org.slf4j.Logger;
@@ -11,6 +9,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.tetra.ops.common.CsvWriter;
 import com.tetra.ops.domain.tenant.Event;
 import com.tetra.ops.domain.tenant.EventRepository;
 import com.tetra.ops.notification.NotificationService;
@@ -28,10 +27,8 @@ class IssuanceHistoryStore {
 
 	private static final Logger log = LoggerFactory.getLogger(IssuanceHistoryStore.class);
 
-	static final String CSV_HEADER = "issuance_id,user_id,ticket_number,result,session_issued_at,queue_entered_at,issued_at";
-
-	/** Excel(한국어 Windows)에서 user_id가 깨지지 않도록 UTF-8 BOM을 붙인다 */
-	private static final byte[] BOM = { (byte) 0xEF, (byte) 0xBB, (byte) 0xBF };
+	static final String[] CSV_HEADER = { "issuance_id", "user_id", "ticket_number", "result", "session_issued_at",
+			"queue_entered_at", "issued_at" };
 
 	private final EventRepository events;
 
@@ -49,7 +46,8 @@ class IssuanceHistoryStore {
 	}
 
 	/**
-	 * issuance_history를 issuance_id 순으로 읽어 CSV와 결과 수를 만든다. 시각은 저장된 KST 값 그대로 +09:00을 붙인다.
+	 * issuance_history를 issuance_id 순으로 읽어 CSV와 결과 수를 만든다. CSV 형식(BOM · CRLF · 따옴표 · 시각 KST +09:00)은
+	 * 리포트와 같은 {@link CsvWriter}. 시각은 저장된 KST 값 그대로다(date_format 문자열을 읽어 시간대 변환 없이).
 	 * 엔티티를 거치지 않으므로 다른 tenant_id 행이 섞였는지 여기서 직접 확인한다 (§4-6).
 	 */
 	@SuppressWarnings("unchecked")
@@ -58,9 +56,7 @@ class IssuanceHistoryStore {
 		String tenantId = TenantContext.current();
 		Event event = events.findById(eventId)
 			.orElseThrow(() -> new IllegalStateException("registry에는 있고 event에는 없습니다: eventId=" + eventId));
-		ByteArrayOutputStream out = new ByteArrayOutputStream();
-		out.writeBytes(BOM);
-		StringBuilder csv = new StringBuilder(CSV_HEADER).append("\r\n");
+		CsvWriter csv = new CsvWriter(CSV_HEADER);
 		long success = 0;
 		long soldout = 0;
 		try (var rows = entityManager.createNativeQuery("""
@@ -87,25 +83,11 @@ class IssuanceHistoryStore {
 				else if ("FAILED_SOLDOUT".equals(result)) {
 					soldout++;
 				}
-				csv.append(row[0])
-					.append(',')
-					.append(csvField(row[1].toString()))
-					.append(',')
-					.append(row[2])
-					.append(',')
-					.append(result)
-					.append(',')
-					.append(kst(row[4]))
-					.append(',')
-					.append(kst(row[5]))
-					.append(',')
-					.append(kst(row[6]))
-					.append("\r\n");
+				csv.row(row[0], row[1], row[2], result, wallClock(row[4]), wallClock(row[5]), wallClock(row[6]));
 			}
 		}
-		out.writeBytes(csv.toString().getBytes(StandardCharsets.UTF_8));
 		long total = event.getStockCount();
-		return new Snapshot(total, success, soldout, selloutRate(eventId, success, total), out.toByteArray());
+		return new Snapshot(total, success, soldout, selloutRate(eventId, success, total), csv.toBytes());
 	}
 
 	/**
@@ -175,18 +157,9 @@ class IssuanceHistoryStore {
 		return rate;
 	}
 
-	/** date_format(…, '%f')는 마이크로초 6자리 → 밀리초 3자리 + KST 오프셋 */
-	private static String kst(Object value) {
-		String text = value.toString();
-		return text.substring(0, "yyyy-MM-ddTHH:mm:ss.SSS".length()) + "+09:00";
-	}
-
-	/** RFC 4180: 쉼표 · 큰따옴표 · 줄바꿈이 있으면 큰따옴표로 감싸고 안의 큰따옴표는 두 번 쓴다 */
-	static String csvField(String value) {
-		if (value.indexOf(',') < 0 && value.indexOf('"') < 0 && value.indexOf('\n') < 0 && value.indexOf('\r') < 0) {
-			return value;
-		}
-		return '"' + value.replace("\"", "\"\"") + '"';
+	/** date_format(…, '%f') 문자열(마이크로초 6자리) → KST 벽시계. CSV에는 밀리초 3자리까지(남는 자리는 버림) 나간다 */
+	private static LocalDateTime wallClock(Object value) {
+		return LocalDateTime.parse(value.toString());
 	}
 
 }

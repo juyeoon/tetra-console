@@ -50,6 +50,9 @@ dependencies {
 	// spring-boot-flyway(자동 설정)는 넣지 않는다 — 기동 때 앱 계정으로 tetra_platform에 마이그레이션하려 들기 때문
 	implementation 'org.flywaydb:flyway-core'
 	implementation 'org.flywaydb:flyway-mysql'
+	// 리포트 PDF(한글): 직접 그리기 + 앱 리소스 글꼴(Noto Sans KR TTF). spike 결과 _조사결과/pdf-spike/RESULT.md.
+	// PDFBox는 commons-logging 1.4.0을 요구하지만 Boot BOM이 1.3.6으로 맞춘다(로그 경로만 쓰며 테스트로 확인)
+	implementation 'org.apache.pdfbox:pdfbox:3.0.8'
 	runtimeOnly 'com.mysql:mysql-connector-j'
 	annotationProcessor 'org.springframework.boot:spring-boot-configuration-processor'
 

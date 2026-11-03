@@ -18,7 +18,7 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 
-/** OPS-09 리포트. Tetra Portal 리포트(UI-TP-12)와 같은 화면. 리포트 생성은 범위 밖(행이 없으면 빈 목록). */
+/** OPS-09 리포트. Tetra Portal 리포트(UI-TP-12)와 같은 화면. 행은 리포트 작업(ReportStore)이 넣는다(없으면 빈 목록). */
 @Tag(name = "리포트", description = "OPS-09 리포트 목록 · 다운로드 · 이메일 전송")
 @RestController
 @RequestMapping("/api/ops/reports")

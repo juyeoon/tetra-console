@@ -21,7 +21,8 @@ spring:
     timeout-per-shutdown-phase: 30s
   flyway:
     enabled: false        # 기동 때 마이그레이션하지 않는다. 테넌트 스키마는 등록 때 TenantSchemaCreator가 만든다
-  # 회차 작업(SchedulingConfig) 스레드: 작업마다 1개(자동화 확인 · Slack 발송 · 리포트 예정) — 한 작업이 길어져도 다른 작업이 기다리지 않는다.
+  # 회차 작업(SchedulingConfig) 스레드: 작업마다 1개(자동화 확인 · Slack 발송 · 리포트) — 한 작업이 길어져도 다른 작업이 기다리지 않는다.
+  # 리포트 메타 정리는 하루 1번 짧게 돌아 리포트 몫 스레드를 같이 쓴다(셋 다 바쁘면 잠깐 기다린다).
   # 종료 때 도는 회차를 10초까지 기다린다(Slack 발송 중에 끊겨 '보냈는지 모름'이 되는 일을 줄인다)
   task:
     scheduling:
@@ -134,6 +135,12 @@ tetra:
     max-age: ${SLACK_NOTIFY_MAX_AGE:PT10M}
     connect-timeout: ${SLACK_CONNECT_TIMEOUT:PT2S}
     read-timeout: ${SLACK_READ_TIMEOUT:PT5S}
+  # 리포트. 운영자 리포트 버킷(OPS-09 다운로드 · 운영자 감사 리포트 저장) — 실제 버킷 이름이 규칙과 다르면 REPORT_OPERATOR_BUCKET으로 넣는다.
+  # meta-cleanup = 2년(731일) 지난 리포트 메타 행 지우기(하루 1번 04:30 KST). S3 객체는 버킷 수명 주기가 지운다
+  report:
+    operator-bucket: ${REPORT_OPERATOR_BUCKET:tetra-operator-logs-${tetra.env}}
+    meta-cleanup:
+      enabled: ${REPORT_META_CLEANUP_ENABLED:true}
   auth:
     jwt-secret: ${OPS_JWT_SECRET}
   password-link:

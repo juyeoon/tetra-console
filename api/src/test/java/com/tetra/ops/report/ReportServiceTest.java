@@ -5,7 +5,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import org.junit.jupiter.api.Test;
 
-/** file_path → S3 키, 다운로드 파일 확장자. */
+import com.tetra.ops.config.TetraProperties;
+
+/** file_path → S3 키, 다운로드 파일 확장자, 운영자 리포트 버킷 설정. */
 class ReportServiceTest {
 
 	static final String BUCKET = "tetra-operator-logs-dev";
@@ -24,6 +26,17 @@ class ReportServiceTest {
 				.isInstanceOf(IllegalStateException.class)
 				.hasMessageContaining("reportId=7");
 		}
+	}
+
+	/** 운영자 리포트 버킷은 설정값(tetra.report.operator-bucket) — 실제 버킷 이름이 이름 규칙과 달라도 된다 */
+	@Test
+	void bucketComesFromSetting() {
+		var report = new TetraProperties.Report("tetra-dev-operator-logs-000000000000", new TetraProperties.MetaCleanup(true));
+		var properties = new TetraProperties("dev", null, null, null, null, null, null, null, null, null, null, null, report,
+				null, null, null, "tetraops.cloud");
+
+		assertThat(new ReportService(null, null, null, null, null, properties).bucket())
+			.isEqualTo("tetra-dev-operator-logs-000000000000");
 	}
 
 	@Test

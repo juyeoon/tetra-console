@@ -1,0 +1,1 @@
+Noto Sans KR v2.004 정적 TTF(Regular · Bold) — Google Fonts 공식 다운로드(`fonts.google.com/download/list?family=Noto Sans KR`의 `static/`), 라이선스 SIL Open Font License 1.1(`OFL.txt`). 리포트 PDF 글꼴(`report/pdf/PdfFonts`), 고치지 않고 그대로 둔다.

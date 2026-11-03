@@ -9,7 +9,10 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 
-/** OPS-09 리포트 메타. 이 앱은 읽기만 한다(리포트 생성은 범위 밖). file_path는 운영자 로그 버킷의 S3 경로. */
+/**
+ * OPS-09 리포트 메타. 리포트 작업(ReportStore)이 넣고 OPS-09가 읽는다. file_path는 운영자 리포트 버킷 안의 키(같은 리포트 = 같은 키라
+ * 다시 만들 때 이 값으로 이미 있는지 본다). 2년(731일) 지난 행은 ReportMetaCleanupJob이 지운다.
+ */
 @Entity
 @Table(name = "operator_report_meta", catalog = "tetra_platform")
 public class OperatorReportMeta {
@@ -38,6 +41,18 @@ public class OperatorReportMeta {
 	private String filePath;
 
 	protected OperatorReportMeta() {
+	}
+
+	public static OperatorReportMeta create(String name, LocalDateTime periodStart, LocalDateTime periodEnd,
+			String category, LocalDateTime createdAt, String filePath) {
+		OperatorReportMeta meta = new OperatorReportMeta();
+		meta.name = name;
+		meta.periodStart = periodStart;
+		meta.periodEnd = periodEnd;
+		meta.category = category;
+		meta.createdAt = createdAt;
+		meta.filePath = filePath;
+		return meta;
 	}
 
 	public Long getReportId() {
