@@ -31,7 +31,8 @@ class ReportServiceTest {
 	/** 운영자 리포트 버킷은 설정값(tetra.report.operator-bucket) — 실제 버킷 이름이 이름 규칙과 달라도 된다 */
 	@Test
 	void bucketComesFromSetting() {
-		var report = new TetraProperties.Report("tetra-dev-operator-logs-000000000000", new TetraProperties.MetaCleanup(true));
+		var report = new TetraProperties.Report("tetra-dev-operator-logs-000000000000", new TetraProperties.MetaCleanup(true),
+				new TetraProperties.EventResult(true, 3));
 		var properties = new TetraProperties("dev", null, null, null, null, null, null, null, null, null, null, null, report,
 				null, null, null, "tetraops.cloud");
 

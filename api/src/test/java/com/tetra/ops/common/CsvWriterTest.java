@@ -48,6 +48,44 @@ class CsvWriterTest {
 		assertThat(CsvWriter.field("")).isEmpty();
 	}
 
+	/** 기본은 수식 가림 끔 — 발급 이력 CSV는 바이트 그대로(IssuanceHistoryCsvBytesTest) */
+	@Test
+	void formulaGuardIsOffByDefault() {
+		assertThat(body(new CsvWriter("v").row("=1+1").row("@SUM(A1)").row("-5").toBytes()))
+			.isEqualTo("v\r\n=1+1\r\n@SUM(A1)\r\n-5\r\n");
+	}
+
+	/** 리포트 CSV(11-03): = + - @ 탭 CR로 시작하는 글자 칸 앞에 '. CR은 그 뒤 따옴표 규칙으로 감싼다 */
+	@Test
+	void formulaGuardPrefixesQuoteOnTextCells() {
+		String csv = body(CsvWriter.withFormulaGuard("v")
+			.row("=1+1")
+			.row("+82-10")
+			.row("-50% 할인")
+			.row("@SUM(A1)")
+			.row("\tx")
+			.row("\rx")
+			.row("=a,b")
+			.row("a=b")
+			.row("'이미")
+			.row("")
+			.row((Object) null)
+			.toBytes());
+
+		assertThat(csv).isEqualTo("v\r\n" + "'=1+1\r\n" + "'+82-10\r\n" + "'-50% 할인\r\n" + "'@SUM(A1)\r\n" + "'\tx\r\n"
+				+ "\"'\rx\"\r\n" + "\"'=a,b\"\r\n" + "a=b\r\n" + "'이미\r\n" + "\r\n" + "\r\n");
+	}
+
+	/** 숫자 · 시각 칸은 가리지 않는다(음수가 없고 시각은 숫자로 시작) */
+	@Test
+	void formulaGuardLeavesNumbersAndTimes() {
+		String csv = body(CsvWriter.withFormulaGuard("a", "b", "c", "d")
+			.row(-1L, new BigDecimal("-0.5"), LocalDateTime.of(2026, 11, 1, 10, 0), 1043)
+			.toBytes());
+
+		assertThat(csv).isEqualTo("a,b,c,d\r\n-1,-0.5,2026-11-01T10:00:00.000+09:00,1043\r\n");
+	}
+
 	@Test
 	void nullIsEmptyTimeIsKstMillisAndDecimalIsPlain() {
 		String csv = body(new CsvWriter("a", "b", "c", "d")

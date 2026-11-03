@@ -151,6 +151,26 @@ class TetraPropertiesTest {
 			.run(context -> assertThat(context).hasFailed());
 	}
 
+	/** 이벤트 결과 리포트: 기본 켜짐 · 보충 3일. 바꿀 수 있고 보충 일수는 1 이상 */
+	@Test
+	void eventResultReportIsOnByDefaultWithThreeBackfillDays() {
+		runner.withPropertyValues(SECRETS).run(context -> {
+			TetraProperties.EventResult eventResult = context.getBean(TetraProperties.class).report().eventResult();
+			assertThat(eventResult.enabled()).isTrue();
+			assertThat(eventResult.backfillDays()).isEqualTo(3);
+		});
+		runner.withPropertyValues(SECRETS)
+			.withPropertyValues("tetra.report.event-result.enabled=false", "tetra.report.event-result.backfill-days=30")
+			.run(context -> {
+				TetraProperties.EventResult eventResult = context.getBean(TetraProperties.class).report().eventResult();
+				assertThat(eventResult.enabled()).isFalse();
+				assertThat(eventResult.backfillDays()).isEqualTo(30);
+			});
+		runner.withPropertyValues(SECRETS)
+			.withPropertyValues("tetra.report.event-result.backfill-days=0")
+			.run(context -> assertThat(context).hasFailed());
+	}
+
 	/** 기본값(tetraops.cloud)은 application.yml에 있다. 값을 덮어쓸 수 있고, 비우면 기동하지 않는다 */
 	@Test
 	void platformDomainCanBeOverriddenAndMustNotBeBlank() {
