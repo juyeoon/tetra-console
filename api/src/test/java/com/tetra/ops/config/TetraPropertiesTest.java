@@ -30,7 +30,8 @@ class TetraPropertiesTest {
 				"tetra.sfn.lifecycle.hosting-start-name=tetra-test-hosting-start",
 				"tetra.sfn.lifecycle.event-open-name=tetra-test-event-open",
 				"tetra.sfn.lifecycle.event-end-name=tetra-test-event-end", "tetra.mail.from=x@y.z", "tetra.portal.base-url=https://p",
-				"tetra.db-migration.username=tetra_migrator", "tetra.platform-domain=tetraops.cloud");
+				"tetra.db-migration.username=tetra_migrator", "tetra.platform-domain=tetraops.cloud",
+				"tetra.report.operator-bucket=tetra-operator-logs-test");
 
 	private static final String MIGRATOR_PASSWORD = "tetra.db-migration.password=migrator-pw-value";
 
@@ -124,6 +125,30 @@ class TetraPropertiesTest {
 				assertThat(trace.toString()).doesNotContain(SLACK_TOKEN);
 			});
 		}
+	}
+
+	/**
+	 * 운영자 리포트 버킷: 기본값(tetra-operator-logs-{env})은 application.yml에 있고 실제 이름(tetra-{env}-operator-logs-…)으로 덮어쓴다.
+	 * 비우면 기동하지 않는다. 메타 정리는 기본 켜짐
+	 */
+	@Test
+	void reportBucketCanBeOverriddenAndMetaCleanupIsOnByDefault() {
+		runner.withPropertyValues(SECRETS).run(context -> {
+			TetraProperties.Report report = context.getBean(TetraProperties.class).report();
+			assertThat(report.operatorBucket()).isEqualTo("tetra-operator-logs-test");
+			assertThat(report.metaCleanup().enabled()).isTrue();
+		});
+		runner.withPropertyValues(SECRETS)
+			.withPropertyValues("tetra.report.operator-bucket=tetra-dev-operator-logs-000000000000",
+					"tetra.report.meta-cleanup.enabled=false")
+			.run(context -> {
+				TetraProperties.Report report = context.getBean(TetraProperties.class).report();
+				assertThat(report.operatorBucket()).isEqualTo("tetra-dev-operator-logs-000000000000");
+				assertThat(report.metaCleanup().enabled()).isFalse();
+			});
+		runner.withPropertyValues(SECRETS)
+			.withPropertyValues("tetra.report.operator-bucket=")
+			.run(context -> assertThat(context).hasFailed());
 	}
 
 	/** 기본값(tetraops.cloud)은 application.yml에 있다. 값을 덮어쓸 수 있고, 비우면 기동하지 않는다 */

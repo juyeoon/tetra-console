@@ -38,6 +38,7 @@ public record TetraProperties(
 		@Valid @NotNull @DefaultValue Monitoring monitoring,
 		@Valid @NotNull @DefaultValue Alerts alerts,
 		@Valid @NotNull @DefaultValue Slack slack,
+		@Valid @NotNull @DefaultValue Report report,
 		@Valid @NotNull Auth auth,
 		@Valid @NotNull PasswordLink passwordLink,
 		@Valid @NotNull DbMigration dbMigration,
@@ -218,6 +219,18 @@ public record TetraProperties(
 			};
 		}
 
+	}
+
+	/**
+	 * 리포트. operatorBucket = 운영자 리포트 버킷(OPS-09 다운로드 · 운영자 감사 리포트 저장, ReportService · ReportStore).
+	 * 기본값은 application.yml(이름 규칙 tetra-operator-logs-{env}) — 실제 버킷 이름이 규칙과 다르면 REPORT_OPERATOR_BUCKET으로 넣는다.
+	 * metaCleanup = 2년(731일) 지난 리포트 메타 행 지우기(ReportMetaCleanupJob, 하루 1번 새벽). S3 객체는 버킷 수명 주기가 지운다.
+	 */
+	public record Report(@NotBlank String operatorBucket, @Valid @NotNull @DefaultValue MetaCleanup metaCleanup) {
+	}
+
+	/** enabled = 스케줄 켜기(테스트 프로필은 끔 — 작업은 run()을 직접 부른다) */
+	public record MetaCleanup(@DefaultValue("true") boolean enabled) {
 	}
 
 	// TODO(미정): CSV presigned URL 만료. 임시 5분

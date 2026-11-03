@@ -34,7 +34,7 @@ class SlackNotifyJobSwitchTest {
 				Duration.ofSeconds(10), Duration.ofMinutes(10), Duration.ofSeconds(2), Duration.ofSeconds(5),
 				"https://slack.com/api");
 		return new TetraProperties("test", null, null, null, null, null, new TetraProperties.Console(""), null, null, null,
-				null, slack, null, null, null, "tetraops.cloud");
+				null, slack, null, null, null, null, "tetraops.cloud");
 	}
 
 	@Test

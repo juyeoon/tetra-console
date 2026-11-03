@@ -27,6 +27,9 @@ public interface TenantRepository extends JpaRepository<Tenant, String> {
 
 	long countByCreatedAtGreaterThanEqual(LocalDateTime from);
 
+	/** 테넌트 스키마를 도는 작업(리포트 메타 정리 등)의 대상 — READY만 라우팅할 수 있다 */
+	List<Tenant> findAllByProvisioningStatusOrderByTenantId(ProvisioningStatus provisioningStatus);
+
 	/** 테넌트 자동 비활성 판정용 잠금 (SELECT … FOR UPDATE). */
 	@Lock(LockModeType.PESSIMISTIC_WRITE)
 	@Query("select t from Tenant t where t.tenantId = :tenantId")
