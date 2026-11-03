@@ -11,6 +11,7 @@ import com.tetra.ops.common.error.ErrorCode;
 import com.tetra.ops.config.TetraProperties;
 import com.tetra.ops.event.EventStatusService;
 import com.tetra.ops.event.IssuanceHistoryService;
+import com.tetra.ops.report.event.EventResultReportJob;
 import com.tetra.ops.tenancy.TenantRouter;
 import com.tetra.ops.tenancy.TenantRouter.RoutedEvent;
 
@@ -25,6 +26,8 @@ import tools.jackson.databind.json.JsonMapper;
  * - 모르는 상태 머신 · 형식 오류 · 없는 이벤트 · tenant_id 불일치: WARN 후 정상 종료(ack)
  * - 조건부 UPDATE 0행: "이미 처리됨"으로 정상 종료(ack)
  * - WF4 성공이면 상태 반영(커밋) 뒤 발급 이력을 저장한다. 상태가 이미 처리됐어도 저장은 다시 한다(재전달 대비, 덮어쓰기)
+ * - 발급 이력 저장(커밋) 뒤 이벤트 결과 리포트를 한 번 시도한다(EventResultReportJob — 실패 · 잠금 못 잡음은 안에서 끝나 ack에 영향 없음,
+ *   10분 보충이 만든다). 스위치(tetra.report.event-result.enabled)가 꺼져 있으면 시도하지 않는다
  * - 그 밖의 예외: 그대로 던져 ack하지 않는다(재전달 → 결국 DLQ)
  */
 @Component
@@ -53,13 +56,18 @@ public class LifecycleResultHandler {
 
 	private final TetraProperties.Lifecycle names;
 
+	/** 이벤트 결과 리포트. 스위치가 꺼져 있으면 빈이 없어 비어 있다 */
+	private final Optional<EventResultReportJob> eventResultReports;
+
 	public LifecycleResultHandler(JsonMapper jsonMapper, TenantRouter router, EventStatusService eventStatusService,
-			IssuanceHistoryService issuanceHistory, TetraProperties properties) {
+			IssuanceHistoryService issuanceHistory, TetraProperties properties,
+			Optional<EventResultReportJob> eventResultReports) {
 		this.jsonMapper = jsonMapper;
 		this.router = router;
 		this.eventStatusService = eventStatusService;
 		this.issuanceHistory = issuanceHistory;
 		this.names = properties.sfn().lifecycle();
+		this.eventResultReports = eventResultReports;
 	}
 
 	public void handle(String body) {
@@ -115,6 +123,8 @@ public class LifecycleResultHandler {
 			// changed와 무관하게 부른다: 저장이 실패해 재전달되면 상태는 0행("이미 처리됨")이고 저장만 다시 해야 한다.
 			// 실패는 그대로 던져 ack하지 않는다(재전달 → 결국 DLQ)
 			issuanceHistory.save(routed);
+			// 저장이 커밋된 뒤(트랜잭션 밖) 리포트를 한 번 시도한다. 예외를 던지지 않는다 — 이 메시지의 처리 결과와 무관
+			eventResultReports.ifPresent(reports -> reports.afterHistorySaved(routed));
 		}
 	}
 

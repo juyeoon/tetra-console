@@ -45,8 +45,11 @@ tetra:
   alerts:
     enabled: false
   # 리포트 메타 정리도 스케줄로 돌리지 않는다. 작업 테스트는 run()을 직접 부른다(운영자 리포트 버킷은 기본 규칙 tetra-operator-logs-test)
+  # 이벤트 결과 리포트(리스너 시도 · 10분 보충)도 끈다 — 잠금이 풀 커넥션 1개를 잡는다. 테스트가 잠금 목으로 작업을 직접 만든다
   report:
     meta-cleanup:
+      enabled: false
+    event-result:
       enabled: false
   auth:
     jwt-secret: test-jwt-secret-0123456789abcdef0123456789

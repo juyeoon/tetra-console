@@ -225,12 +225,22 @@ public record TetraProperties(
 	 * 리포트. operatorBucket = 운영자 리포트 버킷(OPS-09 다운로드 · 운영자 감사 리포트 저장, ReportService · ReportStore).
 	 * 기본값은 application.yml(이름 규칙 tetra-operator-logs-{env}) — 실제 버킷 이름이 규칙과 다르면 REPORT_OPERATOR_BUCKET으로 넣는다.
 	 * metaCleanup = 2년(731일) 지난 리포트 메타 행 지우기(ReportMetaCleanupJob, 하루 1번 새벽). S3 객체는 버킷 수명 주기가 지운다.
+	 * eventResult = 이벤트 결과 리포트(EventResultReportJob: WF4 리스너 시도 + 10분 보충).
 	 */
-	public record Report(@NotBlank String operatorBucket, @Valid @NotNull @DefaultValue MetaCleanup metaCleanup) {
+	public record Report(@NotBlank String operatorBucket, @Valid @NotNull @DefaultValue MetaCleanup metaCleanup,
+			@Valid @NotNull @DefaultValue EventResult eventResult) {
 	}
 
 	/** enabled = 스케줄 켜기(테스트 프로필은 끔 — 작업은 run()을 직접 부른다) */
 	public record MetaCleanup(@DefaultValue("true") boolean enabled) {
+	}
+
+	/**
+	 * enabled = WF4 리스너 시도와 10분 보충을 함께 켜기(테스트 프로필은 끔 — 테스트가 작업을 직접 만든다).
+	 * backfillDays = 보충 대상 기간: 발급 이력 저장 시각(history_generated_at)이 지금 − N일 이후인 이벤트만. 기능 이전 이벤트는 기간 밖이라
+	 * 자동으로 만들지 않는다.
+	 */
+	public record EventResult(@DefaultValue("true") boolean enabled, @Min(1) @DefaultValue("3") int backfillDays) {
 	}
 
 	// TODO(미정): CSV presigned URL 만료. 임시 5분

@@ -10,6 +10,7 @@ import java.util.List;
 /**
  * 내려받는 CSV의 공통 형식(발급 이력 · 리포트): UTF-8 + BOM, 줄 끝 CRLF, RFC 4180 따옴표 규칙, 시각은 KST +09:00.
  * 메모리에 다 모은 뒤 {@link #toBytes()}로 한 번에 꺼낸다(S3에 한 번에 올림). 한 인스턴스는 한 스레드에서만 쓴다.
+ * 리포트 CSV는 수식 가림을 켠다({@link #withFormulaGuard}). 기본(생성자)은 끔 — 발급 이력 CSV는 바이트 그대로다.
  * <pre>
  * byte[] csv = new CsvWriter("event_id", "name", "created_at").row(1043, "가을, 한정", createdAt).toBytes();
  * </pre>
@@ -24,23 +25,46 @@ public final class CsvWriter {
 	/** 밀리초 3자리(남는 자리는 버림) + KST 오프셋. DB 값이 이미 KST라 변환하지 않는다 */
 	private static final DateTimeFormatter KST = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS'+09:00'");
 
+	/** 스프레드시트가 수식으로 읽는 첫 글자(11-03 결정): = + - @ 탭 CR */
+	private static final String FORMULA_START = "=+-@\t\r";
+
 	private final StringBuilder text = new StringBuilder();
 
-	/** 머리글 한 줄을 쓴다 */
+	private final boolean formulaGuard;
+
+	/** 머리글 한 줄을 쓴다. 수식 가림 끔 */
 	public CsvWriter(String... header) {
+		this(false, header);
+	}
+
+	private CsvWriter(boolean formulaGuard, String... header) {
+		this.formulaGuard = formulaGuard;
 		row((Object[]) header);
 	}
 
 	/**
+	 * 수식 가림을 켠 CSV(리포트용, 11-03 결정). 글자 칸이 = + - @ 탭 CR로 시작하면 앞에 '를 붙여 스프레드시트가 수식으로 읽지 않게 한다.
+	 * 숫자(Number) · 시각(LocalDateTime) 칸은 그대로 — 음수가 없고 시각은 숫자로 시작한다.
+	 */
+	public static CsvWriter withFormulaGuard(String... header) {
+		return new CsvWriter(true, header);
+	}
+
+	/**
 	 * 한 줄. null은 빈 칸, LocalDateTime은 {@link #kst}, BigDecimal은 지수 표기 없이, 나머지는 toString().
-	 * 모든 칸에 {@link #field} 규칙을 적용한다.
+	 * 수식 가림을 켰으면 글자 칸에 {@link #guardFormula}, 그 뒤 모든 칸에 {@link #field} 규칙을 적용한다.
 	 */
 	public CsvWriter row(Object... fields) {
 		for (int i = 0; i < fields.length; i++) {
 			if (i > 0) {
 				text.append(',');
 			}
-			text.append(field(text(fields[i])));
+			Object value = fields[i];
+			String cell = text(value);
+			if (formulaGuard && !(value instanceof Number) && !(value instanceof LocalDateTime)) {
+				cell = guardFormula(cell);
+			}
+			text.append(field(cell));
 		}
 		text.append(CRLF);
 		return this;
@@ -65,6 +89,14 @@ public final class CsvWriter {
 			return value;
 		}
 		return '"' + value.replace("\"", "\"\"") + '"';
+	}
+
+	/** = + - @ 탭 CR로 시작하면 앞에 '를 붙인다(CR은 그 뒤 {@link #field}가 따옴표로 감싼다). 빈 값은 그대로 */
+	public static String guardFormula(String value) {
+		if (value.isEmpty() || FORMULA_START.indexOf(value.charAt(0)) < 0) {
+			return value;
+		}
+		return '\'' + value;
 	}
 
 	/** KST 벽시계 값(DB DATETIME)에 +09:00을 붙인다. 예: 2026-11-01T10:00:00.123+09:00 */
