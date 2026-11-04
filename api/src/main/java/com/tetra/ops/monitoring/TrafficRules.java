@@ -67,6 +67,7 @@ final class TrafficRules {
 	/**
 	 * 이벤트 판정 재료(Prometheus 순간값). 시리즈가 없으면 null.
 	 * complete = 재료 쿼리가 모두 성공(false면 일부 쿼리 오류로 비어 있음 — 위험이 보이지 않으면 UNKNOWN).
+	 * rps = 5xx 비율 분모(요청 rate 1m — 화면 요청량 식이 아님, 분자 errorRps와 같은 창, 2026-11-04 확정 4).
 	 * 5xx 쿼리가 실패하면 rps도 null로 넣는다(요청만 있고 5xx 없음 = 0 규칙이 실패를 0으로 바꾸지 않게).
 	 * redis = {@link #redisConnection}(null이면 끊긴 점을 못 봄 — 끊김 아님으로 본다).
 	 */

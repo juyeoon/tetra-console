@@ -44,6 +44,7 @@ import com.tetra.ops.monitoring.TrafficPlatformCollector.NodeMetric;
 import com.tetra.ops.monitoring.TrafficPlatformResponse.AddonGroup;
 import com.tetra.ops.monitoring.TrafficPlatformResponse.AddonMember;
 import com.tetra.ops.monitoring.TrafficPlatformResponse.Area;
+import com.tetra.ops.monitoring.TrafficPlatformResponse.IssuanceLcu;
 import com.tetra.ops.monitoring.TrafficPlatformResponse.Pool;
 import com.tetra.ops.monitoring.TrafficPlatformResponse.ServiceStatus;
 import com.tetra.ops.monitoring.TrafficPlatformResponse.StatusCell;
@@ -55,7 +56,7 @@ import com.tetra.ops.tenancy.TenantRouter.RoutedEvent;
 import jakarta.annotation.PreDestroy;
 
 /**
- * OPS-05 트래픽 모니터링(명세 docs/ops05). 출처별 캐시(Prometheus · DB 15초, AWS 60초)는 {@link RefreshCache} —
+ * OPS-05 트래픽 모니터링(명세 docs/ops05). 출처별 캐시(Prometheus · DB 15초, AWS 60초, 발급 ALB LCU 예약 30초)는 {@link RefreshCache} —
  * single-flight · 갱신 상한 · 실패 시 마지막 값 + stale. 응답은 출처별 asOf · stale을 따로 준다(한쪽이 죽어도 다른 칸은 보인다).
  * 이벤트 상세는 (이벤트 · 상태 · 범위)별 캐시, 2분 안 쓰이면 지운다. 호스팅이 끝난 상태(종료 처리 중 · 종료 · 종료 실패)는 범위가
  * 고정이라 Prometheus · CloudWatch 값을 한 번 받으면 다시 조회하지 않는다(진행 단계 DB만 15초, {@link #CLOSED_TTL}). 판정은 {@link TrafficRules}.
@@ -141,6 +142,9 @@ public class TrafficMonitoringService {
 
 	private final RefreshCache<Stamped<PlatformAws>> platformAwsCache;
 
+	/** 발급 ALB LCU 예약 — AWS 플랫폼 캐시(60초)와 따로 30초(MONITORING_LCU_TTL). 실패해도 RDS · Portal/Console 값은 그대로 */
+	private final RefreshCache<Stamped<IssuanceLcu>> lcuCache;
+
 	private final KeyedRefreshCache<Long, Optional<TrafficEventReader.Detail>> eventDbCache;
 
 	private final KeyedRefreshCache<EventPromKey, Stamped<EventProm>> eventPromCache;
@@ -175,6 +179,9 @@ public class TrafficMonitoringService {
 		this.platformAwsCache = new RefreshCache<>("트래픽 모니터링 · AWS", awsTtl, awsTimeout, executor,
 				deadline -> stamp(awsCollector.platform()), Stamped::asStale,
 				reason -> Stamped.unavailable(PlatformAws.unavailable(), reason));
+		this.lcuCache = new RefreshCache<>("트래픽 모니터링 · 발급 ALB LCU", m.aws().lcuTtl(), awsTimeout, executor,
+				deadline -> stamp(awsCollector.issuanceLcu()), Stamped::asStale,
+				reason -> Stamped.<IssuanceLcu>unavailable(null, reason));
 		// 이벤트별 캐시는 로그 이름에 이벤트 번호(어느 이벤트가 실패하는지)
 		this.eventDbCache = new KeyedRefreshCache<>(eventId -> new RefreshCache<>(
 				"트래픽 모니터링 · 이벤트 DB(" + eventId + "번)", ttl, timeout, executor,
@@ -202,6 +209,7 @@ public class TrafficMonitoringService {
 		TrafficCatalog.Snapshot db = catalogCache.get();
 		Stamped<TrafficPlatformCollector.Metrics> prom = prometheus();
 		Stamped<PlatformAws> aws = aws();
+		Stamped<IssuanceLcu> lcu = lcu();
 		TrafficPlatformCollector.Metrics metrics = prom.value();
 		PlatformAws awsValue = aws.value();
 
@@ -226,8 +234,10 @@ public class TrafficMonitoringService {
 		summary.add(new StatusCell(Area.AUTOMATION, automation.level(), automation.reason(), null, null));
 		summary.add(platformCell(aws));
 
-		return new TrafficPlatformResponse(prom.source(), aws.source(), grafanaUrl, summary, nodes(metrics, now),
-				new TrafficPlatformResponse.Platform(addons(prom), awsValue.rds(), awsValue.services()), upcoming(db, now),
+		return new TrafficPlatformResponse(prom.source(), aws.source(), lcu.source(), grafanaUrl, summary,
+				nodes(metrics, now),
+				new TrafficPlatformResponse.Platform(addons(prom), awsValue.rds(), awsValue.services(), lcu.value()),
+				upcoming(db, now),
 				db.failures()
 					.stream()
 					.map(f -> new TrafficPlatformResponse.Failure(Kst.toOffset(f.occurredAt()), f.eventId(), f.tenantId(),
@@ -611,6 +621,11 @@ public class TrafficMonitoringService {
 	private Stamped<PlatformAws> aws() {
 		return awsCollector.configured() ? platformAwsCache.get()
 				: Stamped.unavailable(PlatformAws.unavailable(), StaleReason.SOURCE);
+	}
+
+	/** 발급 ALB 이름(MONITORING_ISSUANCE_ALB_NAME)이 없으면 조회하지 않는다(값 없음 + stale) */
+	private Stamped<IssuanceLcu> lcu() {
+		return awsCollector.lcuConfigured() ? lcuCache.get() : Stamped.<IssuanceLcu>unavailable(null, StaleReason.SOURCE);
 	}
 
 	private EventProm collectEvent(EventPromKey key, long deadlineNanos) {

@@ -37,6 +37,7 @@ import {
   nodeTooltip,
   OPEN_GROUP_TEXT,
   opsText,
+  lcuView,
   parseEventId,
   percentText,
   PHASE_META,
@@ -66,6 +67,7 @@ const NOW = new Date('2026-10-26T15:10:00+09:00');
 const platform = (patch: Partial<TrafficPlatformResponse> = {}): TrafficPlatformResponse => ({
   prometheus: { asOf: '2026-10-26T15:12:14+09:00', stale: false, staleReason: null },
   aws: { asOf: '2026-10-26T15:12:00+09:00', stale: false, staleReason: null },
+  lcu: { asOf: '2026-10-26T15:12:00+09:00', stale: false, staleReason: null },
   grafanaUrl: 'http://localhost:13000',
   summary: [
     { area: 'CLUSTER', level: 'OK', reason: '노드 16 Ready', openCount: null, eventId: null },
@@ -78,6 +80,17 @@ const platform = (patch: Partial<TrafficPlatformResponse> = {}): TrafficPlatform
     addons: { healthy: 6, total: 6, groups: [{ name: 'KEDA', healthy: true, problems: [] }, { name: 'Prometheus', healthy: true, problems: [] }] },
     rds: { status: 'available', cpuPercent: 48.04, connections: 36, freeStorageBytes: 18 * 1024 ** 3 },
     services: [{ name: 'portal', running: 1, desired: 1, healthyTargets: 1, totalTargets: 1, fiveXx: 0 }],
+    issuanceLcu: {
+      reservedUnits: 100,
+      state: 'PROVISIONED',
+      effectiveUnits: 100,
+      zones: [
+        { zone: 'ap-northeast-2a', state: 'PROVISIONED', effectiveUnits: 50, reason: null },
+        { zone: 'ap-northeast-2c', state: 'PROVISIONED', effectiveUnits: 50, reason: null },
+      ],
+      lastModifiedAt: '2026-10-26T12:42:23+09:00',
+      decreaseRequestsRemaining: 1,
+    },
   },
   upcoming: [],
   failures: [],
@@ -261,6 +274,47 @@ describe('플랫폼 · 다가오는 이벤트 · 실패', () => {
     assert.deepEqual(serviceTexts([{ name: 'console', running: null, desired: null, healthyTargets: null, totalTargets: null, fiveXx: null }]), [
       { key: 'console', text: 'Console · 태스크 –/– · 정상 대상 – · 5xx –' },
     ]);
+  });
+  test('발급 ALB LCU 예약 한 줄: 값 · 상태 · 예약 없음 · 확인 불가', () => {
+    // 반영됨(15:26 실측 모양) — AZ별 · 마지막 변경 · 오늘 남은 줄이기는 툴팁
+    assert.deepEqual(lcuView(platform(), NOW), {
+      text: 'LCU 예약 100 · 반영됨',
+      tone: 'normal',
+      problems: [],
+      tooltip: ['ap-northeast-2a · 반영됨 · 실효 50', 'ap-northeast-2c · 반영됨 · 실효 50', '마지막 변경 12:42', '오늘 줄이기 남은 1회'],
+      delayed: false,
+    });
+    const lcu = (patch: Partial<NonNullable<TrafficPlatformResponse['platform']['issuanceLcu']>>, stale = false) => {
+      const p = platform({ lcu: { asOf: stale ? '2026-10-26T15:11:00+09:00' : '2026-10-26T15:12:00+09:00', stale, staleReason: stale ? 'SOURCE' : null } });
+      p.platform.issuanceLcu = { ...p.platform.issuanceLcu!, ...patch };
+      return lcuView(p, NOW);
+    };
+    // 늘리기 직후 반영 중 · 재조정 중은 황토
+    const pending = lcu({ reservedUnits: 200, state: 'PENDING', effectiveUnits: null, zones: [{ zone: 'ap-northeast-2a', state: 'PENDING', effectiveUnits: null, reason: null }] });
+    assert.equal(pending.text, 'LCU 예약 200 · 반영 중');
+    assert.equal(pending.tone, 'amber');
+    assert.deepEqual(pending.tooltip.slice(0, 1), ['ap-northeast-2a · 반영 중 · 실효 –']);
+    assert.equal(lcu({ reservedUnits: 200, state: 'REBALANCING' }).text, 'LCU 예약 200 · 재조정 중');
+    // 해제 중(예약 0 + pending)
+    assert.equal(lcu({ reservedUnits: 0, state: 'PENDING' }).text, '예약 해제 · 반영 중');
+    // 실패는 빨강 + AZ 사유 칩
+    const failed = lcu({ reservedUnits: 200, state: 'FAILED', zones: [{ zone: 'ap-northeast-2c', state: 'FAILED', effectiveUnits: 50, reason: 'Insufficient capacity' }] });
+    assert.equal(failed.text, 'LCU 예약 200 · 실패');
+    assert.equal(failed.tone, 'red');
+    assert.deepEqual(failed.problems, ['ap-northeast-2c Insufficient capacity']);
+    assert.equal(failed.tooltip[0], 'ap-northeast-2c · 실패 · 실효 50 · Insufficient capacity');
+    // 예약 없음(해제 끝): 흐린 글자
+    const none = lcu({ reservedUnits: null, state: 'NONE', effectiveUnits: null, zones: [], lastModifiedAt: null });
+    assert.deepEqual(none, { text: '예약 없음', tone: 'muted', problems: [], tooltip: ['오늘 줄이기 남은 1회'], delayed: false });
+    // LCU 조회만 실패하고 마지막 값이 있으면 그 값 + '지연'
+    assert.equal(lcu({}, true).delayed, true);
+    assert.equal(lcu({}, true).text, 'LCU 예약 100 · 반영됨');
+    // 한 번도 못 읽음(권한 반영 전 AccessDenied · 미설정) → '확인 불가'만, 카드 다른 줄은 그대로
+    const denied = platform({ lcu: { asOf: null, stale: true, staleReason: 'SOURCE' } });
+    denied.platform.issuanceLcu = null;
+    assert.deepEqual(lcuView(denied, NOW), { text: '확인 불가', tone: 'muted', problems: [], tooltip: [], delayed: false });
+    assert.equal(rdsText(denied), 'available · CPU 48% · 연결 36 · 남은 저장 공간 18.0 GB');
+    assert.equal(lcuView(undefined, NOW).text, '확인 불가');
   });
   test('다가오는 이벤트: 오늘은 날짜 없이, 내일은 "내일"', () => {
     const today = { eventId: 7, tenantId: 't', tenantName: 'A사', name: '쿠폰 이벤트', prepareAt: '2026-10-26T13:30:00+09:00', entryAt: '2026-10-26T14:00:00+09:00', startAt: '2026-10-26T15:00:00+09:00', endAt: '2026-10-26T15:40:00+09:00' };

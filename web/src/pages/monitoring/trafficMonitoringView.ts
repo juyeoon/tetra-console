@@ -302,6 +302,42 @@ export function serviceTexts(services: TrafficServiceStatus[] | undefined): { ke
 /** AWS 값만 지난 값이면 해당 칸(RDS · Portal/Console · ALB 5xx)에 작게 "지연" */
 export const awsDelayed = (source: { stale: boolean } | undefined) => source?.stale ?? true;
 
+const LCU_STATE_LABEL: Record<string, string> = { PROVISIONED: '반영됨', PENDING: '반영 중', REBALANCING: '재조정 중', FAILED: '실패' };
+
+export interface LcuView {
+  /** 'LCU 예약 100 · 반영됨' · '예약 없음' · '예약 해제 · 반영 중' · '확인 불가' */
+  text: string;
+  /** 글자 색: 반영됨 기본, 반영 중 · 재조정 중 황토, 실패 빨강, 예약 없음 · 확인 불가 흐림 */
+  tone: 'normal' | 'amber' | 'red' | 'muted';
+  /** 실패한 AZ의 사유(빨간 칩). 없으면 [] */
+  problems: string[];
+  /** 마우스를 올리면: AZ별 상태 · 실효, 마지막 변경, 오늘 남은 줄이기. 값이 없으면 [] */
+  tooltip: string[];
+  /** 지난 값(LCU 조회만 실패)이면 '지연' 칩. 한 번도 못 읽었으면 '확인 불가'라 칩 없음 */
+  delayed: boolean;
+}
+
+/**
+ * 플랫폼 카드 '발급 ALB' 줄(발급 ALB LCU 예약, 서버 30초 캐시). 권한 반영 전 AccessDenied · 오류로 값이 없으면 '확인 불가' —
+ * 카드의 다른 줄은 그대로(출처 lcu가 aws와 따로)
+ */
+export function lcuView(platform: TrafficPlatformResponse | undefined, now: Date): LcuView {
+  const lcu = platform?.platform.issuanceLcu;
+  if (!lcu) return { text: '확인 불가', tone: 'muted', problems: [], tooltip: [], delayed: false };
+  const delayed = platform?.lcu?.stale ?? false;
+  const tooltip = [
+    ...lcu.zones.map((z) => [z.zone ?? EMPTY, LCU_STATE_LABEL[z.state ?? ''] ?? z.state ?? EMPTY, `실효 ${countText(z.effectiveUnits)}`, ...(z.reason ? [z.reason] : [])].join(' · ')),
+    ...(lcu.lastModifiedAt ? [`마지막 변경 ${clockText(lcu.lastModifiedAt, now)}`] : []),
+    ...(isNum(lcu.decreaseRequestsRemaining) ? [`오늘 줄이기 남은 ${lcu.decreaseRequestsRemaining}회`] : []),
+  ];
+  if (lcu.state === 'NONE') return { text: '예약 없음', tone: 'muted', problems: [], tooltip, delayed };
+  const label = LCU_STATE_LABEL[lcu.state] ?? lcu.state;
+  const text = lcu.state === 'PENDING' && lcu.reservedUnits === 0 ? `예약 해제 · ${label}` : `LCU 예약 ${countText(lcu.reservedUnits)} · ${label}`;
+  const tone = lcu.state === 'PROVISIONED' ? 'normal' : lcu.state === 'FAILED' ? 'red' : 'amber';
+  const problems = lcu.zones.filter((z) => z.state === 'FAILED').map((z) => `${z.zone ?? EMPTY} ${z.reason ?? '실패'}`);
+  return { text, tone, problems, tooltip, delayed };
+}
+
 /** '7 · A사 쿠폰 이벤트' */
 export const eventTitle = (e: { eventId: number; tenantName: string | null; name: string }) =>
   `${e.eventId} · ${e.tenantName ? `${e.tenantName} ` : ''}${e.name}`;

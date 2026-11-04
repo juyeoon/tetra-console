@@ -1,6 +1,7 @@
 package com.tetra.ops.monitoring;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -13,6 +14,7 @@ import static org.mockito.Mockito.when;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.HashMap;
 import java.util.List;
@@ -23,15 +25,20 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
 import com.tetra.ops.config.TetraProperties;
+import com.tetra.ops.monitoring.AwsMonitoringGateway.CapacityReservation;
 import com.tetra.ops.monitoring.AwsMonitoringGateway.LoadBalancerRef;
 import com.tetra.ops.monitoring.AwsMonitoringGateway.MetricPoint;
 import com.tetra.ops.monitoring.AwsMonitoringGateway.MetricQuery;
 import com.tetra.ops.monitoring.AwsMonitoringGateway.ServiceCount;
 import com.tetra.ops.monitoring.AwsMonitoringGateway.TargetGroupRef;
 import com.tetra.ops.monitoring.AwsMonitoringGateway.TargetHealthCount;
+import com.tetra.ops.monitoring.AwsMonitoringGateway.ZoneCapacity;
 import com.tetra.ops.monitoring.MonitoringOverview.Point;
+import com.tetra.ops.monitoring.TrafficPlatformResponse.IssuanceLcu;
+import com.tetra.ops.monitoring.TrafficPlatformResponse.LcuState;
+import com.tetra.ops.monitoring.TrafficPlatformResponse.LcuZone;
 
-/** AWS 값 다듬기: DLQ 점 없음 = 0, 5xx 합계, ALB · 대상 그룹 조회 캐시와 실패 처리. AWS는 목 */
+/** AWS 값 다듬기: DLQ 점 없음 = 0, 5xx 합계, ALB · 대상 그룹 조회 캐시와 실패 처리, 발급 ALB LCU 예약 상태. AWS는 목 */
 class TrafficAwsCollectorTest {
 
 	private static final Instant NOW = Instant.parse("2026-10-26T06:00:00Z");
@@ -41,11 +48,15 @@ class TrafficAwsCollectorTest {
 	private final MutableClock clock = new MutableClock(NOW);
 
 	private static TetraProperties properties(String dlqNames) {
-		var aws = new TetraProperties.MonitoringAws(Duration.ofSeconds(60), Duration.ofSeconds(10), "tetra-dev-issuance",
+		return properties(dlqNames, "tetra-dev-issuance");
+	}
+
+	private static TetraProperties properties(String dlqNames, String issuanceAlbName) {
+		var aws = new TetraProperties.MonitoringAws(Duration.ofSeconds(60), Duration.ofSeconds(10), issuanceAlbName,
 				"app/console/1", "app/portal/2", "targetgroup/console/3", "targetgroup/portal/4",
 				"arn:aws:elasticloadbalancing:ap-northeast-2:000000000000:targetgroup/console/3",
 				"arn:aws:elasticloadbalancing:ap-northeast-2:000000000000:targetgroup/portal/4", "tetra-dev-mysql",
-				"tetra-dev", "console,portal", dlqNames, Duration.ofSeconds(30));
+				"tetra-dev", "console,portal", dlqNames, Duration.ofSeconds(30), Duration.ofSeconds(30));
 		var monitoring = new TetraProperties.Monitoring("", Duration.ofSeconds(2), Duration.ofSeconds(3),
 				Duration.ofSeconds(15), Duration.ofSeconds(8), aws, "");
 		return new TetraProperties("test", null, null, null, null, null, null, null, null, monitoring, null, null, null, null, null, null,
@@ -147,6 +158,103 @@ class TrafficAwsCollectorTest {
 		clock.advance(Duration.ofSeconds(61));
 		collector.event(7, window);
 		verify(gateway, times(2)).findLoadBalancer(anyString());
+	}
+
+	// ---------------------------------------------------------------- 발급 ALB LCU 예약
+
+	private static ZoneCapacity zone(String az, String state, Double effective) {
+		return new ZoneCapacity(az, state, effective, null);
+	}
+
+	@Test
+	void lcuProvisionedSumsZonesAndUsesKst() {
+		// 15:26 실측과 같은 모양: 100 LCU, 두 AZ 모두 provisioned 50, 마지막 변경 12:42:23 KST, 오늘 줄이기 1회 남음
+		IssuanceLcu lcu = TrafficAwsCollector.lcu(new CapacityReservation(100,
+				List.of(zone("ap-northeast-2c", "provisioned", 50.0), zone("ap-northeast-2a", "provisioned", 50.0)),
+				Instant.parse("2026-11-04T03:42:23.889Z"), 1));
+		assertThat(lcu.reservedUnits()).isEqualTo(100);
+		assertThat(lcu.state()).isEqualTo(LcuState.PROVISIONED);
+		assertThat(lcu.effectiveUnits()).isEqualTo(100.0);
+		// AZ 이름 순, 상태는 대문자
+		assertThat(lcu.zones()).containsExactly(new LcuZone("ap-northeast-2a", "PROVISIONED", 50.0, null),
+				new LcuZone("ap-northeast-2c", "PROVISIONED", 50.0, null));
+		assertThat(lcu.lastModifiedAt()).isEqualTo(OffsetDateTime.parse("2026-11-04T12:42:23.889+09:00"));
+		assertThat(lcu.decreaseRequestsRemaining()).isEqualTo(1);
+	}
+
+	@Test
+	void lcuStatesWorstWinsAndNoReservation() {
+		// 해제 직후(09:12:11 실측): 예약 0 + 두 AZ pending · 실효 없음 → 반영 중
+		IssuanceLcu releasing = TrafficAwsCollector.lcu(new CapacityReservation(0,
+				List.of(zone("ap-northeast-2a", "pending", null), zone("ap-northeast-2c", "pending", null)), null, 1));
+		assertThat(releasing.state()).isEqualTo(LcuState.PENDING);
+		assertThat(releasing.reservedUnits()).isZero();
+		assertThat(releasing.effectiveUnits()).isNull();
+		assertThat(releasing.lastModifiedAt()).isNull();
+		// 해제 끝(09:12:35 실측): 예약 필드도 AZ도 없음 → 예약 없음
+		IssuanceLcu none = TrafficAwsCollector.lcu(new CapacityReservation(null, List.of(), null, 1));
+		assertThat(none.state()).isEqualTo(LcuState.NONE);
+		assertThat(none.reservedUnits()).isNull();
+		assertThat(none.zones()).isEmpty();
+		// 예약은 있는데 AZ가 아직 없으면 반영 중
+		assertThat(TrafficAwsCollector.lcu(new CapacityReservation(200, List.of(), null, 2)).state())
+			.isEqualTo(LcuState.PENDING);
+		// 나쁜 것이 이긴다: FAILED > PENDING > REBALANCING > PROVISIONED. 실패 사유는 AZ에 남는다
+		IssuanceLcu failed = TrafficAwsCollector.lcu(new CapacityReservation(200,
+				List.of(zone("ap-northeast-2a", "pending", null),
+						new ZoneCapacity("ap-northeast-2c", "failed", 50.0, "Insufficient capacity")),
+				null, 2));
+		assertThat(failed.state()).isEqualTo(LcuState.FAILED);
+		assertThat(failed.zones().get(1).reason()).isEqualTo("Insufficient capacity");
+		assertThat(failed.effectiveUnits()).isEqualTo(50.0);
+		assertThat(TrafficAwsCollector.lcu(new CapacityReservation(200,
+				List.of(zone("ap-northeast-2a", "rebalancing", 100.0), zone("ap-northeast-2c", "pending", 100.0)), null, 2))
+			.state()).isEqualTo(LcuState.PENDING);
+		assertThat(TrafficAwsCollector.lcu(new CapacityReservation(200,
+				List.of(zone("ap-northeast-2a", "rebalancing", 100.0), zone("ap-northeast-2c", "provisioned", 100.0)), null,
+				2))
+			.state()).isEqualTo(LcuState.REBALANCING);
+		// SDK보다 새 코드는 그대로 남기고 상태는 반영 전으로 본다
+		IssuanceLcu unknown = TrafficAwsCollector.lcu(new CapacityReservation(200,
+				List.of(zone("ap-northeast-2a", "provisioned", 100.0), zone("ap-northeast-2c", "warming", null)), null, 2));
+		assertThat(unknown.state()).isEqualTo(LcuState.PENDING);
+		assertThat(unknown.zones().get(1).state()).isEqualTo("WARMING");
+	}
+
+	@Test
+	void lcuUsesIssuanceAlbArnCache() {
+		LoadBalancerRef alb = new LoadBalancerRef("arn:alb", "app/tetra-dev-issuance/9");
+		when(gateway.findLoadBalancer("tetra-dev-issuance")).thenReturn(Optional.of(alb));
+		when(gateway.capacityReservation("arn:alb")).thenReturn(Optional.of(new CapacityReservation(100,
+				List.of(zone("ap-northeast-2a", "provisioned", 50.0), zone("ap-northeast-2c", "provisioned", 50.0)), null, 1)));
+		TrafficAwsCollector collector = collector("");
+
+		assertThat(collector.lcuConfigured()).isTrue();
+		assertThat(collector.issuanceLcu().state()).isEqualTo(LcuState.PROVISIONED);
+		collector.issuanceLcu();
+		// ARN은 DescribeLoadBalancers 10분 캐시 그대로(예약 조회만 매번 — 30초 캐시는 TrafficMonitoringService)
+		verify(gateway, times(1)).findLoadBalancer(anyString());
+		verify(gateway, times(2)).capacityReservation("arn:alb");
+	}
+
+	@Test
+	void lcuFailuresThrowSoOnlyLcuIsStale() {
+		LoadBalancerRef alb = new LoadBalancerRef("arn:alb", "app/tetra-dev-issuance/9");
+		when(gateway.findLoadBalancer("tetra-dev-issuance")).thenReturn(Optional.of(alb));
+		// 권한 반영 전: AccessDenied → 예외(캐시가 값 없음 + stale → 화면 '확인 불가')
+		when(gateway.capacityReservation("arn:alb"))
+			.thenThrow(new AwsMonitoringException("DescribeCapacityReservation AccessDenied"));
+		assertThatThrownBy(() -> collector("").issuanceLcu()).isInstanceOf(AwsMonitoringException.class)
+			.hasMessage("DescribeCapacityReservation AccessDenied");
+
+		// ALB를 못 찾음(이름 조회 결과 없음)
+		when(gateway.findLoadBalancer("tetra-dev-issuance")).thenReturn(Optional.empty());
+		assertThatThrownBy(() -> collector("").issuanceLcu()).isInstanceOf(AwsMonitoringException.class)
+			.hasMessage("발급 ALB 없음");
+
+		// 발급 ALB 이름이 없으면 조회하지 않는다
+		TrafficAwsCollector unnamed = new TrafficAwsCollector(gateway, properties("", ""), clock);
+		assertThat(unnamed.lcuConfigured()).isFalse();
 	}
 
 	@Test

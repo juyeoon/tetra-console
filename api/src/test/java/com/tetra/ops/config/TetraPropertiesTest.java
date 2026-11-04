@@ -50,6 +50,10 @@ class TetraPropertiesTest {
 				assertThat(properties.monitoring().readTimeout()).hasSeconds(3);
 				assertThat(properties.monitoring().cacheTtl()).hasSeconds(15);
 				assertThat(properties.monitoring().refreshTimeout()).hasSeconds(8);
+				// 발급 ALB LCU 예약 캐시 = Step Functions 실행 목록과 같은 30초, 발급 ALB 이름이 없으면 조회하지 않음
+				assertThat(properties.monitoring().aws().lcuTtl()).hasSeconds(30);
+				assertThat(properties.monitoring().aws().lcuTtl()).isEqualTo(properties.monitoring().aws().sfnListTtl());
+				assertThat(properties.monitoring().aws().issuanceAlbName()).isEmpty();
 				assertThat(properties.dbMigration().username()).isEqualTo("tetra_migrator");
 				assertThat(properties.dbMigration().locations()).isEqualTo("classpath:db/migration/tenant");
 				assertThat(properties.toString()).doesNotContain("0123456789abcdef")

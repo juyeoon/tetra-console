@@ -44,10 +44,12 @@ import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 
 import com.tetra.ops.common.time.Kst;
 import com.tetra.ops.event.EntryOpen;
+import com.tetra.ops.monitoring.AwsMonitoringGateway.CapacityReservation;
 import com.tetra.ops.monitoring.AwsMonitoringGateway.LoadBalancerRef;
 import com.tetra.ops.monitoring.AwsMonitoringGateway.MetricPoint;
 import com.tetra.ops.monitoring.AwsMonitoringGateway.ServiceCount;
 import com.tetra.ops.monitoring.AwsMonitoringGateway.TargetHealthCount;
+import com.tetra.ops.monitoring.AwsMonitoringGateway.ZoneCapacity;
 import com.tetra.ops.support.FakePrometheus;
 import com.tetra.ops.support.IntegrationTest;
 
@@ -78,6 +80,8 @@ class TrafficMonitoringApiTest extends IntegrationTest {
 		registry.add("tetra.monitoring.prometheus-url", prometheus::url);
 		registry.add("tetra.monitoring.cache-ttl", () -> "PT0S");
 		registry.add("tetra.monitoring.aws.cache-ttl", () -> "PT0S");
+		// LCU 예약 캐시(기본 30초)도 테스트끼리 섞이지 않게 0
+		registry.add("tetra.monitoring.aws.lcu-ttl", () -> "PT0S");
 		registry.add("tetra.monitoring.aws.issuance-alb-name", () -> "tetra-dev-issuance");
 		registry.add("tetra.monitoring.aws.rds-id", () -> "tetra-dev-mysql");
 		registry.add("tetra.monitoring.aws.ecs-cluster", () -> "tetra-dev");
@@ -137,6 +141,11 @@ class TrafficMonitoringApiTest extends IntegrationTest {
 		when(aws.targetHealth(anyString())).thenReturn(new TargetHealthCount(1, 1));
 		when(aws.findLoadBalancer("tetra-dev-issuance")).thenReturn(Optional.of(new LoadBalancerRef("arn:alb", "app/x/1")));
 		when(aws.targetGroups("arn:alb")).thenReturn(List.of());
+		// 15:26 실측 모양: 100 LCU, 두 AZ 모두 provisioned 50
+		when(aws.capacityReservation("arn:alb")).thenReturn(Optional.of(new CapacityReservation(100,
+				List.of(new ZoneCapacity("ap-northeast-2a", "provisioned", 50.0, null),
+						new ZoneCapacity("ap-northeast-2c", "provisioned", 50.0, null)),
+				Instant.parse("2026-11-04T03:42:23Z"), 1)));
 	}
 
 	private void live(long eventId, String tenantId, String name, LocalDateTime start) {
@@ -297,6 +306,17 @@ class TrafficMonitoringApiTest extends IntegrationTest {
 			.andExpect(jsonPath("$.platform.services[1].name").value("portal"))
 			.andExpect(jsonPath("$.platform.services[1].healthyTargets").value(1))
 			.andExpect(jsonPath("$.platform.services[1].fiveXx").value(nullValue()))
+			// 발급 ALB LCU 예약(발급 ALB ARN은 이름 조회 그대로)
+			.andExpect(jsonPath("$.lcu.stale").value(false))
+			.andExpect(jsonPath("$.lcu.asOf").isString())
+			.andExpect(jsonPath("$.platform.issuanceLcu.reservedUnits").value(100))
+			.andExpect(jsonPath("$.platform.issuanceLcu.state").value("PROVISIONED"))
+			.andExpect(jsonPath("$.platform.issuanceLcu.effectiveUnits").value(100.0))
+			.andExpect(jsonPath("$.platform.issuanceLcu.zones[*].zone").value(contains("ap-northeast-2a", "ap-northeast-2c")))
+			.andExpect(jsonPath("$.platform.issuanceLcu.zones[0].state").value("PROVISIONED"))
+			.andExpect(jsonPath("$.platform.issuanceLcu.zones[0].effectiveUnits").value(50.0))
+			.andExpect(jsonPath("$.platform.issuanceLcu.lastModifiedAt").value("2026-11-04T12:42:23+09:00"))
+			.andExpect(jsonPath("$.platform.issuanceLcu.decreaseRequestsRemaining").value(1))
 			// B-3 다가오는 이벤트
 			.andExpect(jsonPath("$.upcoming.length()").value(1))
 			.andExpect(jsonPath("$.upcoming[0].eventId").value(7106))
@@ -313,6 +333,49 @@ class TrafficMonitoringApiTest extends IntegrationTest {
 			.andExpect(jsonPath("$.failures[0].reason").value("동결 확인 시간 초과"))
 			.andExpect(jsonPath("$.failures[1].step").value("MAIL"))
 			.andExpect(jsonPath("$.failures[1].eventId").value(nullValue()));
+	}
+
+	@Test
+	void lcuAccessDeniedMarksOnlyLcuStale() throws Exception {
+		// LCU 조회 실패(권한 반영 전 AccessDenied · AWS 오류): LCU 출처만 stale. 한 번도 못 읽었으면 값 없음(화면 '확인 불가' —
+		// 캐시가 컨텍스트 공유라 여기서는 미설정 TrafficMonitoringUnconfiguredApiTest · RefreshCache가 본다), 마지막 값이 있으면
+		// 그 값 + 지연. 카드의 다른 값 · 상태 요약은 그대로(AWS 플랫폼 캐시와 따로)
+		respondPlatform();
+		mvc.perform(get("/api/ops/monitoring/platform").cookie(operatorCookie()))
+			.andExpect(jsonPath("$.lcu.stale").value(false))
+			.andExpect(jsonPath("$.platform.issuanceLcu.reservedUnits").value(100));
+		when(aws.capacityReservation("arn:alb"))
+			.thenThrow(new AwsMonitoringException("DescribeCapacityReservation AccessDenied"));
+		mvc.perform(get("/api/ops/monitoring/platform").cookie(operatorCookie()))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.lcu.stale").value(true))
+			.andExpect(jsonPath("$.lcu.staleReason").value("SOURCE"))
+			.andExpect(jsonPath("$.lcu.asOf").isString())
+			.andExpect(jsonPath("$.platform.issuanceLcu.reservedUnits").value(100))
+			.andExpect(jsonPath("$.aws.stale").value(false))
+			.andExpect(jsonPath("$.platform.rds.status").value("available"))
+			.andExpect(jsonPath("$.platform.services[0].healthyTargets").value(1))
+			.andExpect(jsonPath("$.summary[3].level").value("OK"));
+	}
+
+	@Test
+	void lcuNoReservationAndRelease() throws Exception {
+		respondPlatform();
+		// 예약 없음(해제 끝): 예약 필드 · AZ 없음
+		when(aws.capacityReservation("arn:alb")).thenReturn(Optional.of(new CapacityReservation(null, List.of(), null, 1)));
+		mvc.perform(get("/api/ops/monitoring/platform").cookie(operatorCookie()))
+			.andExpect(jsonPath("$.lcu.stale").value(false))
+			.andExpect(jsonPath("$.platform.issuanceLcu.state").value("NONE"))
+			.andExpect(jsonPath("$.platform.issuanceLcu.reservedUnits").value(nullValue()))
+			.andExpect(jsonPath("$.platform.issuanceLcu.zones.length()").value(0))
+			.andExpect(jsonPath("$.platform.issuanceLcu.lastModifiedAt").value(nullValue()));
+		// 해제 중: 예약 0 + AZ pending → 반영 중
+		when(aws.capacityReservation("arn:alb")).thenReturn(Optional.of(new CapacityReservation(0,
+				List.of(new ZoneCapacity("ap-northeast-2a", "pending", null, null)), null, 1)));
+		mvc.perform(get("/api/ops/monitoring/platform").cookie(operatorCookie()))
+			.andExpect(jsonPath("$.platform.issuanceLcu.state").value("PENDING"))
+			.andExpect(jsonPath("$.platform.issuanceLcu.reservedUnits").value(0))
+			.andExpect(jsonPath("$.platform.issuanceLcu.effectiveUnits").value(nullValue()));
 	}
 
 	@Test
@@ -394,11 +457,11 @@ class TrafficMonitoringApiTest extends IntegrationTest {
 		mvc.perform(get("/api/ops/monitoring/events/7101").cookie(operatorCookie()))
 			.andExpect(status().isOk())
 			.andExpect(jsonPath("$.prometheus.stale").value(false))
-			.andExpect(jsonPath("$.kpi.live.rps").value(1131.2))
+			.andExpect(jsonPath("$.kpi.live.rps").value(2262.5))
 			.andExpect(jsonPath("$.kpi.live.errorRatio").value(nullValue()))
 			.andExpect(jsonPath("$.kpi.live.podsReady").value(8))
 			.andExpect(jsonPath("$.kpi.level").value("UNKNOWN"))
-			.andExpect(jsonPath("$.charts.traffic.rps[0]").value(1131.24))
+			.andExpect(jsonPath("$.charts.traffic.rps[0]").value(2262.48))
 			.andExpect(jsonPath("$.charts.errors.app").value(everyItem(nullValue())));
 	}
 
@@ -548,7 +611,10 @@ class TrafficMonitoringApiTest extends IntegrationTest {
 	private void respondEvent(String tenantId, long eventId) {
 		TrafficQueries.EventQueries q = TrafficQueries.forEvent(tenantId, eventId);
 		both(TrafficQueries.KUBE_STATE_METRICS_UP, "3");
-		both(q.rps(), "1131.24");
+		// 화면 요청량(요청량 식, KPI · 15초 간격 그래프 같은 쿼리)과 5xx 비율 분모(rate 1m)는 다른 쿼리 — 일부러 값을 다르게 둔다.
+		// 5xx 비율은 13.57 ÷ 1131.24 = 1.2%(분모만 요청량 식으로 바꾸지 않음, 2026-11-04 확정 4)
+		both(q.rps(TrafficQueries.RPS_INSTANT_WINDOW), "2262.48");
+		both(q.ratioRps(), "1131.24");
 		both(q.errorRps(), "13.57");
 		prometheus.respond(q.p95ByUri(), r -> isRange(r)
 				? matrix(r, "{\"uri\":\"/api/issuance/events/{eventId}/coupons/claim\"}", i -> "0.18")
@@ -607,7 +673,7 @@ class TrafficMonitoringApiTest extends IntegrationTest {
 			.andExpect(jsonPath("$.kpi.level").value("WARN"))
 			.andExpect(jsonPath("$.kpi.reason").value("5xx 1.2%"))
 			.andExpect(jsonPath("$.kpi.warn").value(contains("errorRatio")))
-			.andExpect(jsonPath("$.kpi.live.rps").value(1131.2))
+			.andExpect(jsonPath("$.kpi.live.rps").value(2262.5))
 			.andExpect(jsonPath("$.kpi.live.errorRatio").value(0.012))
 			.andExpect(jsonPath("$.kpi.live.p95Ms").value(180))
 			.andExpect(jsonPath("$.kpi.live.p95TicketMs").value(120))
@@ -629,7 +695,7 @@ class TrafficMonitoringApiTest extends IntegrationTest {
 			// TEST-LEAD: 서비스 값 30
 			// .andExpect(jsonPath("$.range.stepSeconds").value(30))
 			.andExpect(jsonPath("$.range.stepSeconds").value(15)) // TEST-LEAD
-			.andExpect(jsonPath("$.charts.traffic.rps[0]").value(1131.24))
+			.andExpect(jsonPath("$.charts.traffic.rps[0]").value(2262.48))
 			// 트래픽 그래프는 RPS만, 입장 · 입장 허용은 입장 그래프
 			.andExpect(jsonPath("$.charts.traffic.cursorPerSec").doesNotExist())
 			.andExpect(jsonPath("$.charts.admission.admittedPerSec[0]").value(0.17))
@@ -641,7 +707,7 @@ class TrafficMonitoringApiTest extends IntegrationTest {
 			.andExpect(jsonPath("$.charts.pods.max").value(12))
 			.andExpect(jsonPath("$.charts.rds.cpu[0][1]").value(48.0));
 		assertThat(prometheus.requests()).extracting(FakePrometheus.Request::query)
-			.doesNotContain(TrafficQueries.forEvent(B, 7106).rps());
+			.doesNotContain(TrafficQueries.forEvent(B, 7106).rps(TrafficQueries.RPS_INSTANT_WINDOW));
 	}
 
 	@Test
@@ -768,8 +834,10 @@ class TrafficMonitoringApiTest extends IntegrationTest {
 		both(q.admittedPerSec(step), "0.17");
 		both(q.cursorPerSec(step), "54");
 		both(TrafficQueries.KUBE_STATE_METRICS_UP, "3");
-		// 0번 점(입장 −10분)은 입장 전 웜업 — 최종값에 넣지 않는다
-		prometheus.respond(q.rps(), r -> matrix(r, "{}", i -> i == 10 ? "1820" : i == 0 ? "99999" : "100"));
+		// 0번 점(입장 −10분)은 입장 전 웜업 — 최종값에 넣지 않는다. 최대 RPS = 요청량 식(창 = 그래프 간격),
+		// 평균 5xx = rate 1m ÷ rate 1m(분모는 요청량 식이 아닌 ratioRps)
+		prometheus.respond(q.rps(step), r -> matrix(r, "{}", i -> i == 10 ? "7300" : i == 0 ? "99999" : "120"));
+		prometheus.respond(q.ratioRps(), r -> matrix(r, "{}", i -> i == 10 ? "1820" : i == 0 ? "99999" : "100"));
 		both(q.errorRps(), "0.3");
 		both(q.waiting(), "0");
 		prometheus.respond(q.stock(), r -> matrix(r, "{}", i -> Long.toString(Math.max(0, 10000 - i * 100))));
@@ -786,7 +854,7 @@ class TrafficMonitoringApiTest extends IntegrationTest {
 			.andExpect(jsonPath("$.steps[5].endAt").value(iso(now.minusDays(2).plusHours(3))))
 			.andExpect(jsonPath("$.event.eventEndAt").value(iso(now.minusDays(2).plusHours(3))))
 			.andExpect(jsonPath("$.kpi.live").value(nullValue()))
-			.andExpect(jsonPath("$.kpi.summary.peakRps.value").value(1820.0))
+			.andExpect(jsonPath("$.kpi.summary.peakRps.value").value(7300.0))
 			.andExpect(jsonPath("$.kpi.summary.peakRps.at").isString())
 			// 평균도 입장 ~ 이벤트 종료(end_at = 시작 +3시간)만: 0.3 × n ÷ (100 × (n − 1) + 1820)
 			.andExpect(jsonPath("$.kpi.summary.errorRatioAvg").value(closeTo(0.0027, 0.00005)))
@@ -809,12 +877,12 @@ class TrafficMonitoringApiTest extends IntegrationTest {
 			.andExpect(jsonPath("$.charts.admission.admittedPerSec[0]").value(0.17))
 			.andExpect(jsonPath("$.charts.admission.cursorPerSec[0]").value(54.0));
 		assertThat(prometheus.requests()).extracting(FakePrometheus.Request::query)
-			.contains(q.admittedPerSec(step), q.cursorPerSec(step), q.p95ByUri(step));
+			.contains(q.admittedPerSec(step), q.cursorPerSec(step), q.p95ByUri(step), q.rps(step), q.ratioRps());
 		mvc.perform(get("/api/ops/monitoring/events/7104").param("range", "start").cookie(operatorCookie()))
 			.andExpect(jsonPath("$.range.key").value("start"))
 			.andExpect(jsonPath("$.range.stepSeconds").value(15))
 			// 최종값은 범위와 상관없이 전체 구간
-			.andExpect(jsonPath("$.kpi.summary.peakRps.value").value(1820.0));
+			.andExpect(jsonPath("$.kpi.summary.peakRps.value").value(7300.0));
 	}
 
 	@Test
@@ -923,7 +991,7 @@ class TrafficMonitoringApiTest extends IntegrationTest {
 			.andExpect(status().isOk())
 			.andExpect(jsonPath("$.event.phase").value("WRAP_UP"))
 			.andExpect(jsonPath("$.event.eventEndAt").value(iso(now.minusMinutes(2))))
-			.andExpect(jsonPath("$.kpi.live.rps").value(1131.2))
+			.andExpect(jsonPath("$.kpi.live.rps").value(2262.5))
 			.andExpect(jsonPath("$.kpi.level").value("WARN"))
 			.andExpect(jsonPath("$.kpi.reason").value("5xx 1.2%"))
 			.andExpect(jsonPath("$.range.key").value("entry"))
@@ -960,7 +1028,7 @@ class TrafficMonitoringApiTest extends IntegrationTest {
 				.value(contains("DONE", "DONE", "DONE", "DONE", "DONE", "DONE", "ACTIVE", "WAITING")))
 			// 최종값 · 범위 고정: 입장 −10분 ~ 호스팅 종료 +10분(아직 미래여도 지금으로 자르지 않음)
 			.andExpect(jsonPath("$.kpi.live").value(nullValue()))
-			.andExpect(jsonPath("$.kpi.summary.peakRps.value").value(1131.24))
+			.andExpect(jsonPath("$.kpi.summary.peakRps.value").value(2262.48))
 			.andExpect(jsonPath("$.range.key").value("full"))
 			.andExpect(jsonPath("$.range.options").value(contains("full", "start")))
 			.andExpect(jsonPath("$.range.from").value(iso(EntryOpen.at(start).minusMinutes(10))))
@@ -983,7 +1051,7 @@ class TrafficMonitoringApiTest extends IntegrationTest {
 			.andExpect(jsonPath("$.steps[*].state")
 				.value(contains("DONE", "DONE", "DONE", "DONE", "DONE", "DONE", "DONE", "ACTIVE")))
 			.andExpect(jsonPath("$.steps[6].actualAt").value(iso(now)))
-			.andExpect(jsonPath("$.kpi.summary.peakRps.value").value(1131.24));
+			.andExpect(jsonPath("$.kpi.summary.peakRps.value").value(2262.48));
 		assertThat(prometheus.requests()).hasSize(queried);
 		verify(aws, never()).metricData(anyList(), any(), any());
 

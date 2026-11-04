@@ -13,6 +13,8 @@ import io.swagger.v3.oas.annotations.media.Schema;
  */
 public record TrafficPlatformResponse(MonitoringSource prometheus,
 		@Schema(description = "AWS(ALB · RDS · ECS · DLQ). 60초 캐시") MonitoringSource aws,
+		@Schema(description = "발급 ALB LCU 예약(DescribeCapacityReservation). 30초 캐시, aws와 따로 — 권한 없음 · 오류면 이것만 stale"
+				+ "(한 번도 못 읽었으면 platform.issuanceLcu null → 화면 '확인 불가')") MonitoringSource lcu,
 		@Schema(description = "'Grafana에서 자세히' 링크의 Grafana 주소(GRAFANA_URL, 기본 http://localhost:13000). 비었으면 null — 링크 숨김") String grafanaUrl,
 		@Schema(description = "4칸 고정 순서: CLUSTER · EVENT · AUTOMATION · PLATFORM") List<StatusCell> summary,
 		Nodes nodes, Platform platform,
@@ -55,7 +57,28 @@ public record TrafficPlatformResponse(MonitoringSource prometheus,
 			boolean recent) {
 	}
 
-	public record Platform(Addons addons, Rds rds, List<ServiceStatus> services) {
+	/** issuanceLcu: 발급 ALB 이름이 없거나 한 번도 못 읽었으면 null(lcu.stale = true) */
+	public record Platform(Addons addons, Rds rds, List<ServiceStatus> services, IssuanceLcu issuanceLcu) {
+	}
+
+	/**
+	 * 발급 ALB LCU 예약 상태 — AZ 상태를 합친 것, 나쁜 것이 이긴다(FAILED > PENDING > REBALANCING > PROVISIONED).
+	 * 예약 값도 AZ도 없으면 NONE(예약 없음). 해제 중(예약 0 + AZ pending)은 PENDING
+	 */
+	public enum LcuState {
+		PROVISIONED, PENDING, REBALANCING, FAILED, NONE
+	}
+
+	/**
+	 * reservedUnits = 예약 LCU(예약 없음 null, 해제 중 0). effectiveUnits = AZ 실효 LCU 합(값이 있는 AZ만, 하나도 없으면 null).
+	 * zones = AZ 이름 순. lastModifiedAt = 마지막 변경, decreaseRequestsRemaining = 오늘 남은 줄이기 횟수(AWS 값 그대로)
+	 */
+	public record IssuanceLcu(Integer reservedUnits, LcuState state, Double effectiveUnits, List<LcuZone> zones,
+			OffsetDateTime lastModifiedAt, Integer decreaseRequestsRemaining) {
+	}
+
+	/** state = PROVISIONED · PENDING · REBALANCING · FAILED(AWS 코드 대문자, 모르는 값도 그대로). reason = 실패 사유 등, 없으면 null */
+	public record LcuZone(String zone, String state, Double effectiveUnits, String reason) {
 	}
 
 	/** healthy = 정상인 그룹 수(Prometheus를 못 읽었으면 null), total = 그룹 수(6) */

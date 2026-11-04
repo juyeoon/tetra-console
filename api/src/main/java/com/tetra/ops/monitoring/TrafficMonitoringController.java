@@ -10,7 +10,7 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 
-/** OPS-05 트래픽 모니터링(명세 docs/ops05). 값은 Prometheus · AWS · DB, 출처별 캐시(15초 · 60초 · 15초). */
+/** OPS-05 트래픽 모니터링(명세 docs/ops05). 값은 Prometheus · AWS · DB, 출처별 캐시(15초 · 60초(LCU 예약 30초) · 15초). */
 @Tag(name = "트래픽 모니터링", description = "OPS-05 트래픽 모니터링")
 @RestController
 @RequestMapping("/api/ops/monitoring")
@@ -27,9 +27,9 @@ public class TrafficMonitoringController {
 
 	@Operation(summary = "OPS-05 상태 요약 · 노드 · 플랫폼 · 다가오는 이벤트 · 최근 자동화 실패",
 			description = "상태 요약 4칸(CLUSTER · EVENT · AUTOMATION · PLATFORM, level OK · WARN · DANGER · UNKNOWN), "
-					+ "노드(클러스터 CPU · 메모리 0~1, 최근 1시간, 풀별 노드), 애드온 · RDS · Portal · Console, "
+					+ "노드(클러스터 CPU · 메모리 0~1, 최근 1시간, 풀별 노드), 애드온 · RDS · Portal · Console · 발급 ALB LCU 예약, "
 					+ "다가오는 이벤트, 최근 7일 자동화 실패 · 긴급 알림. 시리즈가 없으면 null. "
-					+ "prometheus · aws 각각 asOf · stale(실패 · 미설정이면 마지막 값 + stale, 없으면 수치 null)")
+					+ "prometheus · aws · lcu 각각 asOf · stale(실패 · 미설정이면 마지막 값 + stale, 없으면 수치 null)")
 	@GetMapping("/platform")
 	public TrafficPlatformResponse platform() {
 		return service.platform();

@@ -87,7 +87,8 @@ public record TrafficEventResponse(MonitoringSource prometheus,
 
 	/**
 	 * 지금 값. PRE_ENTRY는 rps · errorRatio · p95 · waiting이 null("—"). 시리즈가 없으면 null.
-	 * errorRatio 0~1, p95는 ms(발급 · 번호표 중 큰 값), cpu는 코어, memory는 바이트, redisMemoryRatio 0~1.
+	 * rps = 요청량 식(최근 15초 안 1초 값의 최대 — 1초 수집이면 초당, 15초 수집이면 15초 평균),
+	 * errorRatio 0~1(5xx rate 1m ÷ 요청 rate 1m), p95는 ms(발급 · 번호표 중 큰 값), cpu는 코어, memory는 바이트, redisMemoryRatio 0~1.
 	 * redisConnection은 Redis 지표가 없거나 끊김 쿼리가 실패하면 null
 	 */
 	public record Live(Double rps, Double errorRatio, Long p95Ms, Long p95IssuanceMs, Long p95TicketMs,
@@ -128,7 +129,7 @@ public record TrafficEventResponse(MonitoringSource prometheus,
 			Progress progress, Admission admission, Redis redis, Resources resources, Rds rds) {
 	}
 
-	/** rps = API 초당 요청(health · 액추에이터 제외) */
+	/** rps = API 초당 요청(health · 액추에이터 제외), 요청량 식 — 점마다 그 그래프 간격 안 1초 값의 최대 */
 	public record Traffic(List<Double> rps) {
 	}
 

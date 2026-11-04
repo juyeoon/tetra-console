@@ -83,6 +83,20 @@ class RefreshCacheTest {
 	}
 
 	@Test
+	void awsAccessDeniedBeforeFirstSuccessIsSourceWithoutValue(CapturedOutput output) {
+		// 발급 ALB LCU 예약: 권한(infra-aws)이 반영되기 전 배포 → 값 없음(화면 '확인 불가'), 원인 SOURCE, 한 줄(스택 없음)
+		RefreshCache<String> cache = direct();
+		next.set(failing(new AwsMonitoringException("DescribeCapacityReservation AccessDenied")));
+		assertThat(cache.get()).isEqualTo("none:SOURCE");
+		assertThat(output.getOut())
+			.contains("시험 캐시 조회 실패(DescribeCapacityReservation AccessDenied) — 마지막 값이 없어 확인 불가로 응답합니다")
+			.doesNotContain("AwsMonitoringException");
+		// 권한이 반영되면 다음 갱신부터 값
+		next.set(() -> "100");
+		assertThat(cache.get()).isEqualTo("100");
+	}
+
+	@Test
 	void refreshTimeoutIsSource() {
 		ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
 		try {

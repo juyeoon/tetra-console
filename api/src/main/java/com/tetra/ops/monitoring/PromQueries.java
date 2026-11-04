@@ -43,16 +43,19 @@ final class PromQueries {
 
 	// ---- 실시간 트래픽 · 테넌트 RPS ----
 
-	/** 테넌트별 초당 요청 수. range(최근 30분)와 instant(테넌트 별 처리 현황 rps) 둘 다 */
-	static final String RPS_BY_TENANT = """
-			sum by (tenant_id) (rate(http_server_requests_seconds_count{uri!~"%s"}[1m]))""".formatted(EXCLUDED_URI);
+	/**
+	 * 실시간 트래픽 그래프 간격 = 요청량 창({@link RequestRate#peak}). 같아야 1초 값이 빠짐없이 어느 한 점에 들어간다.
+	 * instant(지금 값)도 같은 창 — 홈 캐시(15초)와 같아 갱신 사이 값을 놓치지 않는다
+	 */
+	static final Duration TRAFFIC_STEP = Duration.ofSeconds(15);
 
-	static final String RPS_TOTAL = """
-			sum(rate(http_server_requests_seconds_count{uri!~"%s"}[1m]))""".formatted(EXCLUDED_URI);
+	/** 테넌트별 초당 요청 수(요청량 식 {@link RequestRate}). range(최근 30분)와 instant(테넌트 별 처리 현황 rps) 둘 다 */
+	static final String RPS_BY_TENANT = RequestRate.peak(
+			"sum by (tenant_id) (" + RequestRate.byPod("uri!~\"" + EXCLUDED_URI + "\"", "", "pod, tenant_id") + ")",
+			TRAFFIC_STEP);
 
-	/** 테넌트별 5xx 초당 요청 수. %s = 검증한 tenant_id를 |로 이은 것, {@link #EXCLUDED_URI} */
-	private static final String ERROR_RPS_BY_TENANT = """
-			sum by (tenant_id) (rate(http_server_requests_seconds_count{tenant_id=~"%s",uri!~"%s",status=~"5.."}[1m]))""";
+	static final String RPS_TOTAL = RequestRate
+		.peak("sum(" + RequestRate.byPod("uri!~\"" + EXCLUDED_URI + "\"", "", "pod") + ")", TRAFFIC_STEP);
 
 	// ---- 테넌트 별 처리 현황: 네임스페이스 tenant-<tenant_id> ----
 
@@ -71,10 +74,10 @@ final class PromQueries {
 	/**
 	 * 입장 열림부터 누적 요청 수, status별. 5xx는 실패, 나머지는 처리 완료로 나눈다.
 	 * 앱(발급 API)까지 온 요청만 센다 — ALB가 앞에서 낸 5xx는 잡히지 않는다.
-	 * %s = 검증한 tenant_id · {@link #EXCLUDED_URI}, %d = 범위(초)
+	 * 구간 안에서 처음 생긴 시리즈는 첫 값부터 센다({@link RequestRate#increaseWithBorn}) — increase만 쓰면 이벤트 20의
+	 * 번호표 몰림(13:20에 생긴 시리즈의 첫 값 약 1.1만 건)이 빠졌다(2026-11-04)
 	 */
-	private static final String REQUESTS_BY_STATUS_SINCE = """
-			sum by (status) (increase(http_server_requests_seconds_count{tenant_id="%s",uri!~"%s"}[%ds]))""";
+	private static final String REQUESTS_SERIES = "http_server_requests_seconds_count{tenant_id=\"%s\",uri!~\"%s\"}";
 
 	static final Duration MIN_RANGE = Duration.ofSeconds(60);
 
@@ -83,18 +86,26 @@ final class PromQueries {
 	private PromQueries() {
 	}
 
+	/**
+	 * 테넌트별 5xx 초당 요청 수 — 홈 테넌트 흐름의 완료 · 실패 점 나누기(errorRps ÷ rps, 화면 효과뿐)라 {@link #RPS_BY_TENANT}와
+	 * 같은 요청량 식(분모 · 분자가 같은 구간). 판정에는 쓰지 않는다. tenantIds = 검증한 tenant_id
+	 */
 	static String errorRpsByTenant(Collection<String> tenantIds) {
 		if (tenantIds.isEmpty()) {
 			throw new IllegalArgumentException("tenant_id가 없습니다.");
 		}
 		String alternatives = tenantIds.stream().map(TenantIds::requireValid).sorted().collect(Collectors.joining("|"));
-		return ERROR_RPS_BY_TENANT.formatted(alternatives, EXCLUDED_URI);
+		String tenants = "tenant_id=~\"" + alternatives + "\"";
+		return RequestRate.peak("sum by (tenant_id) ("
+				+ RequestRate.byPod(tenants + ",uri!~\"" + EXCLUDED_URI + "\",status=~\"5..\"", tenants, "pod, tenant_id") + ")",
+				TRAFFIC_STEP);
 	}
 
 	/** range는 60초 ~ 7일로 자른다 */
 	static String requestsByStatusSince(String tenantId, Duration range) {
 		long seconds = Math.clamp(range.toSeconds(), MIN_RANGE.toSeconds(), MAX_RANGE.toSeconds());
-		return REQUESTS_BY_STATUS_SINCE.formatted(TenantIds.requireValid(tenantId), EXCLUDED_URI, seconds);
+		String series = REQUESTS_SERIES.formatted(TenantIds.requireValid(tenantId), EXCLUDED_URI);
+		return "sum by (status) (" + RequestRate.increaseWithBorn(series, seconds + "s") + ")";
 	}
 
 	static String namespace(String tenantId) {

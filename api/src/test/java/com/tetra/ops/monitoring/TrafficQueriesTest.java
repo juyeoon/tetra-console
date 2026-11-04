@@ -14,7 +14,7 @@ class TrafficQueriesTest {
 	@Test
 	void eventQueriesUseValidatedIdsOnly() {
 		TrafficQueries.EventQueries q = TrafficQueries.forEvent("aaaaaaaaaaaa", 7);
-		assertThat(q.rps()).isEqualTo(
+		assertThat(q.ratioRps()).isEqualTo(
 				"sum(rate(http_server_requests_seconds_count{event_id=\"7\",uri!~\"/actuator.*|/api/issuance/health\"}[1m]))");
 		assertThat(q.apiReady()).isEqualTo("sum(kube_pod_status_ready{namespace=\"tenant-aaaaaaaaaaaa\",condition=\"true\"}"
 				+ " * on(namespace,pod) group_left() kube_pod_labels{namespace=\"tenant-aaaaaaaaaaaa\","
@@ -59,12 +59,30 @@ class TrafficQueriesTest {
 	}
 
 	@Test
+	void requestRateIsGrafanaFormula() {
+		// 요청량 식 X(번호표_순간RPS_조사 4절 원문, Grafana 이벤트 대시보드와 같은 식): Pod별 irate + 처음 생긴 시리즈의 첫 값 ÷ 그 Pod 수집 간격
+		String req = "http_server_requests_seconds_count{event_id=\"7\",uri!~\"/actuator.*|/api/issuance/health\"}";
+		String x = "sum by (pod) (irate(" + req + "[1m]) or ((" + req + " unless " + req + " offset 1m)"
+				+ " / on(pod) group_left() idelta(process_uptime_seconds{event_id=\"7\"}[1m])))";
+		TrafficQueries.EventQueries q = TrafficQueries.forEvent("aaaaaaaaaaaa", 7);
+		// KPI = 최근 15초(캐시와 같음) 안 1초 값의 최대, 그래프 = 창이 그래프 간격
+		assertThat(q.rps(TrafficQueries.RPS_INSTANT_WINDOW)).isEqualTo("max_over_time((sum(" + x + "))[15s:1s])");
+		assertThat(q.rps(Duration.ofSeconds(30))).isEqualTo("max_over_time((sum(" + x + "))[30s:1s])");
+		assertThat(q.rps(Duration.ofMinutes(2))).endsWith(")[2m:1s])");
+		// 입장 기울기 · Redis 끊긴 점은 15초 서브쿼리 그대로(발급 앱 수집이 1초가 되어도)
+		assertThat(TrafficQueries.SUBQUERY_STEP).isEqualTo("15s");
+	}
+
+	@Test
 	void requestCountsExcludeHealth() {
 		// 기동 웜업이 Pod마다 부르는 health는 RPS · 5xx에서 뺀다(상태 요약 판정 재료도 같은 식)
 		String excluded = "uri!~\"/actuator.*|/api/issuance/health\"";
 		TrafficQueries.EventQueries q = TrafficQueries.forEvent("aaaaaaaaaaaa", 7);
+		assertThat(q.rps(TrafficQueries.RPS_INSTANT_WINDOW)).contains(excluded).doesNotContain("sum(rate(");
+		// 5xx 비율은 rate 1m ÷ rate 1m 그대로(분모만 요청량 식으로 바꾸지 않음, 2026-11-04 확정 4)
 		assertThat(q.errorRps()).isEqualTo("sum(rate(http_server_requests_seconds_count{event_id=\"7\","
 				+ excluded + ",status=~\"5..\"}[1m]))");
+		assertThat(q.ratioRps()).isEqualTo("sum(rate(http_server_requests_seconds_count{event_id=\"7\"," + excluded + "}[1m]))");
 		assertThat(TrafficQueries.RPS_BY_EVENT)
 			.isEqualTo("sum by (event_id) (rate(http_server_requests_seconds_count{" + excluded + "}[1m]))");
 		assertThat(TrafficQueries.ERROR_RPS_BY_EVENT).isEqualTo(
