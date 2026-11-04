@@ -35,7 +35,8 @@ import com.tetra.ops.tenancy.TenantRouter.RoutedEvent;
  * WARN 한 줄 뒤 다음으로, 다음 회차에 다시 한다. 만든 것도 실패도 없으면 로그를 남기지 않는다</li>
  * </ol>
  * 스위치: tetra.report.event-result.enabled(REPORT_EVENT_RESULT_ENABLED, 기본 true)가 false면 이 빈이 없다 — 리스너도 시도하지 않는다
- * (테스트 프로필: 테스트가 잠금 목으로 직접 만든다).
+ * (테스트 프로필: 테스트가 잠금 목으로 직접 만든다). 운영자 수동 생성({@link EventResultReportGenerator}, POST /reports/generate)은
+ * 스위치와 상관없이 같은 이름의 잠금을 잡고 만든다.
  */
 @Component
 @ConditionalOnProperty(prefix = "tetra.report.event-result", name = "enabled", havingValue = "true", matchIfMissing = true)
@@ -85,7 +86,7 @@ public class EventResultReportJob {
 	public void afterHistorySaved(RoutedEvent routed) {
 		try {
 			boolean ran = lock.runIfAcquired(() -> {
-				if (reports.create(routed.tenant(), routed.eventId()) == Outcome.NOT_READY) {
+				if (reports.create(routed.tenant(), routed.eventId()).outcome() == Outcome.NOT_READY) {
 					log.info("이벤트 결과 리포트: 결과가 없어 만들지 않습니다(발급 이력 저장 전 · 종료 실패): eventId={}", routed.eventId());
 				}
 			});
@@ -131,7 +132,7 @@ public class EventResultReportJob {
 			}
 			for (Long eventId : eventIds) {
 				try {
-					if (reports.create(tenant, eventId) == Outcome.CREATED) {
+					if (reports.create(tenant, eventId).outcome() == Outcome.CREATED) {
 						created++;
 					}
 				}

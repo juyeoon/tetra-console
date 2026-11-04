@@ -37,7 +37,8 @@ class ApiDocsTest extends IntegrationTest {
 				"/api/ops/tenants/{tenantId}/resources", "/api/ops/tenants/email-availability",
 				"/api/ops/notifications", "/api/ops/notifications/unread-count",
 				"/api/ops/notifications/{notificationId}/read", "/api/ops/notifications/read-all", "/api/ops/reports",
-				"/api/ops/reports/{reportId}/download", "/api/ops/reports/{reportId}/email" }) {
+				"/api/ops/reports/{reportId}/download", "/api/ops/reports/{reportId}/email",
+				"/api/ops/reports/generate" }) {
 			assertThat(paths.has(path)).as(path).isTrue();
 		}
 		paths.propertyNames().forEach(p -> assertThat(p).startsWith("/api/"));
@@ -72,12 +73,25 @@ class ApiDocsTest extends IntegrationTest {
 		JsonNode download = docs.path("paths").path("/api/ops/reports/{reportId}/download").path("get");
 		assertThat(download.path("responses").path("404").path("description").asString()).contains("REPORT_NOT_FOUND");
 
-		// 신청 내용은 501이 아니고 404 · 409를 문서에 둔다. 이제 501을 돌려주는 API는 없다
+		// 신청 내용은 501이 아니고 404 · 409를 문서에 둔다. 껍데기 API는 없다 — 501은 리포트 수동 생성의 아직 없는 분류(MONTHLY ·
+		// OPERATOR_AUDIT)뿐
 		JsonNode summary = docs.path("paths").path("/api/ops/events/{eventId}/application-summary").path("get");
 		assertThat(summary.path("responses").has("501")).isFalse();
 		assertThat(summary.path("responses").path("404").path("description").asString()).contains("EVENT_NOT_FOUND");
 		assertThat(summary.path("responses").path("409").path("description").asString()).contains("TENANT_NOT_READY");
-		docs.path("paths").forEach(path -> path.forEach(op -> assertThat(op.path("responses").has("501")).isFalse()));
+		docs.path("paths").properties().forEach(path -> path.getValue().forEach(op -> assertThat(op.path("responses").has("501"))
+			.as(path.getKey())
+			.isEqualTo(path.getKey().equals("/api/ops/reports/generate"))));
+		JsonNode generate = docs.path("paths").path("/api/ops/reports/generate").path("post");
+		assertThat(generate.path("responses").path("501").path("description").asString()).contains("NOT_IMPLEMENTED");
+		assertThat(generate.path("responses").path("409").path("description").asString()).contains("REPORT_BUSY",
+				"RESULT_NOT_READY", "TENANT_NOT_READY");
+		assertThat(generate.path("responses").path("404").path("description").asString()).contains("EVENT_NOT_FOUND");
+		assertThat(generate.path("responses").path("400").path("description").asString()).contains("INVALID_INPUT");
+		assertThat(generate.path("responses").path("401").path("description").asString()).contains("UNAUTHENTICATED");
+		// month는 객체가 아니라 yyyy-MM 문자열
+		assertThat(docs.path("components").path("schemas").path("ReportGenerateRequest").path("properties").path("month")
+			.path("type").asString()).isEqualTo("string");
 		// layoutConfig는 문자열이 아니라 객체 스키마
 		assertThat(docs.path("components").path("schemas").path("ApplicationSummaryResponse").path("properties")
 			.path("layoutConfig").path("$ref").asString()).endsWith("/LayoutConfig");

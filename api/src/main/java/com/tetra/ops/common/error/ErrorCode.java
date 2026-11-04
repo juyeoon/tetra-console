@@ -35,6 +35,8 @@ public enum ErrorCode {
 	APPLICATION_DATA_INVALID(HttpStatus.CONFLICT, "신청 내용이 승인 조건에 맞지 않아 승인할 수 없습니다."),
 	/** 동시 이벤트 상한 검사용 전역 잠금을 기다리다 시간 초과 */
 	APPROVE_BUSY(HttpStatus.CONFLICT, "다른 승인을 처리하고 있습니다. 잠시 후 다시 시도해 주세요."),
+	/** 리포트 수동 생성: 같은 분류의 리포트 작업 잠금(DbLock)을 다른 작업 · 요청이 쥐고 있음 */
+	REPORT_BUSY(HttpStatus.CONFLICT, "다른 리포트를 만들고 있습니다. 잠시 후 다시 시도해 주세요."),
 
 	// 501
 	NOT_IMPLEMENTED(HttpStatus.NOT_IMPLEMENTED, "아직 제공하지 않는 기능입니다."),
