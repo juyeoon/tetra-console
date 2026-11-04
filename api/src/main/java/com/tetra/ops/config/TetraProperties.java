@@ -114,6 +114,8 @@ public record TetraProperties(
 	 * issuanceAlbName은 이름 — 실행 중 DescribeLoadBalancers로 ARN을 얻어 캐시한다(ALB가 이벤트 때 다시 만들어질 수 있어서).
 	 * ecsServices · dlqNames는 쉼표 구분.
 	 * sfnListTtl: 자동화 실행 상세의 ListExecutions(상태 머신별, 모든 이벤트가 같이 씀) 캐시. 상태 머신은 tetra.sfn 값으로 정해 따로 설정하지 않는다.
+	 * lcuTtl: 플랫폼 카드의 발급 ALB LCU 예약(DescribeCapacityReservation) 캐시 — 실행 목록과 같은 30초(2026-11-04).
+	 * 발급 ALB 이름(issuanceAlbName)이 비면 조회하지 않는다.
 	 */
 	public record MonitoringAws(@NotNull @DefaultValue("PT60S") Duration cacheTtl,
 			@NotNull @DefaultValue("PT10S") Duration refreshTimeout,
@@ -124,7 +126,8 @@ public record TetraProperties(
 			@DefaultValue("") String rdsId,
 			@DefaultValue("") String ecsCluster, @DefaultValue("") String ecsServices,
 			@DefaultValue("") String dlqNames,
-			@NotNull @DefaultValue("PT30S") Duration sfnListTtl) {
+			@NotNull @DefaultValue("PT30S") Duration sfnListTtl,
+			@NotNull @DefaultValue("PT30S") Duration lcuTtl) {
 
 		/** 하나라도 값이 있으면 AWS를 조회한다(전부 비면 aws.stale = true, 수치 null) */
 		public boolean configured() {

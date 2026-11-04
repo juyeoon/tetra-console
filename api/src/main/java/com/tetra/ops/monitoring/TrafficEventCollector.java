@@ -44,7 +44,11 @@ class TrafficEventCollector {
 
 	// ---- 그래프 시리즈 이름(모두 같은 격자) ----
 
+	/** 화면 요청량 — 요청량 식({@link RequestRate}, 창 = 그래프 간격) */
 	static final String RPS = "rps";
+
+	/** 5xx 비율 분모(rate 1m, 응답 그래프에는 안 나감) — 비율 · 평균 5xx는 이 값과 {@link #ERROR_RPS}로만 */
+	static final String RATIO_RPS = "ratioRps";
 
 	static final String ERROR_RPS = "errorRps";
 
@@ -153,7 +157,8 @@ class TrafficEventCollector {
 		boolean instants = live || req.phase() == EventPhase.PRE_ENTRY;
 		if (instants) {
 			if (live) {
-				batch.instant("rps", q.rps(), now)
+				batch.instant("rps", q.rps(TrafficQueries.RPS_INSTANT_WINDOW), now)
+					.instant("ratioRps", q.ratioRps(), now)
 					.instant("errorRps", q.errorRps(), now)
 					.instant("p95", q.p95ByUri(), now)
 					.instant("cursorChanges", q.cursorChanges(), now)
@@ -208,10 +213,11 @@ class TrafficEventCollector {
 
 	private static Instants instantValues(PromBatch.Results r, boolean live, boolean ksm, Long stockTotal) {
 		Live liveKpi = live(r, live, ksm, stockTotal);
-		// 판정 재료가 하나라도 쿼리 오류면 complete = false(위험이 안 보이면 UNKNOWN). 5xx 오류면 rps도 비운다
+		// 판정 재료가 하나라도 쿼리 오류면 complete = false(위험이 안 보이면 UNKNOWN). 5xx 오류면 분모도 비운다.
+		// 판정의 5xx 비율 분모는 화면 요청량(요청량 식)이 아니라 rate 1m(분자와 같은 창, 2026-11-04 확정 4)
 		boolean complete = r.allOk("ksm", "stock", "ready", "hpaMax", "redisDown", "redisDownPoints")
-				&& (!live || r.allOk("rps", "errorRps", "p95", "cursorChanges", "waiting"));
-		EventSignals signals = new EventSignals(live && r.ok("errorRps") ? liveKpi.rps() : null,
+				&& (!live || r.allOk("rps", "ratioRps", "errorRps", "p95", "cursorChanges", "waiting"));
+		EventSignals signals = new EventSignals(live && r.ok("errorRps") ? PromValues.single(r.instant("ratioRps")) : null,
 				live ? PromValues.single(r.instant("errorRps")) : null,
 				liveKpi.p95Ms() == null ? null : liveKpi.p95Ms() / 1000.0,
 				live ? PromValues.single(r.instant("cursorChanges")) : null,
@@ -232,10 +238,14 @@ class TrafficEventCollector {
 		return v == null || v < 0 ? null : Math.round(v);
 	}
 
-	/** p95 · 입장 · 입장 허용 창은 max(1분, 그래프 간격)({@link TrafficQueries#rangeWindow}) */
+	/**
+	 * p95 · 입장 · 입장 허용 창은 max(1분, 그래프 간격)({@link TrafficQueries#rangeWindow}).
+	 * 요청량 창은 그래프 간격 그대로 — 1분으로 넓히면 몰림 최대가 이웃 네 점에 번진다
+	 */
 	private static void addRanges(PromBatch batch, String prefix, EventQueries q, Grid g) {
 		Duration window = TrafficQueries.rangeWindow(g.step());
-		batch.range(prefix + RPS, q.rps(), g.start(), g.end(), g.step())
+		batch.range(prefix + RPS, q.rps(g.step()), g.start(), g.end(), g.step())
+			.range(prefix + RATIO_RPS, q.ratioRps(), g.start(), g.end(), g.step())
 			.range(prefix + ERROR_RPS, q.errorRps(), g.start(), g.end(), g.step())
 			.range(prefix + "p95", q.p95ByUri(window), g.start(), g.end(), g.step())
 			.range(prefix + ADMITTED, q.admittedPerSec(window), g.start(), g.end(), g.step())
@@ -258,15 +268,17 @@ class TrafficEventCollector {
 	private static PromSeries series(PromBatch.Results r, String prefix, Grid g, boolean ksm) {
 		List<Long> times = g.timestamps();
 		Map<String, List<Double>> v = new LinkedHashMap<>();
-		List<Double> rps = round(PromValues.onGrid(r.range(prefix + RPS), times, false), 2);
+		v.put(RPS, round(PromValues.onGrid(r.range(prefix + RPS), times, false), 2));
+		// 5xx 비율은 rate 1m 짝(분모 RATIO_RPS · 분자 ERROR_RPS) — 화면 요청량(요청량 식)으로 나누지 않는다
+		List<Double> ratioRps = round(PromValues.onGrid(r.range(prefix + RATIO_RPS), times, false), 2);
 		List<Double> errorRps = PromValues.onGrid(r.range(prefix + ERROR_RPS), times, false);
-		v.put(RPS, rps);
+		v.put(RATIO_RPS, ratioRps);
 		v.put(ERROR_RPS, round(errorRps, 3));
 		// 5xx 쿼리가 오류면 비율은 모름(null). "요청만 있고 5xx 없음 = 0"은 쿼리가 성공했을 때만
 		boolean errorOk = r.ok(prefix + ERROR_RPS);
 		List<Double> ratio = new ArrayList<>(times.size());
 		for (int i = 0; i < times.size(); i++) {
-			ratio.add(errorOk ? PromValues.round(TrafficRules.errorRatio(rps.get(i), errorRps.get(i)), 5) : null);
+			ratio.add(errorOk ? PromValues.round(TrafficRules.errorRatio(ratioRps.get(i), errorRps.get(i)), 5) : null);
 		}
 		v.put(ERROR_RATIO, ratio);
 		v.put(P95_ISSUANCE, ms(PromValues.onGrid(r.range(prefix + "p95"), "uri", "claim", times)));
@@ -304,9 +316,10 @@ class TrafficEventCollector {
 
 	private static Live live(PromBatch.Results r, boolean live, boolean ksm, Long stockTotal) {
 		Double rps = live ? PromValues.round(PromValues.single(r.instant("rps")), 1) : null;
+		// 5xx 비율 = rate 1m ÷ rate 1m(화면 rps와 따로)
 		Double errorRatio = live && r.ok("errorRps") ? PromValues.round(
-				TrafficRules.errorRatio(PromValues.single(r.instant("rps")), PromValues.single(r.instant("errorRps"))), 5)
-				: null;
+				TrafficRules.errorRatio(PromValues.single(r.instant("ratioRps")), PromValues.single(r.instant("errorRps"))),
+				5) : null;
 		Long p95Issuance = null;
 		Long p95Ticket = null;
 		if (live) {
@@ -354,18 +367,19 @@ class TrafficEventCollector {
 	 * 호스팅이 끝난 이벤트의 최종값(전체 구간 시리즈 + 결과 요약). 집계 구간은 입장 ~ 이벤트 종료(end_at) — 그래프 범위(입장 −10분 ~
 	 * 호스팅 종료 +10분)보다 좁다. 입장 전 웜업(이벤트 12: 입장 전 57.9 RPS가 최대 RPS로 잡힘, 2026-10-28) · 종료 뒤 정리는 넣지 않는다.
 	 * 발급 = success_count, 없으면 재고 − 최소 남은 재고. 최대값이 0이면 시각 없음(화면 "–").
-	 * 시각은 1분 구간의 시작(결과 탭 분당 집계 · 분 단위 표시와 같게) — {@link #rateWindowMinute} · {@link #minuteOf} · {@link #changedMinute}.
+	 * 시각은 1분 구간의 시작(결과 탭 분당 집계 · 분 단위 표시와 같게) — {@link #requestRateMinute} · {@link #minuteOf} · {@link #changedMinute}.
+	 * 최대 RPS = 요청량 식 그래프의 최대, 평균 5xx = Σ 5xx ÷ Σ 요청(둘 다 rate 1m, 비율 분모는 {@link #RATIO_RPS}).
 	 * @param from 입장, to 이벤트 종료(end_at). null인 끝은 자르지 않는다
 	 */
 	static Summary summary(PromSeries series, Instant from, Instant to, Long stockTotal, Long successCount) {
 		PromSeries s = series.between(from, to);
 		List<Long> t = s.timestamps();
-		Peak peakRps = peak(t, s.get(RPS), TrafficEventCollector::rateWindowMinute);
+		Peak peakRps = peak(t, s.get(RPS), TrafficEventCollector::requestRateMinute);
 		double rpsSum = 0;
 		double errorSum = 0;
 		boolean anyRps = false;
 		for (int i = 0; i < t.size(); i++) {
-			Double rps = s.get(RPS).get(i);
+			Double rps = s.get(RATIO_RPS).get(i);
 			if (rps != null) {
 				anyRps = true;
 				rpsSum += rps;
@@ -402,9 +416,12 @@ class TrafficEventCollector {
 
 	private static final long MINUTE_MILLIS = 60_000;
 
-	/** rate[1m] 값(t 시각 = t − 1분 ~ t의 1분 창)의 1분 구간 시작: 창 시작이 든 분 */
-	static long rateWindowMinute(long epochMillis) {
-		return minuteOf(epochMillis - MINUTE_MILLIS);
+	/**
+	 * 요청량 식 값(t 점 = t − 그래프 간격 ~ t 창 안 1초 값의 최대, 각 1초 값은 바로 앞 수집 간격)의 1분 구간 시작: t 직전(t − 1ms)이 든 분.
+	 * 이벤트 20 최대 13:20:15(13:20:00~02 몰림) → 13:20. rate[1m] 때 쓰던 't − 1분이 든 분'이면 13:19로 찍힌다(2026-11-04)
+	 */
+	static long requestRateMinute(long epochMillis) {
+		return minuteOf(epochMillis - 1);
 	}
 
 	/** 게이지 값(그 시각의 상태)이 든 분 */

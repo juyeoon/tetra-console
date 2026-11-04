@@ -3,11 +3,15 @@ package com.tetra.ops.monitoring;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -16,8 +20,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
+import com.tetra.ops.common.time.Kst;
 import com.tetra.ops.config.TetraProperties;
 import com.tetra.ops.config.TetraProperties.MonitoringAws;
+import com.tetra.ops.monitoring.AwsMonitoringGateway.CapacityReservation;
 import com.tetra.ops.monitoring.AwsMonitoringGateway.LoadBalancerRef;
 import com.tetra.ops.monitoring.AwsMonitoringGateway.MetricPoint;
 import com.tetra.ops.monitoring.AwsMonitoringGateway.MetricQuery;
@@ -25,6 +31,9 @@ import com.tetra.ops.monitoring.AwsMonitoringGateway.ServiceCount;
 import com.tetra.ops.monitoring.AwsMonitoringGateway.TargetGroupRef;
 import com.tetra.ops.monitoring.AwsMonitoringGateway.TargetHealthCount;
 import com.tetra.ops.monitoring.MonitoringOverview.Point;
+import com.tetra.ops.monitoring.TrafficPlatformResponse.IssuanceLcu;
+import com.tetra.ops.monitoring.TrafficPlatformResponse.LcuState;
+import com.tetra.ops.monitoring.TrafficPlatformResponse.LcuZone;
 import com.tetra.ops.monitoring.TrafficPlatformResponse.Rds;
 import com.tetra.ops.monitoring.TrafficPlatformResponse.ServiceStatus;
 
@@ -227,6 +236,72 @@ class TrafficAwsCollector {
 		return new EventAws(now, ratio(points.get("alb_5xx"), points.get("alb_req")),
 				ratio(points.get("tg_5xx"), points.get("tg_req")), points(points.get("rds_cpu"), 1),
 				points(points.get("rds_conn"), 0));
+	}
+
+	// ---------------------------------------------------------------- 발급 ALB LCU 예약(플랫폼 카드)
+
+	/** 발급 ALB 이름이 있을 때만 LCU 예약을 조회한다 */
+	boolean lcuConfigured() {
+		return present(config.issuanceAlbName());
+	}
+
+	/**
+	 * 발급 ALB LCU 예약(DescribeCapacityReservation). ARN은 {@link #issuanceAlb()}(DescribeLoadBalancers, 10분 캐시)를 그대로 쓴다.
+	 * ALB를 못 찾음 · 조회 실패 · 예약 조회 실패(권한 반영 전 AccessDenied 등)는 {@link AwsMonitoringException} — 캐시
+	 * (TrafficMonitoringService, 30초)가 마지막 값 + stale, 없으면 값 없음(화면 '확인 불가'). 다른 AWS 값과 캐시가 따로라 영향이 없다
+	 */
+	IssuanceLcu issuanceLcu() {
+		LoadBalancerRef alb = issuanceAlb().orElseThrow(() -> new AwsMonitoringException("발급 ALB 없음"));
+		CapacityReservation reservation = gateway.capacityReservation(alb.arn())
+			.orElseThrow(() -> new AwsMonitoringException("DescribeCapacityReservation LoadBalancerNotFound"));
+		return lcu(reservation);
+	}
+
+	/** AZ 상태를 합친다(나쁜 것이 이김). 예약 값도 AZ도 없으면 NONE, 예약은 있는데 AZ가 아직 없으면 PENDING */
+	static IssuanceLcu lcu(CapacityReservation r) {
+		List<LcuZone> zones = r.zones()
+			.stream()
+			.sorted(Comparator.comparing(z -> z.availabilityZone() == null ? "" : z.availabilityZone()))
+			.map(z -> new LcuZone(z.availabilityZone(), z.state() == null ? null : z.state().toUpperCase(Locale.ROOT),
+					z.effectiveCapacityUnits(), z.reason()))
+			.toList();
+		LcuState state;
+		if (zones.isEmpty()) {
+			state = r.capacityUnits() == null ? LcuState.NONE : LcuState.PENDING;
+		}
+		else {
+			state = zones.stream().map(z -> zoneState(z.state())).max(Comparator.comparingInt(TrafficAwsCollector::severity))
+				.orElse(LcuState.PENDING);
+		}
+		List<Double> effective = zones.stream().map(LcuZone::effectiveUnits).filter(Objects::nonNull).toList();
+		Double effectiveSum = effective.isEmpty() ? null
+				: PromValues.round(effective.stream().mapToDouble(Double::doubleValue).sum(), 1);
+		return new IssuanceLcu(r.capacityUnits(), state, effectiveSum, zones,
+				r.lastModifiedTime() == null ? null : Kst.toOffset(LocalDateTime.ofInstant(r.lastModifiedTime(), Kst.ZONE)),
+				r.decreaseRequestsRemaining());
+	}
+
+	/** AWS 코드 → 상태. 모르는 값(SDK보다 새 코드)은 아직 반영 전으로 본다 */
+	private static LcuState zoneState(String code) {
+		if (code == null) {
+			return LcuState.PENDING;
+		}
+		return switch (code) {
+			case "PROVISIONED" -> LcuState.PROVISIONED;
+			case "REBALANCING" -> LcuState.REBALANCING;
+			case "FAILED" -> LcuState.FAILED;
+			default -> LcuState.PENDING;
+		};
+	}
+
+	private static int severity(LcuState s) {
+		return switch (s) {
+			case FAILED -> 4;
+			case PENDING -> 3;
+			case REBALANCING -> 2;
+			case PROVISIONED -> 1;
+			case NONE -> 0;
+		};
 	}
 
 	/** 발급 ALB(이름 → ARN · arn_suffix). 10분 캐시, 실패 · 없음이면 1분 뒤 다시. 실패해도 예외를 던지지 않는다 */

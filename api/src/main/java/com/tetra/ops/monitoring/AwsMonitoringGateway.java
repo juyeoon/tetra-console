@@ -51,11 +51,29 @@ public interface AwsMonitoringGateway {
 	record ExecutionHistory(List<HistoryEvent> events, boolean truncated) {
 	}
 
+	/**
+	 * DescribeCapacityReservation 응답에서 쓰는 값. capacityUnits = 예약한 LCU(예약이 없으면 MinimumLoadBalancerCapacity가 없어 null,
+	 * 해제 중에는 0), zones = AZ별 상태(예약이 없으면 비어 있다), decreaseRequestsRemaining = 오늘 남은 줄이기 횟수
+	 */
+	record CapacityReservation(Integer capacityUnits, List<ZoneCapacity> zones, Instant lastModifiedTime,
+			Integer decreaseRequestsRemaining) {
+	}
+
+	/** AZ 하나. state = provisioned · pending · rebalancing · failed(SDK 값 그대로 소문자), effectiveCapacityUnits는 반영 전 null */
+	record ZoneCapacity(String availabilityZone, String state, Double effectiveCapacityUnits, String reason) {
+	}
+
 	/** DescribeLoadBalancers(Names). 없으면 empty */
 	Optional<LoadBalancerRef> findLoadBalancer(String name);
 
 	/** DescribeTargetGroups(LoadBalancerArn) + DescribeTags */
 	List<TargetGroupRef> targetGroups(String loadBalancerArn);
+
+	/**
+	 * DescribeCapacityReservation(LoadBalancerArn) — 발급 ALB LCU 예약(OPS-05 플랫폼 카드). ALB가 없으면 empty.
+	 * 권한은 리소스 수준이 없어 태스크 역할의 "*" Describe 문장(infra-aws 35-web)
+	 */
+	Optional<CapacityReservation> capacityReservation(String loadBalancerArn);
 
 	TargetHealthCount targetHealth(String targetGroupArn);
 

@@ -1,10 +1,49 @@
 import type { ReactNode } from 'react';
-import { Box, Card, Stack, Typography } from '@mui/material';
+import { Box, Card, Stack, Tooltip, Typography } from '@mui/material';
 import SectionTitle from '@/components/common/SectionTitle';
 import StatusChip from '@/components/common/StatusChip';
-import { font, line, text } from '@/theme/theme';
+import { font, line, text, tones } from '@/theme/theme';
 import GrafanaLinks from './GrafanaLinks';
-import { EMPTY, grafanaHint, platformGrafanaLink, type AddonsView, type UpcomingView } from './trafficMonitoringView';
+import { EMPTY, grafanaHint, platformGrafanaLink, type AddonsView, type LcuView, type UpcomingView } from './trafficMonitoringView';
+
+const LCU_COLOR: Record<LcuView['tone'], string> = { normal: text.primary, amber: tones.amber.fg, red: tones.red.fg, muted: text.tertiary };
+
+/** 발급 ALB LCU 예약 한 줄. 마우스를 올리면 AZ별 상태 · 실효 · 마지막 변경 · 오늘 남은 줄이기 */
+function LcuLine({ lcu }: { lcu: LcuView }) {
+  const body = (
+    <Typography variant="body2" component="span" sx={{ color: LCU_COLOR[lcu.tone], fontWeight: lcu.tone === 'normal' ? font.weight.semibold : undefined }}>
+      {lcu.text}
+    </Typography>
+  );
+  return (
+    <>
+      {lcu.tooltip.length > 0 ? (
+        <Tooltip
+          arrow
+          placement="bottom-start"
+          title={
+            <Box>
+              {lcu.tooltip.map((l) => (
+                <Box key={l}>{l}</Box>
+              ))}
+            </Box>
+          }
+        >
+          {body}
+        </Tooltip>
+      ) : (
+        body
+      )}
+      {lcu.problems.length > 0 && (
+        <Stack direction="row" flexWrap="wrap" useFlexGap spacing={0.5} sx={{ mt: 0.75 }}>
+          {lcu.problems.map((p) => (
+            <StatusChip key={p} label={p} tone="red" />
+          ))}
+        </Stack>
+      )}
+    </>
+  );
+}
 
 function Row({ label, children, delayed }: { label: string; children: ReactNode; delayed?: boolean }) {
   return (
@@ -22,10 +61,10 @@ function Row({ label, children, delayed }: { label: string; children: ReactNode;
 }
 
 /**
- * B-2 플랫폼 — 애드온(평소 "정상 6/6" 한 줄, 문제 있는 것만 이름 + Ready 수) · RDS · Portal · Console.
+ * B-2 플랫폼 — 애드온(평소 "정상 6/6" 한 줄, 문제 있는 것만 이름 + Ready 수) · RDS · 발급 ALB(LCU 예약) · Portal · Console.
  * 제목 줄 오른쪽에 Grafana 플랫폼 대시보드(새 탭). grafana는 grafanaBase로 거른 주소(null이면 링크 없음)
  */
-export function PlatformCard({ addons, rds, services, awsDelayed, grafana }: { addons: AddonsView; rds: string; services: { key: string; text: string }[]; awsDelayed: boolean; grafana: string | null }) {
+export function PlatformCard({ addons, rds, lcu, services, awsDelayed, grafana }: { addons: AddonsView; rds: string; lcu: LcuView; services: { key: string; text: string }[]; awsDelayed: boolean; grafana: string | null }) {
   const link = platformGrafanaLink(grafana);
   return (
     <Card sx={{ p: 3 }}>
@@ -52,6 +91,9 @@ export function PlatformCard({ addons, rds, services, awsDelayed, grafana }: { a
       </Row>
       <Row label="RDS" delayed={awsDelayed}>
         <Typography variant="body2">{rds}</Typography>
+      </Row>
+      <Row label="발급 ALB" delayed={lcu.delayed}>
+        <LcuLine lcu={lcu} />
       </Row>
       <Row label="Portal · Console" delayed={awsDelayed}>
         {services.length === 0 ? (

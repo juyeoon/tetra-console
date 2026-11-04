@@ -19,6 +19,7 @@ import {
   grafanaBase,
   headerView,
   historyView,
+  lcuView,
   poolViews,
   POLL_MS,
   rdsText,
@@ -82,7 +83,7 @@ export default function TrafficMonitoringPage() {
         <Box sx={{ display: 'grid', gap: layout.cardGap, gridTemplateColumns: { xs: '1fr', lg: 'minmax(0, 1fr) minmax(320px, 34%)' }, alignItems: 'stretch' }}>
           <NodesCard cpu={p?.nodes.cpu ?? null} memory={p?.nodes.memory ?? null} history={history} pools={pools} />
           <Box sx={{ display: 'flex', flexDirection: 'column', gap: layout.cardGap, minWidth: 0 }}>
-            <PlatformCard addons={addonsView(p)} rds={rdsText(p)} services={serviceTexts(p?.platform.services)} awsDelayed={awsDelayed(p?.aws)} grafana={grafana} />
+            <PlatformCard addons={addonsView(p)} rds={rdsText(p)} lcu={lcuView(p, now)} services={serviceTexts(p?.platform.services)} awsDelayed={awsDelayed(p?.aws)} grafana={grafana} />
             <UpcomingCard items={upcomingViews(p?.upcoming, now)} />
           </Box>
         </Box>

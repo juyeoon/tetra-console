@@ -101,8 +101,9 @@ class MonitoringApiTest extends IntegrationTest {
 		return query.substring(0, query.lastIndexOf('[') + 1);
 	}
 
+	/** 누적 쿼리의 범위(초) — increase 창 [Ns]와 처음 생긴 시리즈를 가르는 offset Ns가 같다 */
 	private long rangeSecondsOf(String tenantId) {
-		Matcher m = Pattern.compile("\\[(\\d+)s]\\)\\)$")
+		Matcher m = Pattern.compile("\\[(\\d+)s]\\) unless .* offset \\1s\\)\\)$")
 			.matcher(prometheus.requests()
 				.stream()
 				.map(FakePrometheus.Request::query)

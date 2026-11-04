@@ -431,10 +431,29 @@ export interface TrafficUpcoming {
   endAt: string | null;
 }
 
+/** 발급 ALB LCU 예약 상태(AZ를 합친 것, 나쁜 것이 이김: FAILED > PENDING > REBALANCING > PROVISIONED). 예약 없음 = NONE */
+export type LcuState = 'PROVISIONED' | 'PENDING' | 'REBALANCING' | 'FAILED' | 'NONE';
+
+/** 발급 ALB LCU 예약(DescribeCapacityReservation, 서버 30초 캐시) */
+export interface TrafficIssuanceLcu {
+  /** 예약 LCU — 예약 없음 null, 해제 중 0 */
+  reservedUnits: number | null;
+  state: LcuState;
+  /** AZ 실효 LCU 합(반영 전이면 null) */
+  effectiveUnits: number | null;
+  /** AZ 이름 순. state = PROVISIONED · PENDING · REBALANCING · FAILED(AWS 코드 대문자, 모르는 값도 그대로) */
+  zones: { zone: string | null; state: string | null; effectiveUnits: number | null; reason: string | null }[];
+  lastModifiedAt: string | null;
+  /** 오늘 남은 줄이기 횟수 */
+  decreaseRequestsRemaining: number | null;
+}
+
 /** GET /monitoring/platform — A 상태 요약 · B 노드 · 플랫폼 · 다가오는 이벤트 · E 최근 자동화 실패 */
 export interface TrafficPlatformResponse {
   prometheus: MonitoringSource;
   aws: MonitoringSource;
+  /** 발급 ALB LCU 예약 출처(30초 캐시, aws와 따로). 권한 없음 · 오류면 이것만 stale */
+  lcu: MonitoringSource;
   /** 'Grafana에서 자세히' 링크의 Grafana 주소(서버 GRAFANA_URL, 기본 http://localhost:13000). null이면 링크를 숨긴다 */
   grafanaUrl: string | null;
   /** 4칸 고정 순서: CLUSTER · EVENT · AUTOMATION · PLATFORM */
@@ -464,6 +483,8 @@ export interface TrafficPlatformResponse {
     /** MONITORING_RDS_ID가 없거나 AWS를 못 읽었으면 null. cpuPercent 0~100 */
     rds: { status: string | null; cpuPercent: number | null; connections: number | null; freeStorageBytes: number | null } | null;
     services: TrafficServiceStatus[];
+    /** 발급 ALB 이름이 없거나 한 번도 못 읽었으면 null — 화면 '확인 불가' */
+    issuanceLcu: TrafficIssuanceLcu | null;
   };
   upcoming: TrafficUpcoming[];
   failures: TrafficFailure[];

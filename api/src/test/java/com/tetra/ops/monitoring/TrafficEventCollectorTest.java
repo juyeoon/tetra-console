@@ -26,7 +26,8 @@ import com.tetra.ops.monitoring.TrafficEventResponse.Summary;
 
 /**
  * 이벤트 결과 가공: p95(발급 · 번호표 중 큰 값), 구역별 격리(한 구역의 예외는 그 구역만 null),
- * 최종값 집계 구간(입장 ~ 이벤트 종료) · 1분 구간 시작 시각 · 최대 0이면 시각 없음 · Redis 지표 없으면 재시작 없음
+ * 최종값 집계 구간(입장 ~ 이벤트 종료) · 1분 구간 시작 시각 · 최대 0이면 시각 없음 · Redis 지표 없으면 재시작 없음 ·
+ * 최대 RPS는 요청량 식, 평균 5xx는 rate 1m 짝
  */
 @ExtendWith(OutputCaptureExtension.class)
 class TrafficEventCollectorTest {
@@ -72,9 +73,12 @@ class TrafficEventCollectorTest {
 
 	@Test
 	void minuteTimesAreStartOfOneMinuteBucket() {
-		// rate[1m] 값(10:01:00 = 10:00 ~ 10:01의 1분) → 10:00. 15초 격자 10:01:45 = 10:00:45 ~ 10:01:45 → 창 시작이 든 10:00
-		assertThat(at(TrafficEventCollector.rateWindowMinute(millis(10, 1, 0)))).isEqualTo(kst(10, 0));
-		assertThat(at(TrafficEventCollector.rateWindowMinute(millis(10, 1, 45)))).isEqualTo(kst(10, 0));
+		// 요청량 식 값(t 점 = t − 간격 ~ t 창 안 1초 값의 최대) → t 직전이 든 분. 이벤트 20: 13:20:15(13:20:00~02 몰림) → 13:20.
+		// rate[1m] 때의 't − 1분이 든 분'이면 13:19로 찍혔다
+		assertThat(at(TrafficEventCollector.requestRateMinute(millis(10, 1, 15)))).isEqualTo(kst(10, 1));
+		assertThat(at(TrafficEventCollector.requestRateMinute(millis(10, 1, 45)))).isEqualTo(kst(10, 1));
+		// 정각 점(10:01:00 = 10:00:45 ~ 10:01:00 창)은 앞 분
+		assertThat(at(TrafficEventCollector.requestRateMinute(millis(10, 1, 0)))).isEqualTo(kst(10, 0));
 		// 게이지(그 시각 상태)는 그 시각이 든 분
 		assertThat(at(TrafficEventCollector.minuteOf(millis(10, 1, 45)))).isEqualTo(kst(10, 1));
 		// 처음 0으로 보인 점이 정각이면 바뀐 건 그 앞 분(결과 탭 10:05~10:06 = 10:05), 정각이 아니면 그 분
@@ -87,7 +91,8 @@ class TrafficEventCollectorTest {
 	void finalKpiCountsOnlyEntryToEventEnd() {
 		// 그래프 범위(입장 −10분 ~ 이벤트 종료 +10분) 격자. 입장 전 웜업 09:48 57.9 RPS · 이벤트 종료 뒤 정리 10:20 80 RPS
 		PromSeries s = grid(ENTRY.minusMinutes(10), EVENT_END.plusMinutes(10), Map.of(
-				TrafficEventCollector.RPS, t -> at(t, 9, 48, 0) ? 57.9 : at(t, 10, 20, 0) ? 80.0 : at(t, 10, 1, 0) ? 3.2 : 0.5,
+				TrafficEventCollector.RPS, t -> at(t, 9, 48, 0) ? 57.9 : at(t, 10, 20, 0) ? 80.0 : at(t, 10, 1, 15) ? 3.2 : 0.5,
+				TrafficEventCollector.RATIO_RPS, t -> 0.5,
 				TrafficEventCollector.ERROR_RPS, t -> 0.0,
 				TrafficEventCollector.ERROR_RATIO, t -> 0.0,
 				TrafficEventCollector.WAITING, t -> at(t, 9, 50, 0) ? 300.0 : 0.0,
@@ -96,9 +101,9 @@ class TrafficEventCollectorTest {
 				TrafficEventCollector.REDIS_RESTARTS, t -> 0.0));
 		Summary summary = TrafficEventCollector.summary(s, instant(ENTRY), instant(EVENT_END), 10L, null);
 
-		// 입장 전 웜업 · 종료 뒤 정리 값은 최대에 들어가지 않는다
+		// 입장 전 웜업 · 종료 뒤 정리 값은 최대에 들어가지 않는다. 10:01:15 점 = 10:01:00 ~ 10:01:15 창 → 10:01
 		assertThat(summary.peakRps().value()).isEqualTo(3.2);
-		assertThat(summary.peakRps().at().toLocalDateTime()).isEqualTo(kst(10, 0));
+		assertThat(summary.peakRps().at().toLocalDateTime()).isEqualTo(kst(10, 1));
 		// 대기 인원은 입장 전에만 있었다 → 구간 최대 0, 시각 없음(화면 "–")
 		assertThat(summary.peakWaiting().value()).isEqualTo(0.0);
 		assertThat(summary.peakWaiting().at()).isNull();
@@ -116,6 +121,20 @@ class TrafficEventCollectorTest {
 		assertThat(quiet.peakRps().value()).isEqualTo(0.0);
 		assertThat(quiet.peakRps().at()).isNull();
 		assertThat(quiet.redisRestarts()).isEqualTo(1L);
+	}
+
+	@Test
+	void errorAverageUsesRatePairNotRequestRate() {
+		// 몰림 점(10:00:15)에서 화면 요청량(요청량 식)은 1000, rate 1m 분모는 10. 5xx는 rate 1m 1 → 평균 5xx는 rate ÷ rate만 본다
+		PromSeries s = grid(ENTRY, EVENT_END, Map.of(TrafficEventCollector.RPS, t -> at(t, 10, 0, 15) ? 1000.0 : 10.0,
+				TrafficEventCollector.RATIO_RPS, t -> 10.0, TrafficEventCollector.ERROR_RPS, t -> 1.0,
+				TrafficEventCollector.ERROR_RATIO, t -> 0.1));
+		Summary summary = TrafficEventCollector.summary(s, instant(ENTRY), instant(EVENT_END), 10L, 5L);
+		assertThat(summary.peakRps().value()).isEqualTo(1000.0);
+		assertThat(summary.peakRps().at().toLocalDateTime()).isEqualTo(kst(10, 0));
+		// Σ 5xx ÷ Σ 분모 = 1 ÷ 10 (요청량 식으로 나눴다면 몰림 점이 비율을 끌어내렸다)
+		assertThat(summary.errorRatioAvg()).isEqualTo(0.1);
+		assertThat(summary.errorRatioMax()).isEqualTo(0.1);
 	}
 
 	@Test

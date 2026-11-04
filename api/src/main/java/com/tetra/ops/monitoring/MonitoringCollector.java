@@ -53,7 +53,8 @@ class MonitoringCollector {
 
 	static final Duration RANGE = Duration.ofMinutes(30);
 
-	static final Duration STEP = Duration.ofSeconds(15);
+	/** = 요청량 창(PromQueries.TRAFFIC_STEP) — 그래프 점마다 그 15초 안 1초 값의 최대 */
+	static final Duration STEP = PromQueries.TRAFFIC_STEP;
 
 	private final PrometheusClient prometheus;
 

@@ -71,11 +71,22 @@ final class TrafficQueries {
 	/** 그래프 창(p95 · 입장 · 입장 허용)의 최소. 그래프 간격이 더 크면 간격을 쓴다({@link #rangeWindow}) */
 	static final Duration MIN_RANGE_WINDOW = Duration.ofMinutes(1);
 
-	/** 식(선택자가 아닌 것)의 기울기를 구할 때 subquery 간격 = 앱 지표 스크레이프 간격(ServiceMonitor 15초) */
+	/**
+	 * 식(선택자가 아닌 것)의 기울기(입장) · Redis 끊긴 점 수를 구할 때 subquery 간격. 그래프 격자(15초 배수)와 맞춘 15초 점이다.
+	 * 처음에는 앱 지표 수집 간격(15초)과 같게 정했다. 발급 앱 수집이 1초가 되어도 그대로 둔다(2026-11-04) —
+	 * 기울기 · 점 수 판정(1분 = 4점)이 15초 점 기준이고, Redis 끊김 재료(redis-exporter PodMonitor)는 15초 수집이다
+	 */
 	static final String SUBQUERY_STEP = "15s";
+
+	/** KPI '현재 RPS' 요청량 창 = Prometheus 캐시 기본값(15초). 갱신 사이 1초 값을 놓치지 않는다({@link RequestRate#peak}) */
+	static final Duration RPS_INSTANT_WINDOW = Duration.ofSeconds(15);
 
 	// ---- A 상태 요약 · 드롭다운: 이벤트별 판정 재료(모든 이벤트 한 번에, event_id별) ----
 
+	/**
+	 * 5xx 비율 분모 전용(rate 1m) — 판정 재료일 뿐 화면 숫자가 아니다. 분모 · 분자 모두 rate 1m 그대로 둔다(2026-11-04 확정 4).
+	 * 화면 요청량은 요청량 식({@link RequestRate}, {@link EventQueries#rps(Duration)})
+	 */
 	static final String RPS_BY_EVENT = "sum by (event_id) (rate(http_server_requests_seconds_count{uri!~\"%s\"}[1m]))"
 		.formatted(PromQueries.EXCLUDED_URI);
 
@@ -127,15 +138,12 @@ final class TrafficQueries {
 	/**
 	 * 구간(window) 동안 늘어난 http_server_requests_seconds_bucket. 구간 시작에 없던 시리즈는 increase 대신 지금 값(0부터 늘어난 양)을 쓴다.
 	 * Micrometer 타이머 시리즈는 그 uri의 첫 요청 때 생기는데, rate · increase는 시리즈가 생길 때 이미 붙어 있던 값을 세지 못한다.
-	 * 그래서 첫 요청들이 한 스크레이프(15초) 안에 몰리면 증가 0 → histogram_quantile NaN → p95가 비었다
+	 * 그래서 첫 요청들이 한 수집 간격(당시 15초) 안에 몰리면 증가 0 → histogram_quantile NaN → p95가 비었다
 	 * (이벤트 12: 10:00~10:01 발급 5건은 안 그려지고 10:05 발급 10건은 그려짐, 2026-10-28). KEDA가 늘린 새 Pod의 첫 요청도 같다.
-	 * 구간 시작에 있었는지는 offset으로 본다(그 시각 기준 5분 lookback 안에 점이 있으면 있던 시리즈).
+	 * 식은 {@link RequestRate#increaseWithBorn}(홈 누적 요청 수와 같은 모양)
 	 */
 	static String bucketIncrease(String selector, Duration window) {
-		String bucket = "http_server_requests_seconds_bucket{" + selector + "}";
-		String w = promDuration(window);
-		String born = "(" + bucket + " unless " + bucket + " offset " + w + ")";
-		return "(increase(" + bucket + "[" + w + "]) unless " + born + ") or " + born;
+		return RequestRate.increaseWithBorn("http_server_requests_seconds_bucket{" + selector + "}", promDuration(window));
 	}
 
 	/**
@@ -209,12 +217,22 @@ final class TrafficQueries {
 
 		// ---- 요청 처리 ----
 
-		/** 초당 요청(액추에이터 · health 제외, {@link PromQueries#EXCLUDED_URI}) */
-		String rps() {
+		/**
+		 * 초당 요청(액추에이터 · health 제외, {@link PromQueries#EXCLUDED_URI}) — 요청량 식({@link RequestRate}) 창 window 안 1초 값의 최대.
+		 * KPI는 {@link TrafficQueries#RPS_INSTANT_WINDOW}, 그래프는 그래프 간격(같아야 1초 값이 빠짐없이 어느 한 점에 들어간다)
+		 */
+		String rps(Duration window) {
+			String selector = "event_id=\"%s\",uri!~\"%s\"".formatted(e, PromQueries.EXCLUDED_URI);
+			return RequestRate.peak("sum(" + RequestRate.byPod(selector, "event_id=\"" + e + "\"", "pod") + ")", window);
+		}
+
+		/** 5xx 비율 분모 전용(rate 1m) — 분자 {@link #errorRps()}와 같은 창. 화면 요청량이 아니다(2026-11-04 확정 4) */
+		String ratioRps() {
 			return "sum(rate(http_server_requests_seconds_count{event_id=\"%s\",uri!~\"%s\"}[1m]))"
 				.formatted(e, PromQueries.EXCLUDED_URI);
 		}
 
+		/** 5xx 초당 요청(rate 1m) — 5xx 비율 분자 */
 		String errorRps() {
 			return "sum(rate(http_server_requests_seconds_count{event_id=\"%s\",uri!~\"%s\",status=~\"5..\"}[1m]))"
 				.formatted(e, PromQueries.EXCLUDED_URI);

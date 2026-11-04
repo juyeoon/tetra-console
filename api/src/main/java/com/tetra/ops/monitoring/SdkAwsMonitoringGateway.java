@@ -30,6 +30,7 @@ import software.amazon.awssdk.services.cloudwatch.model.ScanBy;
 import software.amazon.awssdk.services.ecs.EcsClient;
 import software.amazon.awssdk.services.ecs.model.DescribeServicesResponse;
 import software.amazon.awssdk.services.elasticloadbalancingv2.ElasticLoadBalancingV2Client;
+import software.amazon.awssdk.services.elasticloadbalancingv2.model.DescribeCapacityReservationResponse;
 import software.amazon.awssdk.services.elasticloadbalancingv2.model.LoadBalancerNotFoundException;
 import software.amazon.awssdk.services.elasticloadbalancingv2.model.TagDescription;
 import software.amazon.awssdk.services.elasticloadbalancingv2.model.TargetGroup;
@@ -127,6 +128,27 @@ class SdkAwsMonitoringGateway implements AwsMonitoringGateway {
 			.map(g -> new TargetGroupRef(g.targetGroupArn(), targetGroupSuffix(g.targetGroupArn()),
 					tags.getOrDefault(g.targetGroupArn(), Map.of())))
 			.toList();
+	}
+
+	@Override
+	public Optional<CapacityReservation> capacityReservation(String loadBalancerArn) {
+		return call("DescribeCapacityReservation", () -> {
+			try {
+				DescribeCapacityReservationResponse r = elb
+					.describeCapacityReservation(b -> b.loadBalancerArn(loadBalancerArn));
+				List<ZoneCapacity> zones = r.capacityReservationState()
+					.stream()
+					.map(z -> new ZoneCapacity(z.availabilityZone(), z.state() == null ? null : z.state().codeAsString(),
+							z.effectiveCapacityUnits(), z.state() == null ? null : z.state().reason()))
+					.toList();
+				Integer units = r.minimumLoadBalancerCapacity() == null ? null
+						: r.minimumLoadBalancerCapacity().capacityUnits();
+				return Optional.of(new CapacityReservation(units, zones, r.lastModifiedTime(), r.decreaseRequestsRemaining()));
+			}
+			catch (LoadBalancerNotFoundException ex) {
+				return Optional.empty();
+			}
+		});
 	}
 
 	@Override
