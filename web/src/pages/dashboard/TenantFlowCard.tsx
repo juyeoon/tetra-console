@@ -13,7 +13,9 @@ const flow = keyframes`
   100% { left: 100%; opacity: 0; }
 `;
 
-const CUMULATIVE_HELP = '입장 열림(이벤트 시작 60분 전)부터 누적한 요청 수입니다. 실패는 서버 오류(5xx) 응답입니다.';
+// TEST-LEAD: 서비스 값 60분
+// const CUMULATIVE_HELP = '입장 열림(이벤트 시작 60분 전)부터 누적한 요청 수입니다. 실패는 서버 오류(5xx) 응답입니다.';
+const CUMULATIVE_HELP = '입장 열림(이벤트 시작 15분 전)부터 누적한 요청 수입니다. 실패는 서버 오류(5xx) 응답입니다.'; // TEST-LEAD
 
 /** 점이 같은 속도(LANE_SECONDS)로 지나가고, 개수(= 생성 빈도)만 rps에 따라 바뀐다. 0개면 빈 레인 */
 function Lane({ dot, dots }: { dot: string; dots: number }) {

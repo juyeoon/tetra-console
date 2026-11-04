@@ -322,7 +322,7 @@ class TrafficMonitoringApiTest extends IntegrationTest {
 			.andExpect(jsonPath("$.upcoming[0].eventId").value(7106))
 			// TEST-LEAD: 서비스 값 90
 			// .andExpect(jsonPath("$.upcoming[0].prepareAt").value(iso(now.plusDays(2).minusMinutes(90))))
-			.andExpect(jsonPath("$.upcoming[0].prepareAt").value(iso(now.plusDays(2).minusMinutes(15)))) // TEST-LEAD
+			.andExpect(jsonPath("$.upcoming[0].prepareAt").value(iso(now.plusDays(2).minusMinutes(25)))) // TEST-LEAD
 			.andExpect(jsonPath("$.upcoming[0].endAt").value(iso(now.plusDays(2).plusHours(5))))
 			// E. 실패: 알림 + OPEN_FAILED 로그는 한 건(로그의 단계 · 사유), 메일 알림은 내용 그대로
 			.andExpect(jsonPath("$.failures.length()").value(2))
@@ -653,7 +653,7 @@ class TrafficMonitoringApiTest extends IntegrationTest {
 			.andExpect(jsonPath("$.event.tenantName").value("A사"))
 			// TEST-LEAD: 서비스 값 70(시작 now−10 − 60)
 			// .andExpect(jsonPath("$.event.entryAt").value(iso(now.minusMinutes(70))))
-			.andExpect(jsonPath("$.event.entryAt").value(iso(now.minusMinutes(15)))) // TEST-LEAD
+			.andExpect(jsonPath("$.event.entryAt").value(iso(now.minusMinutes(25)))) // TEST-LEAD
 			.andExpect(jsonPath("$.event.endAt").value(iso(now.minusMinutes(10).plusHours(5))))
 			// 진행 단계
 			.andExpect(jsonPath("$.steps[*].key")
@@ -665,7 +665,7 @@ class TrafficMonitoringApiTest extends IntegrationTest {
 			.andExpect(jsonPath("$.steps[2].actualAt").value(iso(now.minusMinutes(10).minusHours(2))))
 			// TEST-LEAD: 서비스 값 100(시작 now−10 − 90)
 			// .andExpect(jsonPath("$.steps[3].plannedAt").value(iso(now.minusMinutes(100))))
-			.andExpect(jsonPath("$.steps[3].plannedAt").value(iso(now.minusMinutes(25)))) // TEST-LEAD
+			.andExpect(jsonPath("$.steps[3].plannedAt").value(iso(now.minusMinutes(35)))) // TEST-LEAD
 			.andExpect(jsonPath("$.steps[3].actualAt").value(iso(now.minusMinutes(70).plusSeconds(20))))
 			.andExpect(jsonPath("$.steps[3].durationSeconds").value(200))
 			.andExpect(jsonPath("$.steps[5].actualAt").value(iso(now.minusMinutes(10))))
@@ -689,7 +689,7 @@ class TrafficMonitoringApiTest extends IntegrationTest {
 			.andExpect(jsonPath("$.kpi.summary").value(nullValue()))
 			// TEST-LEAD: 서비스 값 80분 → 30초
 			// // 범위 · 그래프: 입장 −10분 ~ 지금(80분 → 30초 간격)
-			// 범위 · 그래프: 입장 −10분 ~ 지금(25분 → 15초 간격) // TEST-LEAD
+			// 범위 · 그래프: 입장 −10분 ~ 지금(35분 → 15초 간격) // TEST-LEAD
 			.andExpect(jsonPath("$.range.key").value("entry"))
 			.andExpect(jsonPath("$.range.options").value(contains("entry", "15m", "1h")))
 			// TEST-LEAD: 서비스 값 30
@@ -871,7 +871,7 @@ class TrafficMonitoringApiTest extends IntegrationTest {
 			.andExpect(jsonPath("$.range.options").value(contains("full", "start")))
 			// TEST-LEAD: 서비스 값 70(입장 −60 · −10)
 			// .andExpect(jsonPath("$.range.from").value(iso(now.minusDays(2).minusMinutes(70))))
-			.andExpect(jsonPath("$.range.from").value(iso(now.minusDays(2).minusMinutes(15)))) // TEST-LEAD
+			.andExpect(jsonPath("$.range.from").value(iso(now.minusDays(2).minusMinutes(25)))) // TEST-LEAD
 			.andExpect(jsonPath("$.range.to").value(iso(now.minusDays(2).plusHours(5).plusMinutes(10))))
 			.andExpect(jsonPath("$.range.stepSeconds").value((int) step.toSeconds()))
 			.andExpect(jsonPath("$.charts.admission.admittedPerSec[0]").value(0.17))

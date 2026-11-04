@@ -165,7 +165,7 @@ class MonitoringApiTest extends IntegrationTest {
 			.andExpect(jsonPath("$.tenants[0].failed").value(8))
 			// TEST-LEAD: 서비스 값 60
 			// .andExpect(jsonPath("$.tenants[0].since").value(iso(firstStart.minusMinutes(60))))
-			.andExpect(jsonPath("$.tenants[0].since").value(iso(firstStart.minusMinutes(5)))) // TEST-LEAD
+			.andExpect(jsonPath("$.tenants[0].since").value(iso(firstStart.minusMinutes(15)))) // TEST-LEAD
 			// B: 요청 시리즈 없음 → rps · errorRps · 누적 null, HPA 없음 → max null, Ready Pod는 0
 			.andExpect(jsonPath("$.tenants[1].tenantId").value(B))
 			.andExpect(jsonPath("$.tenants[1].rps").value(nullValue()))
@@ -179,9 +179,9 @@ class MonitoringApiTest extends IntegrationTest {
 		// // 누적 범위 = 지금 − (가장 이른 OPEN 시작 − 60분): A 90분, B 70분
 		// assertThat(rangeSecondsOf(A)).isBetween(5400L - 5, 5400L + 70);
 		// assertThat(rangeSecondsOf(B)).isBetween(4200L - 5, 4200L + 70);
-		// 누적 범위 = 지금 − (가장 이른 OPEN 시작 − 5분): A 35분, B 15분 // TEST-LEAD
-		assertThat(rangeSecondsOf(A)).isBetween(2100L - 5, 2100L + 70); // TEST-LEAD
-		assertThat(rangeSecondsOf(B)).isBetween(900L - 5, 900L + 70); // TEST-LEAD
+		// 누적 범위 = 지금 − (가장 이른 OPEN 시작 − 15분): A 45분, B 25분 // TEST-LEAD
+		assertThat(rangeSecondsOf(A)).isBetween(2700L - 5, 2700L + 70); // TEST-LEAD
+		assertThat(rangeSecondsOf(B)).isBetween(1500L - 5, 1500L + 70); // TEST-LEAD
 		// 시각 격자: start · end가 15초 배수
 		FakePrometheus.Request range = prometheus.requests()
 			.stream()

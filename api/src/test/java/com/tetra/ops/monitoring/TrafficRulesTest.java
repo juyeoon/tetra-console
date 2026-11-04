@@ -372,16 +372,16 @@ class TrafficRulesTest {
 		LocalDateTime end = start.plusMinutes(40);
 		// TEST-LEAD: 서비스 값 71
 		// assertThat(EventPhase.of(start, end, EventStatus.SCHEDULED, HostingStatus.HOSTING, start.minusMinutes(71)))
-		assertThat(EventPhase.of(start, end, EventStatus.SCHEDULED, HostingStatus.HOSTING, start.minusMinutes(16))) // TEST-LEAD
+		assertThat(EventPhase.of(start, end, EventStatus.SCHEDULED, HostingStatus.HOSTING, start.minusMinutes(26))) // TEST-LEAD
 			.isEqualTo(EventPhase.SCHEDULED);
 		// TEST-LEAD: 서비스 값 70
 		// assertThat(EventPhase.of(start, end, EventStatus.SCHEDULED, HostingStatus.HOSTING, start.minusMinutes(70)))
-		assertThat(EventPhase.of(start, end, EventStatus.SCHEDULED, HostingStatus.HOSTING, start.minusMinutes(15))) // TEST-LEAD
+		assertThat(EventPhase.of(start, end, EventStatus.SCHEDULED, HostingStatus.HOSTING, start.minusMinutes(25))) // TEST-LEAD
 			.isEqualTo(EventPhase.PRE_ENTRY);
 		// 입장 ~ 시작 전은 입장 중, 시작부터 진행 중
 		// TEST-LEAD: 서비스 값 60
 		// assertThat(EventPhase.of(start, end, EventStatus.OPEN, HostingStatus.HOSTING, start.minusMinutes(60)))
-		assertThat(EventPhase.of(start, end, EventStatus.OPEN, HostingStatus.HOSTING, start.minusMinutes(5))) // TEST-LEAD
+		assertThat(EventPhase.of(start, end, EventStatus.OPEN, HostingStatus.HOSTING, start.minusMinutes(15))) // TEST-LEAD
 			.isEqualTo(EventPhase.ENTRY_OPEN);
 		assertThat(EventPhase.of(start, end, EventStatus.OPEN, HostingStatus.HOSTING, start.minusSeconds(1)))
 			.isEqualTo(EventPhase.ENTRY_OPEN);
@@ -476,8 +476,8 @@ class TrafficRulesTest {
 		// TEST-LEAD: 서비스 값 80분 · 30초
 		// assertThat(Duration.between(entry.from(), entry.to())).isEqualTo(Duration.ofMinutes(80));
 		// assertThat(entry.step()).isEqualTo(Duration.ofSeconds(30)); // 4800초 ÷ 300 = 16초 → 15초 배수 올림
-		assertThat(Duration.between(entry.from(), entry.to())).isEqualTo(Duration.ofMinutes(25)); // TEST-LEAD
-		assertThat(entry.step()).isEqualTo(Duration.ofSeconds(15)); // 1500초 ÷ 300 = 5초 → 최소 15초 // TEST-LEAD
+		assertThat(Duration.between(entry.from(), entry.to())).isEqualTo(Duration.ofMinutes(35)); // TEST-LEAD
+		assertThat(entry.step()).isEqualTo(Duration.ofSeconds(15)); // 2100초 ÷ 300 = 7초 → 최소 15초 // TEST-LEAD
 		assertThat(TrafficWindow.of(EventPhase.LIVE, "15m", start, null, now, TrafficWindow.PROMETHEUS_MIN_STEP).step())
 			.isEqualTo(Duration.ofSeconds(15));
 		// 입장 중(시작 전)도 진행 중과 같은 범위 · 선택지
@@ -492,7 +492,7 @@ class TrafficRulesTest {
 		assertThat(full.key()).isEqualTo("full");
 		// TEST-LEAD: 서비스 값 120
 		// assertThat(Duration.between(full.from(), full.to())).isEqualTo(Duration.ofMinutes(120));
-		assertThat(Duration.between(full.from(), full.to())).isEqualTo(Duration.ofMinutes(65)); // TEST-LEAD
+		assertThat(Duration.between(full.from(), full.to())).isEqualTo(Duration.ofMinutes(75)); // TEST-LEAD
 		assertThat(full.step()).isEqualTo(Duration.ofSeconds(60));
 		TrafficWindow around = TrafficWindow.of(EventPhase.ENDED, "start", start, start.plusMinutes(40), later,
 				TrafficWindow.PROMETHEUS_MIN_STEP);

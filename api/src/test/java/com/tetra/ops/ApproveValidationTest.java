@@ -70,7 +70,7 @@ class ApproveValidationTest extends IntegrationTest {
 	void hostingStartLessThan100MinutesBeforeStartIsRejected() throws Exception {
 		// TEST-LEAD: 서비스 값 90(100분보다 늦음)
 		// updateEvent("hosting_start_at = ?", START.minusMinutes(90));
-		updateEvent("hosting_start_at = ?", START.minusMinutes(24)); // TEST-LEAD
+		updateEvent("hosting_start_at = ?", START.minusMinutes(34)); // TEST-LEAD
 
 		approve().andExpect(status().isConflict())
 			.andExpect(jsonPath("$.code").value("APPLICATION_DATA_INVALID"))
@@ -78,7 +78,7 @@ class ApproveValidationTest extends IntegrationTest {
 			.andExpect(jsonPath("$.fields.HOSTING_START_TOO_LATE").value(org.hamcrest.Matchers.startsWith(
 					// TEST-LEAD: 서비스 값 100분
 					// "호스팅 시작은 이벤트 시작 100분 전까지여야 합니다.")))
-					"호스팅 시작은 이벤트 시작 25분 전까지여야 합니다."))) // TEST-LEAD
+					"호스팅 시작은 이벤트 시작 35분 전까지여야 합니다."))) // TEST-LEAD
 			.andExpect(jsonPath("$.fields.length()").value(1));
 		assertNothingChanged();
 	}
@@ -87,7 +87,7 @@ class ApproveValidationTest extends IntegrationTest {
 	void exactly100MinutesIsApproved() throws Exception {
 		// TEST-LEAD: 서비스 값 100
 		// updateEvent("hosting_start_at = ?", START.minusMinutes(100));
-		updateEvent("hosting_start_at = ?", START.minusMinutes(25)); // TEST-LEAD
+		updateEvent("hosting_start_at = ?", START.minusMinutes(35)); // TEST-LEAD
 
 		approve().andExpect(status().isOk());
 	}
@@ -160,14 +160,14 @@ class ApproveValidationTest extends IntegrationTest {
 			data.jdbc().update("UPDATE t_%s.event SET hosting_end_at = ? WHERE event_id = ?".formatted(B),
 					// TEST-LEAD: 서비스 값 90
 					// START.minusMinutes(90), id);
-					START.minusMinutes(15), id); // TEST-LEAD
+					START.minusMinutes(25), id); // TEST-LEAD
 		}
 		approve().andExpect(status().isConflict()).andExpect(jsonPath("$.fields.CONCURRENT_EVENT_LIMIT").exists());
 
 		// 1분 앞당기면 겹치지 않는다
 		// TEST-LEAD: 서비스 값 91
 		// data.jdbc().update("UPDATE t_%s.event SET hosting_end_at = ?".formatted(B), START.minusMinutes(91));
-		data.jdbc().update("UPDATE t_%s.event SET hosting_end_at = ?".formatted(B), START.minusMinutes(16)); // TEST-LEAD
+		data.jdbc().update("UPDATE t_%s.event SET hosting_end_at = ?".formatted(B), START.minusMinutes(26)); // TEST-LEAD
 		approve().andExpect(status().isOk());
 	}
 

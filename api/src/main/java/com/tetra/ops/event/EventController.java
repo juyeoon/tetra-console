@@ -79,7 +79,7 @@ public class EventController {
 					+ "배포 시작에 실패하면 hostingStatus가 DEPLOY_FAILED로 온다. "
 					// TEST-LEAD: 서비스 값 100분 · 30분
 					// + "승인 전 검사(호스팅 시작 ≤ 이벤트 시작 − 100분, 호스팅 시작 ≥ 지금 + 30분, 이름, 결과 주소 http(s), "
-					+ "승인 전 검사(호스팅 시작 ≤ 이벤트 시작 − 25분, 호스팅 시작 ≥ 지금 + 10분, 이름, 결과 주소 http(s), " // TEST-LEAD
+					+ "승인 전 검사(호스팅 시작 ≤ 이벤트 시작 − 35분, 호스팅 시작 ≥ 지금 + 10분, 이름, 결과 주소 http(s), " // TEST-LEAD
 					+ "기간이 겹치는 승인 이벤트 ≤ 상한)에 걸리면 409 APPLICATION_DATA_INVALID(fields = 사유 코드별 문구), "
 					+ "동시 승인 잠금을 못 잡으면 409 APPROVE_BUSY. 이때는 아무것도 바뀌지 않는다")
 	@ApiErrorCodes({ ErrorCode.EVENT_NOT_FOUND, ErrorCode.APPLICATION_NOT_APPLIED, ErrorCode.HOSTING_PERIOD_ENDED,

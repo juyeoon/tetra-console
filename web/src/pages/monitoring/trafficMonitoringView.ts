@@ -557,8 +557,8 @@ const STEP_LABEL: Record<TrafficStep['key'], string> = {
   // TEST-LEAD: 서비스 값 T−90 · T−60
   // PREPARE: '준비 (T−90)',
   // ENTRY: '입장 (T−60)',
-  PREPARE: '준비 (T−15)', // TEST-LEAD
-  ENTRY: '입장 (T−5)', // TEST-LEAD
+  PREPARE: '준비 (T−25)', // TEST-LEAD
+  ENTRY: '입장 (T−15)', // TEST-LEAD
   START: '이벤트 진행',
   END: '호스팅 종료',
   AGGREGATE: '집계',
