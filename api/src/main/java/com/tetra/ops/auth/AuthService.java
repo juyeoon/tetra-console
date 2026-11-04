@@ -3,6 +3,7 @@ package com.tetra.ops.auth;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
+import com.tetra.ops.common.audit.AuditContext;
 import com.tetra.ops.common.error.ApiException;
 import com.tetra.ops.common.error.ErrorCode;
 import com.tetra.ops.domain.platform.Operator;
@@ -41,8 +42,11 @@ public class AuthService {
 		String hash = operator == null ? DUMMY_HASH : operator.getPassword();
 		boolean matches = passwordEncoder.matches(rawPassword, hash);
 		if (operator == null || !matches) {
+			// 감사 줄: 시도한 계정은 가려서만(attempt). 원문 · 비밀번호는 남기지 않는다
+			AuditContext.current().loginAttempt(email);
 			throw new ApiException(ErrorCode.LOGIN_FAILED);
 		}
+		AuditContext.current().loginSucceeded(operator.getOperatorId());
 		return new LoginResult(operator, tokens.issue(operator.getOperatorId()));
 	}
 

@@ -16,9 +16,11 @@ import org.springframework.security.web.SecurityFilterChain;
 
 import com.tetra.ops.auth.CookieBearerTokenResolver;
 import com.tetra.ops.auth.JwtTokenService;
+import com.tetra.ops.common.audit.AuditContext;
 import com.tetra.ops.common.error.ErrorCode;
 import com.tetra.ops.common.error.ErrorResponse;
 
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -47,10 +49,10 @@ public class SecurityConfig {
 			.oauth2ResourceServer(oauth -> oauth
 				.bearerTokenResolver(new CookieBearerTokenResolver())
 				.jwt(jwt -> jwt.decoder(jwtDecoder))
-				.authenticationEntryPoint((request, response, ex) -> write(response, jsonMapper, ErrorCode.UNAUTHENTICATED)))
+				.authenticationEntryPoint((request, response, ex) -> write(request, response, jsonMapper, ErrorCode.UNAUTHENTICATED)))
 			.exceptionHandling(ex -> ex
-				.authenticationEntryPoint((request, response, e) -> write(response, jsonMapper, ErrorCode.UNAUTHENTICATED))
-				.accessDeniedHandler((request, response, e) -> write(response, jsonMapper, ErrorCode.FORBIDDEN)));
+				.authenticationEntryPoint((request, response, e) -> write(request, response, jsonMapper, ErrorCode.UNAUTHENTICATED))
+				.accessDeniedHandler((request, response, e) -> write(request, response, jsonMapper, ErrorCode.FORBIDDEN)));
 		return http.build();
 	}
 
@@ -65,7 +67,10 @@ public class SecurityConfig {
 		return new BCryptPasswordEncoder();
 	}
 
-	private static void write(HttpServletResponse response, JsonMapper jsonMapper, ErrorCode code) throws IOException {
+	private static void write(HttpServletRequest request, HttpServletResponse response, JsonMapper jsonMapper,
+			ErrorCode code) throws IOException {
+		// 감사 줄의 reason = 응답 본문의 code (보안 체인에서 끝난 401 · 403)
+		AuditContext.of(request).reason(code.name());
 		response.setStatus(code.status().value());
 		response.setContentType(MediaType.APPLICATION_JSON_VALUE);
 		response.setCharacterEncoding("UTF-8");

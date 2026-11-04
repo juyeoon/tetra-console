@@ -6,6 +6,8 @@ import java.time.LocalDateTime;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.tetra.ops.common.audit.AuditContext;
+import com.tetra.ops.common.audit.Masking;
 import com.tetra.ops.common.error.ApiException;
 import com.tetra.ops.common.error.ErrorCode;
 import com.tetra.ops.common.time.Kst;
@@ -95,13 +97,18 @@ class TenantWriter {
 	@Transactional
 	public Tenant update(String tenantId, String name, String contactName, String email) {
 		Tenant tenant = tenants.findById(tenantId).orElseThrow(() -> new ApiException(ErrorCode.TENANT_NOT_FOUND));
+		// 감사 줄: 바꾸기 전 · 후(값이 같으면 남기지 않음, 이메일 · 담당자 이름은 가려서). 실패(1062 등)면 필터가 내지 않는다
+		AuditContext audit = AuditContext.current();
 		if (name != null) {
+			audit.change("name", tenant.getName(), name);
 			tenant.changeName(name);
 		}
 		if (contactName != null) {
+			audit.maskedChange("contact_name", tenant.getContactName(), contactName, Masking::name);
 			tenant.changeContactName(contactName);
 		}
 		if (email != null) {
+			audit.maskedChange("email", tenant.getEmail(), email, Masking::email);
 			tenant.changeEmail(email);
 		}
 		entityManager.flush();

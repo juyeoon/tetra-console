@@ -8,6 +8,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+import com.tetra.ops.common.audit.AuditContext;
 import com.tetra.ops.common.error.ApiException;
 import com.tetra.ops.common.error.ErrorCode;
 import com.tetra.ops.report.event.EventResultReportGenerator;
@@ -55,8 +56,9 @@ public class ReportGenerateService {
 		if (!invalid.isEmpty()) {
 			throw new ApiException(ErrorCode.INVALID_INPUT, invalid);
 		}
+		// 감사 줄(REPORT_GENERATE): 대상 · event_id = 본문 eventId, tenant_id = 생성기가 event_registry에서 찾은 값
+		AuditContext.current().event(eventId);
 		Generated generated = eventResults.generate(eventId);
-		// TODO(미정): 감사 행위 코드(운영자 감사 리포트 ⑮ 표)는 다음 MR. 지금은 로그 한 줄
 		log.info("리포트 수동 생성: category={}, event={}, tenant={}, created={}, operator={}", category, eventId,
 				generated.tenantId(), generated.created(), operatorId);
 		return new ReportGenerateResponse(category, eventId, generated.tenantId(), generated.filePath(),

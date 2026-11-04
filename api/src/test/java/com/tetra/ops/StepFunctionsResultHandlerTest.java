@@ -317,9 +317,11 @@ class StepFunctionsResultHandlerTest extends IntegrationTest {
 		assertThat(sent.subject()).isEqualTo("[Tetra] 테넌트 계정이 등록되었습니다");
 		assertThat(sent.textBody()).contains("안녕하세요, B사 담당자님.", "Tetra에 B사 테넌트 계정이 등록되었습니다.", "24시간");
 
-		// 링크: {portal}/password/setup?t=&exp=&sig=, sig = base64url(HMAC-SHA256(secret, t + exp + "")). 만료는 발송 시점 + 24시간
-		String link = sent.textBody().replaceAll("(?s).*(https://portal\\.example\\.test/password/setup\\?\\S+).*", "$1");
-		Map<String, String> query = query(link);
+		// 링크: {portal}/password/setup#t=&exp=&sig= (프래그먼트 — 서버로 가지 않음, 2026-11-05), sig = base64url(HMAC-SHA256(secret,
+		// t + exp + "")). 만료는 발송 시점 + 24시간
+		String link = sent.textBody().replaceAll("(?s).*(https://portal\\.example\\.test/password/setup#\\S+).*", "$1");
+		assertThat(URI.create(link).getRawQuery()).isNull();
+		Map<String, String> query = fragment(link);
 		assertThat(query.get("t")).isEqualTo(B);
 		long exp = Long.parseLong(query.get("exp"));
 		assertThat(exp - System.currentTimeMillis() / 1000).isBetween(24 * 3600L - 60, 24 * 3600L + 60);
@@ -387,8 +389,8 @@ class StepFunctionsResultHandlerTest extends IntegrationTest {
 			.isEqualTo(expectedNotifications);
 	}
 
-	private static Map<String, String> query(String url) {
-		return List.of(URI.create(url).getRawQuery().split("&"))
+	private static Map<String, String> fragment(String url) {
+		return List.of(URI.create(url).getRawFragment().split("&"))
 			.stream()
 			.map(p -> p.split("=", 2))
 			.collect(Collectors.toMap(p -> p[0], p -> p[1]));

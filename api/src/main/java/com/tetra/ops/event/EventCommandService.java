@@ -10,6 +10,7 @@ import org.springframework.stereotype.Service;
 
 import com.tetra.ops.common.DbErrors;
 import com.tetra.ops.common.RandomIds;
+import com.tetra.ops.common.audit.AuditContext;
 import com.tetra.ops.common.error.ApiException;
 import com.tetra.ops.common.error.ErrorCode;
 import com.tetra.ops.common.time.Kst;
@@ -103,6 +104,7 @@ public class EventCommandService {
 		router.inTenant(routed, () -> approveChecks.verify(eventId));
 		EventKeyPairs.KeyMaterial keys = keyPairs.generate();
 		Event approved = router.inTenant(routed, () -> commitApproval(eventId, operatorId, keys.publicKeyPem()));
+		AuditContext.current().change("application_status", ApplicationStatus.APPLIED.name(), ApplicationStatus.APPROVED.name());
 
 		// ---- 커밋 후 ① Step Functions ----
 		HostingStatus hostingStatus = HostingStatus.PENDING;
@@ -130,6 +132,10 @@ public class EventCommandService {
 			throw new ApiException(ErrorCode.APPLICATION_NOT_APPLIED);
 		}
 		router.inTenant(routed, () -> statusService.reject(eventId, operatorId, reason));
+		// 반려 사유는 200자까지(AuditContext.change)
+		AuditContext.current()
+			.change("application_status", ApplicationStatus.APPLIED.name(), ApplicationStatus.REJECTED.name())
+			.change("reject_reason", null, reason);
 	}
 
 	/** slug가 테넌트 안에서 겹치면(uk_event_slug, 1062) 새 slug로 트랜잭션을 다시 실행한다. 최대 5회. */

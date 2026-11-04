@@ -10,6 +10,8 @@ import org.springframework.stereotype.Service;
 
 import com.tetra.ops.common.DbErrors;
 import com.tetra.ops.common.RandomIds;
+import com.tetra.ops.common.audit.AuditContext;
+import com.tetra.ops.common.audit.Masking;
 import com.tetra.ops.common.error.ApiException;
 import com.tetra.ops.common.error.ErrorCode;
 import com.tetra.ops.config.TetraProperties;
@@ -122,6 +124,13 @@ public class TenantCommandService {
 		}
 		Tenant tenant = insertWithUniqueId(name, rootDomain, email, contactName);
 		String tenantId = tenant.getTenantId();
+		// 감사 줄: 대상 = 새 테넌트, 등록한 값(이메일 · 담당자 이름은 가려서)
+		AuditContext.current()
+			.tenant(tenantId)
+			.change("name", null, name)
+			.change("email", null, Masking.email(email))
+			.change("root_domain", null, rootDomain)
+			.change("contact_name", null, Masking.name(contactName));
 
 		// ---- 커밋 후 ① 테넌트 스키마 t_{tenant_id} (Flyway, 마이그레이션 계정). 트랜잭션 밖: DDL은 어차피 암묵 커밋 ----
 		// 실패하면 환경 준비를 시작하지 않는다(READY가 되지 않으므로 메일도 없다). 재시도 경로는 수동이다

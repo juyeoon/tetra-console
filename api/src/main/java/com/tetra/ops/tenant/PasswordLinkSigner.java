@@ -20,6 +20,8 @@ import com.tetra.ops.config.TetraProperties;
  * Portal 백엔드가 같은 규칙으로 검증한다.
  * TODO(미정): 연결 형식·인코딩은 Portal 담당과 맞춤. 임시로 구분자 없이 이어 붙인 UTF-8 문자열, exp는 10진 epoch초,
  * 결과는 패딩 없는 base64url.
+ * 값은 쿼리(?)가 아니라 프래그먼트(#t=…&exp=…&sig=…)로 붙인다 — 프래그먼트는 브라우저가 서버로 보내지 않아 ALB 접근 로그 ·
+ * 감사 로그 · Referer에 서명이 남지 않는다(2026-11-05, Portal 화면은 둘 다 읽게 이미 배포됨). 서명 계산 · 만료는 그대로.
  * 링크는 DB·로그·응답에 남기지 않는다.
  */
 @Component
@@ -53,7 +55,7 @@ public class PasswordLinkSigner {
 	public SignedLink create(String tenantId, String currentPassword) {
 		Instant expiresAt = clock.instant().plus(TTL);
 		long exp = expiresAt.getEpochSecond();
-		String url = portalBaseUrl + "/password/setup?t=" + tenantId + "&exp=" + exp + "&sig="
+		String url = portalBaseUrl + "/password/setup#t=" + tenantId + "&exp=" + exp + "&sig="
 				+ sign(tenantId, exp, currentPassword);
 		return new SignedLink(url, Instant.ofEpochSecond(exp));
 	}
