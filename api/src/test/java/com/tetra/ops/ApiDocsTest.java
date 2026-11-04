@@ -50,6 +50,9 @@ class ApiDocsTest extends IntegrationTest {
 		assertThat(docs.path("components").path("securitySchemes").path("cookieAuth").path("name").asString())
 			.isEqualTo("TETRA_OPS_TOKEN");
 		assertThat(docs.path("components").path("schemas").has("ErrorResponse")).isTrue();
+		// 서버 주소는 상대 경로 — forward-headers-strategy: none이라 요청으로 만들면 ALB 뒤에서 http://…가 된다
+		assertThat(docs.path("servers")).hasSize(1);
+		assertThat(docs.path("servers").path(0).path("url").asString()).isEqualTo("/");
 
 		JsonNode approve = docs.path("paths").path("/api/ops/events/{eventId}/approve").path("post");
 		assertThat(approve.path("responses").path("409").path("description").asString())

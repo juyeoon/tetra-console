@@ -16,6 +16,8 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
+import com.tetra.ops.common.audit.AuditContext;
+
 /** 오류를 §9 형식으로 바꾼다. 500에는 내부 정보(SQL, 스택)를 넣지 않는다. */
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -71,6 +73,8 @@ public class GlobalExceptionHandler {
 	}
 
 	private ResponseEntity<ErrorResponse> respond(ErrorCode code, Map<String, String> fields) {
+		// 감사 줄의 reason = 응답 본문의 code (감사 대상 요청이 아니면 아무것도 안 함)
+		AuditContext.current().reason(code.name());
 		return ResponseEntity.status(code.status()).body(ErrorResponse.of(code, fields));
 	}
 

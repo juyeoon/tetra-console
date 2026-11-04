@@ -20,6 +20,7 @@ import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.Statement;
 import java.time.LocalDateTime;
+import java.util.List;
 
 import javax.sql.DataSource;
 
@@ -39,6 +40,9 @@ import com.tetra.ops.common.DbLock;
 import com.tetra.ops.support.IntegrationTest;
 import com.tetra.ops.support.MySqlTestDatabase;
 import com.tetra.ops.tenancy.TenantRouter;
+
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * 리포트 수동 생성 API(POST /api/ops/reports/generate, ⑬-보조): 정상 생성 · 다시 부르면 덮어쓰기(created false, 알림 한 번) · 보충 기간과
@@ -162,6 +166,39 @@ class ReportGenerateApiTest extends IntegrationTest {
 		assertThat(reportNotifications(A)).isEqualTo(1);
 		assertThat(output).contains("created=false, operator=1");
 		verify(lock, times(2)).runIfAcquired(any());
+	}
+
+	// ---------------------------------------------------------------- 감사 로그
+
+	/** 감사 줄(REPORT_GENERATE): 대상 · event_id = 본문 eventId, tenant_id = 처리에서 찾은 테넌트. 없는 이벤트면 tenant_id null. */
+	@Test
+	void auditLineCarriesBodyEventAndResolvedTenant(CapturedOutput output) throws Exception {
+		endedEvent(B, 7601);
+		summary(B, 7601, LocalDateTime.now().minusHours(1));
+
+		generateEvent(7601).andExpect(status().isOk());
+		generateEvent(999999).andExpect(status().isNotFound());
+
+		List<JsonNode> lines = output.getOut()
+			.lines()
+			.filter(line -> line.startsWith("{\"log_type\":\"AUDIT\"") && line.contains("REPORT_GENERATE"))
+			.map(JsonMapper.builder().build()::readTree)
+			.toList();
+		assertThat(lines).hasSize(2);
+		JsonNode created = lines.get(0);
+		assertThat(created.path("action").asString()).isEqualTo("REPORT_GENERATE");
+		assertThat(created.path("result").asString()).isEqualTo("SUCCESS");
+		assertThat(created.path("actor").path("type").asString()).isEqualTo("OPERATOR");
+		assertThat(created.path("actor").path("id").asString()).isEqualTo("1");
+		assertThat(created.path("target").path("type").asString()).isEqualTo("EVENT");
+		assertThat(created.path("target").path("id").asString()).isEqualTo("7601");
+		assertThat(created.path("event_id").asLong()).isEqualTo(7601);
+		assertThat(created.path("tenant_id").asString()).isEqualTo(B);
+		JsonNode missing = lines.get(1);
+		assertThat(missing.path("result").asString()).isEqualTo("FAILURE");
+		assertThat(missing.path("reason").asString()).isEqualTo("EVENT_NOT_FOUND");
+		assertThat(missing.path("event_id").asLong()).isEqualTo(999999);
+		assertThat(missing.path("tenant_id").isNull()).isTrue();
 	}
 
 	// ---------------------------------------------------------------- 오류

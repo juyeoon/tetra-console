@@ -4,6 +4,7 @@ import java.util.function.Supplier;
 
 import org.springframework.stereotype.Component;
 
+import com.tetra.ops.common.audit.AuditContext;
 import com.tetra.ops.common.error.ApiException;
 import com.tetra.ops.common.error.ErrorCode;
 import com.tetra.ops.domain.platform.EventRegistry;
@@ -44,8 +45,12 @@ public class TenantRouter {
 
 	/** eventId로 registry와 테넌트를 찾는다. 테넌트 스키마로 들어가지는 않는다. */
 	public RoutedEvent findEvent(Long eventId) {
-		EventRegistry registry = registries.findById(eventId)
-			.orElseThrow(() -> new ApiException(ErrorCode.EVENT_NOT_FOUND));
+		EventRegistry registry = registries.findById(eventId).orElse(null);
+		// 감사 줄의 tenant_id — 찾은 결과(없음 포함)를 넘겨 필터가 같은 이벤트를 다시 조회하지 않게(요청이 아니면 아무것도 안 함)
+		AuditContext.current().eventTenant(eventId, registry == null ? null : registry.getTenantId());
+		if (registry == null) {
+			throw new ApiException(ErrorCode.EVENT_NOT_FOUND);
+		}
 		if (!TenantIds.isValid(registry.getTenantId())) {
 			throw new IllegalStateException("event_registry.tenant_id 형식 오류: eventId=" + eventId);
 		}
