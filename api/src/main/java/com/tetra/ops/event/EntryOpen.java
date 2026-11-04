@@ -13,7 +13,7 @@ public final class EntryOpen {
 	 */
 	// TEST-LEAD: 서비스 값 60
 	// public static final Duration ENTRY_OPEN_LEAD = Duration.ofMinutes(60);
-	public static final Duration ENTRY_OPEN_LEAD = Duration.ofMinutes(5); // TEST-LEAD
+	public static final Duration ENTRY_OPEN_LEAD = Duration.ofMinutes(15); // TEST-LEAD
 
 	private EntryOpen() {
 	}

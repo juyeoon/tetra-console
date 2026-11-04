@@ -337,13 +337,13 @@ describe('상태 로그: 이벤트 시작 항목 · 입장 시각', () => {
   test('호스팅 시작 설명에 실제 입장 시각(시작 − 60분, MM.DD HH:mm)', () => {
     // TEST-LEAD: 서비스 값 60
     // assert.equal(ENTRY_OPEN_LEAD_MINUTES, 60);
-    assert.equal(ENTRY_OPEN_LEAD_MINUTES, 5); // TEST-LEAD
+    assert.equal(ENTRY_OPEN_LEAD_MINUTES, 15); // TEST-LEAD
     const hosting = timelineOf(OPENED_LOGS, START_AT, new Date(START_AT))[2];
     // TEST-LEAD: 서비스 값 12:00
     // assert.equal(hosting.description, '호스팅 시작 시각이 되어 이벤트 페이지(대기방)를 열었습니다. 입장은 10.24 12:00에 열립니다.');
-    assert.equal(hosting.description, '호스팅 시작 시각이 되어 이벤트 페이지(대기방)를 열었습니다. 입장은 10.24 12:55에 열립니다.'); // TEST-LEAD
+    assert.equal(hosting.description, '호스팅 시작 시각이 되어 이벤트 페이지(대기방)를 열었습니다. 입장은 10.24 12:45에 열립니다.'); // TEST-LEAD
     // 자정을 넘으면 전날 날짜
-    // TEST-LEAD: 서비스 값 시작 00:30 → 입장 10.24 23:30(5분이면 자정을 안 넘어 시작을 00:03으로)
+    // TEST-LEAD: 서비스 값 시작 00:30 → 입장 10.24 23:30(15분이면 자정을 안 넘어 시작을 00:03으로)
     // assert.equal(
     //   statusLogView(OPENED_LOGS[2], '2026-10-25T00:30:00+09:00').description,
     //   '호스팅 시작 시각이 되어 이벤트 페이지(대기방)를 열었습니다. 입장은 10.24 23:30에 열립니다.',
@@ -351,9 +351,9 @@ describe('상태 로그: 이벤트 시작 항목 · 입장 시각', () => {
     // assert.equal(entryOpenAtOf('2026-10-25T00:30:00+09:00'), '2026-10-24T14:30:00.000Z');
     assert.equal( // TEST-LEAD
       statusLogView(OPENED_LOGS[2], '2026-10-25T00:03:00+09:00').description, // TEST-LEAD
-      '호스팅 시작 시각이 되어 이벤트 페이지(대기방)를 열었습니다. 입장은 10.24 23:58에 열립니다.', // TEST-LEAD
+      '호스팅 시작 시각이 되어 이벤트 페이지(대기방)를 열었습니다. 입장은 10.24 23:48에 열립니다.', // TEST-LEAD
     ); // TEST-LEAD
-    assert.equal(entryOpenAtOf('2026-10-25T00:03:00+09:00'), '2026-10-24T14:58:00.000Z'); // TEST-LEAD
+    assert.equal(entryOpenAtOf('2026-10-25T00:03:00+09:00'), '2026-10-24T14:48:00.000Z'); // TEST-LEAD
     // 다른 항목은 시작 시각을 받아도 그대로
     assert.equal(statusLogView(OPENED_LOGS[3], START_AT).description, STATUS_LOG_TEXT.EVENT.OPEN.description);
   });

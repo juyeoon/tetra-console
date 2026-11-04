@@ -25,7 +25,7 @@ final class ApproveRules {
 	 */
 	// TEST-LEAD: 서비스 값 90
 	// static final Duration HOSTING_LEAD_BEFORE_START = Duration.ofMinutes(90);
-	static final Duration HOSTING_LEAD_BEFORE_START = Duration.ofMinutes(15); // TEST-LEAD
+	static final Duration HOSTING_LEAD_BEFORE_START = Duration.ofMinutes(25); // TEST-LEAD
 
 	/** WF2-1(호스팅 시작)과 WF2-2(T−90)가 같은 시각에 돌지 않게 두는 간격 */
 	static final Duration SCHEDULE_GAP = Duration.ofMinutes(10);
