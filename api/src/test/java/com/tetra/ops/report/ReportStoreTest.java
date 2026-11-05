@@ -16,6 +16,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.YearMonth;
 import java.util.List;
@@ -49,6 +50,11 @@ class ReportStoreTest extends IntegrationTest {
 
 	static final LocalDateTime END = LocalDateTime.of(2026, 10, 31, 23, 59, 59);
 
+	/** 운영자 접속기록 기간(KST 날짜, 양끝 포함) = START ~ END의 날짜 */
+	static final LocalDate FROM = START.toLocalDate();
+
+	static final LocalDate TO = END.toLocalDate();
+
 	static final byte[] ZIP = ReportZip.zip(List.of(new ReportZip.Entry("summary.pdf", "pdf".getBytes(StandardCharsets.UTF_8))));
 
 	static final byte[] CSV = new CsvWriter("a").row("1").toBytes();
@@ -76,8 +82,8 @@ class ReportStoreTest extends IntegrationTest {
 	}
 
 	private static OperatorReport auditReport() {
-		return new OperatorReport(ReportCategory.OPERATOR_AUDIT, "2026년 10월 운영자 감사 리포트", START, END,
-				ReportKeys.operatorAudit(OCTOBER), CSV);
+		return new OperatorReport(ReportCategory.OPERATOR_AUDIT, "운영자 접속기록 2026-10-01 ~ 2026-10-31", START, END,
+				ReportKeys.operatorAudit(FROM, TO), CSV);
 	}
 
 	private List<Map<String, Object>> tenantMeta(String tenantId) {
@@ -102,7 +108,10 @@ class ReportStoreTest extends IntegrationTest {
 	void keysAreDeterministicPerTargetPeriod() {
 		assertThat(ReportKeys.eventResult(OCTOBER, 1043)).isEqualTo("reports/2026/10/event-1043.zip");
 		assertThat(ReportKeys.monthly(YearMonth.of(2026, 1))).isEqualTo("reports/2026/01/monthly-202601.zip");
-		assertThat(ReportKeys.operatorAudit(OCTOBER)).isEqualTo("reports/2026/10/operator-audit-202610.csv");
+		assertThat(ReportKeys.operatorAudit(FROM, TO)).isEqualTo("reports/2026/10/operator-audit-20261001-20261031.csv");
+		// 달을 넘는 기간은 시작일의 달 폴더
+		assertThat(ReportKeys.operatorAudit(LocalDate.of(2026, 10, 28), LocalDate.of(2026, 11, 5)))
+			.isEqualTo("reports/2026/10/operator-audit-20261028-20261105.csv");
 	}
 
 	/** 이벤트 결과: 테넌트 로그 버킷에 zip Put 두 번(덮어쓰기), 메타 · 테넌트 알림은 한 번 */
@@ -155,7 +164,7 @@ class ReportStoreTest extends IntegrationTest {
 	}
 
 	/**
-	 * 운영자 감사: 운영자 리포트 버킷에 CSV Put 두 번, operator_report_meta · 운영자 알림(dedupe_key)은 한 번. OPS-09 목록 · 다운로드에
+	 * 운영자 접속기록: 운영자 리포트 버킷에 CSV Put 두 번, operator_report_meta · 운영자 알림(dedupe_key, 기간 기준)은 한 번. OPS-09 목록 · 다운로드에
 	 * 그대로 나온다(키만 저장 → 같은 버킷 presign, 파일 이름 report-{id}.csv)
 	 */
 	@Test
@@ -163,31 +172,31 @@ class ReportStoreTest extends IntegrationTest {
 		assertThat(store.saveOperatorReport(auditReport())).isTrue();
 		assertThat(store.saveOperatorReport(auditReport())).isFalse();
 
-		verify(storage, times(2)).put("tetra-operator-logs-test", "reports/2026/10/operator-audit-202610.csv", CSV,
+		verify(storage, times(2)).put("tetra-operator-logs-test", "reports/2026/10/operator-audit-20261001-20261031.csv", CSV,
 				"text/csv; charset=utf-8");
 		Map<String, Object> meta = operatorMeta().get(0);
 		assertThat(operatorMeta()).hasSize(1);
 		assertThat(meta).containsEntry("category", "OPERATOR_AUDIT")
-			.containsEntry("file_path", "reports/2026/10/operator-audit-202610.csv");
+			.containsEntry("file_path", "reports/2026/10/operator-audit-20261001-20261031.csv");
 		assertThat(operatorNotifications()).singleElement()
 			.satisfies(row -> assertThat(row).containsEntry("tenant_id", null)
 				.containsEntry("event_id", null)
 				.containsEntry("priority", "INFO")
-				.containsEntry("dedupe_key", "REPORT:OPERATOR_AUDIT:2026-10")
+				.containsEntry("dedupe_key", "REPORT:OPERATOR_AUDIT:2026-10-01~2026-10-31")
 				.containsEntry("slack_status", "PENDING")
-				.containsEntry("content", "[2026년 10월] 운영자 감사 리포트가 생성되었습니다. 리포트 화면에서 내려받을 수 있습니다."));
+				.containsEntry("content", "[2026-10-01 ~ 2026-10-31] 운영자 접속기록 리포트가 생성되었습니다. 리포트 화면에서 내려받을 수 있습니다."));
 
 		long reportId = ((Number) meta.get("report_id")).longValue();
 		mvc.perform(get("/api/ops/reports").cookie(operatorCookie()))
 			.andExpect(status().isOk())
 			.andExpect(jsonPath("$.items.length()").value(1))
-			.andExpect(jsonPath("$.items[0].name").value("2026년 10월 운영자 감사 리포트"))
+			.andExpect(jsonPath("$.items[0].name").value("운영자 접속기록 2026-10-01 ~ 2026-10-31"))
 			.andExpect(jsonPath("$.items[0].category").value("OPERATOR_AUDIT"))
 			.andExpect(jsonPath("$.items[0].periodEnd").value("2026-10-31T23:59:59+09:00"));
 		when(urlSigner.presignGet(any(), any(), any(), any()))
 			.thenReturn(new SignedUrl("https://signed.example/report", Instant.parse("2026-11-02T00:00:00Z")));
 		mvc.perform(get("/api/ops/reports/{id}/download", reportId).cookie(operatorCookie())).andExpect(status().isOk());
-		verify(urlSigner).presignGet(eq("tetra-operator-logs-test"), eq("reports/2026/10/operator-audit-202610.csv"),
+		verify(urlSigner).presignGet(eq("tetra-operator-logs-test"), eq("reports/2026/10/operator-audit-20261001-20261031.csv"),
 				eq(Duration.ofMinutes(5)), eq("report-" + reportId + ".csv"));
 		// 알림센터 칩 · 이동 경로는 리포트
 		mvc.perform(get("/api/ops/notifications").param("chip", "REPORT").cookie(operatorCookie()))
@@ -240,7 +249,7 @@ class ReportStoreTest extends IntegrationTest {
 	@Test
 	void invalidReportsAreRejectedBeforeUpload() {
 		assertThatThrownBy(() -> new TenantReport(ReportCategory.OPERATOR_AUDIT, null, "x", START, END,
-				ReportKeys.operatorAudit(OCTOBER), ZIP)).isInstanceOf(IllegalArgumentException.class);
+				ReportKeys.operatorAudit(FROM, TO), ZIP)).isInstanceOf(IllegalArgumentException.class);
 		assertThatThrownBy(() -> new TenantReport(ReportCategory.EVENT_RESULT, null, "x", START, END,
 				ReportKeys.eventResult(OCTOBER, 1), ZIP)).isInstanceOf(IllegalArgumentException.class);
 		assertThatThrownBy(() -> new TenantReport(ReportCategory.MONTHLY, EVENT_ID, "x", START, END,
@@ -249,13 +258,13 @@ class ReportStoreTest extends IntegrationTest {
 		assertThatThrownBy(() -> new OperatorReport(ReportCategory.OPERATOR_AUDIT, "x", START, END, "audit/202610.csv", CSV))
 			.isInstanceOf(IllegalArgumentException.class);
 		assertThatThrownBy(() -> new OperatorReport(ReportCategory.MONTHLY, "x", START, END,
-				ReportKeys.operatorAudit(OCTOBER), CSV)).isInstanceOf(IllegalArgumentException.class);
+				ReportKeys.operatorAudit(FROM, TO), CSV)).isInstanceOf(IllegalArgumentException.class);
 		assertThatThrownBy(() -> new OperatorReport(ReportCategory.OPERATOR_AUDIT, "x", END, START,
-				ReportKeys.operatorAudit(OCTOBER), CSV)).isInstanceOf(IllegalArgumentException.class);
+				ReportKeys.operatorAudit(FROM, TO), CSV)).isInstanceOf(IllegalArgumentException.class);
 		assertThatThrownBy(() -> new OperatorReport(ReportCategory.OPERATOR_AUDIT, " ", START, END,
-				ReportKeys.operatorAudit(OCTOBER), CSV)).isInstanceOf(IllegalArgumentException.class);
+				ReportKeys.operatorAudit(FROM, TO), CSV)).isInstanceOf(IllegalArgumentException.class);
 		assertThatThrownBy(() -> new OperatorReport(ReportCategory.OPERATOR_AUDIT, "x", START, END,
-				ReportKeys.operatorAudit(OCTOBER), new byte[0])).isInstanceOf(IllegalArgumentException.class);
+				ReportKeys.operatorAudit(FROM, TO), new byte[0])).isInstanceOf(IllegalArgumentException.class);
 
 		// READY가 아닌 테넌트
 		data.tenant("cccccccccccc", "C사", "INACTIVE", "PROVISIONING");

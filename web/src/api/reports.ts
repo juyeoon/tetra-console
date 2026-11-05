@@ -1,5 +1,5 @@
 import { apiRequest } from './client.ts';
-import type { ReportDownloadResponse, ReportListResponse } from './types.ts';
+import type { ReportDownloadResponse, ReportGenerateRequest, ReportGenerateResponse, ReportListResponse } from './types.ts';
 
 const reportPath = (reportId: number) => `/reports/${encodeURIComponent(String(reportId))}`;
 
@@ -11,3 +11,10 @@ export const fetchReportDownloadUrl = (reportId: number) => apiRequest<ReportDow
 
 /** 로그인한 운영자 이메일로 리포트 안내 메일(204). 메일 실패면 503 MAIL_SEND_FAILED */
 export const sendReportEmail = (reportId: number) => apiRequest<void>(`${reportPath(reportId)}/email`, { method: 'POST' });
+
+/**
+ * 리포트 만들기(운영자 접속기록 · 이벤트 결과). 400 INVALID_INPUT(fields), 404 EVENT_NOT_FOUND,
+ * 409 REPORT_BUSY · RESULT_NOT_READY · TENANT_NOT_READY · AUDIT_BUCKET_NOT_CONFIGURED
+ */
+export const generateReport = (body: ReportGenerateRequest) =>
+  apiRequest<ReportGenerateResponse>('/reports/generate', { method: 'POST', body });

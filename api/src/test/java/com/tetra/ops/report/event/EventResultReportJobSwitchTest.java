@@ -47,7 +47,7 @@ class EventResultReportJobSwitchTest {
 		var sfn = new TetraProperties.Sfn("arn:a", "arn:t", new TetraProperties.Lifecycle("tetra-test-hosting-start",
 				"tetra-test-event-open", "tetra-test-event-end"));
 		var report = new TetraProperties.Report("tetra-operator-logs-test", new TetraProperties.MetaCleanup(true),
-				new TetraProperties.EventResult(true, 3));
+				new TetraProperties.EventResult(true, 3), "");
 		return new TetraProperties("test", null, sfn, null, null, null, null, null, null, null, null, null, report, null,
 				null, null, "tetraops.cloud");
 	}

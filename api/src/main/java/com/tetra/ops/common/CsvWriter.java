@@ -32,6 +32,20 @@ public final class CsvWriter {
 
 	private final boolean formulaGuard;
 
+	/**
+	 * 수식 가림 없이 그대로 쓰는 고정 글자(코드에 적힌 값만 — 데이터 값에 쓰지 않는다). 예: 해당 없는 칸의 "-"는 가림을 켜면 '-가 되므로
+	 * 이것으로 감싼다. 따옴표 규칙({@link #field})은 그대로 적용한다.
+	 */
+	public record Literal(String value) {
+
+		public Literal {
+			if (value == null) {
+				throw new IllegalArgumentException("고정 글자가 없습니다");
+			}
+		}
+
+	}
+
 	/** 머리글 한 줄을 쓴다. 수식 가림 끔 */
 	public CsvWriter(String... header) {
 		this(false, header);
@@ -51,8 +65,8 @@ public final class CsvWriter {
 	}
 
 	/**
-	 * 한 줄. null은 빈 칸, LocalDateTime은 {@link #kst}, BigDecimal은 지수 표기 없이, 나머지는 toString().
-	 * 수식 가림을 켰으면 글자 칸에 {@link #guardFormula}, 그 뒤 모든 칸에 {@link #field} 규칙을 적용한다.
+	 * 한 줄. null은 빈 칸, LocalDateTime은 {@link #kst}, BigDecimal은 지수 표기 없이, {@link Literal}은 그 값, 나머지는 toString().
+	 * 수식 가림을 켰으면 글자 칸(Literal 제외)에 {@link #guardFormula}, 그 뒤 모든 칸에 {@link #field} 규칙을 적용한다.
 	 */
 	public CsvWriter row(Object... fields) {
 		for (int i = 0; i < fields.length; i++) {
@@ -61,7 +75,8 @@ public final class CsvWriter {
 			}
 			Object value = fields[i];
 			String cell = text(value);
-			if (formulaGuard && !(value instanceof Number) && !(value instanceof LocalDateTime)) {
+			if (formulaGuard && !(value instanceof Number) && !(value instanceof LocalDateTime)
+					&& !(value instanceof Literal)) {
 				cell = guardFormula(cell);
 			}
 			text.append(field(cell));
@@ -113,6 +128,9 @@ public final class CsvWriter {
 		}
 		if (value instanceof BigDecimal decimal) {
 			return decimal.toPlainString();
+		}
+		if (value instanceof Literal literal) {
+			return literal.value();
 		}
 		return value.toString();
 	}

@@ -3,7 +3,6 @@ package com.tetra.ops.notification;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.time.YearMonth;
 import java.time.format.DateTimeFormatter;
 import java.util.Arrays;
 import java.util.Optional;
@@ -334,9 +333,12 @@ public class NotificationService {
 
 	private static final String REPORT_KEY_PREFIX = "REPORT:";
 
-	/** 운영자 리포트 알림 중복 방지 키: REPORT:{분류}:{yyyy-MM}(대상 기간 시작 달) — 같은 리포트는 1건 */
-	public static String reportKey(ReportCategory category, YearMonth period) {
-		return REPORT_KEY_PREFIX + category.name() + ":" + period;
+	/**
+	 * 운영자 리포트 알림 중복 방지 키: REPORT:{분류}:{yyyy-MM-dd}~{yyyy-MM-dd}(대상 기간 시작 · 끝 날짜, KST) — 같은 기간 리포트는 1건.
+	 * 예: REPORT:OPERATOR_AUDIT:2026-11-01~2026-11-05
+	 */
+	public static String reportKey(ReportCategory category, LocalDate from, LocalDate to) {
+		return REPORT_KEY_PREFIX + category.name() + ":" + from + "~" + to;
 	}
 
 	/**
@@ -356,21 +358,23 @@ public class NotificationService {
 	}
 
 	/**
-	 * 운영자 리포트 생성(운영자 감사). 운영자 REPORT/INFO, 테넌트 · 이벤트 없음, 중복 방지 키 {@link #reportKey}.
+	 * 운영자 리포트 생성(운영자 접속기록, 기간 지정). 운영자 REPORT/INFO, 테넌트 · 이벤트 없음, 중복 방지 키 {@link #reportKey}(기간 기준).
 	 * 리포트 메타 저장 트랜잭션 안에서 부른다. 같은 키 알림이 이미 있으면(메타만 지워진 뒤 다시 만든 경우) 남기지 않고 false.
 	 * @return 새로 남겼으면 true
 	 */
 	@Transactional(propagation = Propagation.MANDATORY)
-	public boolean operatorReportCreated(ReportCategory category, LocalDateTime periodStart) {
+	public boolean operatorReportCreated(ReportCategory category, LocalDateTime periodStart, LocalDateTime periodEnd) {
 		if (category != ReportCategory.OPERATOR_AUDIT) {
 			throw new IllegalArgumentException("테넌트 리포트는 운영자 리포트 알림을 남기지 않습니다: " + category);
 		}
-		String key = reportKey(category, YearMonth.from(periodStart));
+		LocalDate from = periodStart.toLocalDate();
+		LocalDate to = periodEnd.toLocalDate();
+		String key = reportKey(category, from, to);
 		if (operatorNotifications.existsByDedupeKey(key)) {
 			return false;
 		}
 		operator(null, null, Category.REPORT, Priority.INFO,
-				monthLabel(periodStart) + " 운영자 감사 리포트가 생성되었습니다. 리포트 화면에서 내려받을 수 있습니다.", key);
+				"[" + from + " ~ " + to + "] 운영자 접속기록 리포트가 생성되었습니다. 리포트 화면에서 내려받을 수 있습니다.", key);
 		return true;
 	}
 

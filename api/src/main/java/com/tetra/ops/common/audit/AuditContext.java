@@ -121,6 +121,14 @@ public final class AuditContext {
 		return this;
 	}
 
+	/** 만든 운영자 리포트(리포트 수동 생성 OPERATOR_AUDIT의 operator_report_meta.report_id) — 대상. 테넌트 · 이벤트 없음. */
+	public AuditContext report(long reportId) {
+		if (active) {
+			this.target = new AuditEvent.Party(REPORT, Long.toString(reportId));
+		}
+		return this;
+	}
+
 	/** event_registry에서 찾은 결과(TenantRouter.findEvent). 없는 이벤트면 tenantId null. */
 	public AuditContext eventTenant(Long eventId, String tenantId) {
 		if (active && eventId != null) {

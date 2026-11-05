@@ -825,3 +825,26 @@ export interface ReportDownloadResponse {
   url: string;
   expiresAt: string;
 }
+
+/**
+ * POST /reports/generate 본문. 운영자 접속기록 = 기간(KST 날짜 'YYYY-MM-DD', 양끝 포함, 최대 31일, 오늘까지),
+ * 이벤트 결과 = 이벤트 하나. 분류에 쓰지 않는 값을 보내면 400
+ */
+export type ReportGenerateRequest =
+  | { category: 'OPERATOR_AUDIT'; from: string; to: string }
+  | { category: 'EVENT_RESULT'; eventId: number };
+
+/**
+ * POST /reports/generate 응답. created = 메타 · 알림을 이번에 새로 남겼는지(같은 리포트가 있으면 false, 파일만 새로 씀).
+ * 운영자 접속기록은 from · to · rows(데이터 줄 수), 이벤트 결과는 eventId · tenantId. filePath는 버킷 안 키(링크 아님)
+ */
+export interface ReportGenerateResponse {
+  category: 'OPERATOR_AUDIT' | 'EVENT_RESULT';
+  eventId: number | null;
+  tenantId: string | null;
+  filePath: string;
+  created: boolean;
+  from: string | null;
+  to: string | null;
+  rows: number | null;
+}

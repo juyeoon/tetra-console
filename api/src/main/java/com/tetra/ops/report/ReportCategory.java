@@ -12,7 +12,7 @@ public enum ReportCategory {
 	/** 테넌트 · 월간 리포트(zip) */
 	MONTHLY(true),
 
-	/** 운영자 · 월간 감사 리포트(CSV) */
+	/** 운영자 · 접속기록 리포트(CSV, 기간 지정 — 수동 생성) */
 	OPERATOR_AUDIT(false);
 
 	private final boolean tenant;
