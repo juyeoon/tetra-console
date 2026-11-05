@@ -205,6 +205,18 @@ export const kpi = {
   valueFluid: v('kpi-value-fluid'),
 };
 
+/** OPS-04 이벤트 타임라인 — 막대 구간 · 겹침 띠 · 실패 · 지난 이벤트 */
+export const timeline = {
+  beforeEntry: v('timeline-before-entry'),
+  entry: v('timeline-entry'),
+  live: v('timeline-live'),
+  wrapA: v('timeline-wrap-a'),
+  wrapB: v('timeline-wrap-b'),
+  overlap: v('timeline-overlap'),
+  failed: v('timeline-failed'),
+  pastOpacity: v('timeline-past-opacity'),
+};
+
 /** 자주 쓰는 글자 묶음 (sx에 펼쳐서 사용) */
 export const type = {
   caption: { fontSize: font.size.caption, lineHeight: font.lineHeight.caption },

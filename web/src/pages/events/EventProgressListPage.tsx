@@ -12,6 +12,7 @@ import { useApiQuery } from '@/hooks/useApiQuery';
 import { text } from '@/theme/theme';
 import { formatDateTime } from '@/utils/datetime';
 import { countBy, eventStatusMeta, eventTypeLabel, hostingStatusMeta } from '@/utils/status';
+import EventTimelineCard from './components/EventTimelineCard';
 
 const BREADCRUMBS = ['모니터링', '이벤트 진행 현황'];
 
@@ -41,6 +42,7 @@ export default function EventProgressListPage() {
   return (
     <>
       <PageHeader breadcrumbs={BREADCRUMBS} />
+      <EventTimelineCard />
       <ListInfoBar groups={[{ items: counts }]} />
 
       <TableCard minWidth={1080}>

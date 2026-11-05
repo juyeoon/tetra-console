@@ -132,6 +132,12 @@ export interface LiveEventItem {
   name: string;
   hostingStartAt: string;
   startAt: string;
+  /** 입장 열림 = 이벤트 시작 − 입장 리드(서버 EntryOpen, 저장값 아님) */
+  entryAt: string | null;
+  /** 이벤트 종료(테넌트 스키마 event.end_at). 테넌트 스키마를 못 읽으면 null */
+  endAt: string | null;
+  /** 호스팅 종료(event.hosting_end_at). 테넌트 스키마를 못 읽으면 null */
+  hostingEndAt: string | null;
   hostingStatus: HostingStatus | null;
   eventStatus: EventStatus | null;
   trafficPlanCode: string;
