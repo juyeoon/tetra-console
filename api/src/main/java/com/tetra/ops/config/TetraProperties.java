@@ -229,9 +229,11 @@ public record TetraProperties(
 	 * 기본값은 application.yml(이름 규칙 tetra-operator-logs-{env}) — 실제 버킷 이름이 규칙과 다르면 REPORT_OPERATOR_BUCKET으로 넣는다.
 	 * metaCleanup = 2년(731일) 지난 리포트 메타 행 지우기(ReportMetaCleanupJob, 하루 1번 새벽). S3 객체는 버킷 수명 주기가 지운다.
 	 * eventResult = 이벤트 결과 리포트(EventResultReportJob: WF4 리스너 시도 + 10분 보충).
+	 * auditBucket = 운영자 접속기록 리포트가 읽는 감사 버킷(audit-logs/). 비우면 operatorBucket의 -operator-logs-를 -audit-로 바꾼 이름
+	 * (dev 규칙 tetra-dev-operator-logs-&lt;계정&gt; ↔ tetra-dev-audit-&lt;계정&gt;, OperatorAuditBuckets). 바꿀 수 없으면 기동은 하고 그 리포트만 409.
 	 */
 	public record Report(@NotBlank String operatorBucket, @Valid @NotNull @DefaultValue MetaCleanup metaCleanup,
-			@Valid @NotNull @DefaultValue EventResult eventResult) {
+			@Valid @NotNull @DefaultValue EventResult eventResult, @DefaultValue("") String auditBucket) {
 	}
 
 	/** enabled = 스케줄 켜기(테스트 프로필은 끔 — 작업은 run()을 직접 부른다) */

@@ -58,7 +58,7 @@ class ReportMetaWriter {
 		}
 		operatorReports.save(OperatorReportMeta.create(name, report.periodStart(), report.periodEnd(),
 				report.category().name(), now, report.key()));
-		notifications.operatorReportCreated(report.category(), report.periodStart());
+		notifications.operatorReportCreated(report.category(), report.periodStart(), report.periodEnd());
 		return true;
 	}
 

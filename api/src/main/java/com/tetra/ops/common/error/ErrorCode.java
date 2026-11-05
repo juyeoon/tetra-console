@@ -37,6 +37,8 @@ public enum ErrorCode {
 	APPROVE_BUSY(HttpStatus.CONFLICT, "다른 승인을 처리하고 있습니다. 잠시 후 다시 시도해 주세요."),
 	/** 리포트 수동 생성: 같은 분류의 리포트 작업 잠금(DbLock)을 다른 작업 · 요청이 쥐고 있음 */
 	REPORT_BUSY(HttpStatus.CONFLICT, "다른 리포트를 만들고 있습니다. 잠시 후 다시 시도해 주세요."),
+	/** 운영자 접속기록 리포트: 감사 버킷 이름을 정할 수 없음(REPORT_AUDIT_BUCKET 없음 + 운영자 리포트 버킷 이름이 규칙 밖) */
+	AUDIT_BUCKET_NOT_CONFIGURED(HttpStatus.CONFLICT, "감사 로그 위치가 설정되지 않아 운영자 접속기록 리포트를 만들 수 없습니다."),
 
 	// 501
 	NOT_IMPLEMENTED(HttpStatus.NOT_IMPLEMENTED, "아직 제공하지 않는 기능입니다."),

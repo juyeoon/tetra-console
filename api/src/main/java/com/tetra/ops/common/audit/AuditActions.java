@@ -81,7 +81,8 @@ public final class AuditActions {
 					"reportId"),
 			new Entry(HttpMethod.POST, OPS + "/reports/{reportId}/email", "REPORT_MAIL", AuditContext.REPORT,
 					"reportId"),
-			new Entry(HttpMethod.POST, OPS + "/reports/generate", "REPORT_GENERATE", AuditContext.EVENT, null),
+			// 대상은 분류별 보강 값만: EVENT_RESULT → EVENT(본문 eventId), OPERATOR_AUDIT → REPORT(만든 메타 id)
+			new Entry(HttpMethod.POST, OPS + "/reports/generate", "REPORT_GENERATE", null, null),
 			// 테넌트 (OPS-06 · 07) — 이메일 중복 확인의 이메일(쿼리)은 남기지 않는다
 			new Entry(HttpMethod.GET, OPS + "/tenants", "TENANT_LIST_VIEW", null, null),
 			new Entry(HttpMethod.GET, OPS + "/tenants/email-availability", "TENANT_EMAIL_CHECK", null, null),
@@ -93,7 +94,51 @@ public final class AuditActions {
 			new Entry(HttpMethod.GET, OPS + "/tenants/{tenantId}/resources", "TENANT_RESOURCES_VIEW",
 					AuditContext.TENANT, "tenantId"));
 
+	/**
+	 * 행위 코드의 짧은 한글 이름(운영자 접속기록 리포트 CSV '행위' 열). 위 표의 코드 전부 + {@link #API_REQUEST}.
+	 * 표에 코드를 더하면 여기에도 더한다(AuditActionNamesTest가 빠진 코드 · 남는 이름을 잡는다).
+	 */
+	public static final Map<String, String> NAMES = Map.ofEntries(
+			Map.entry("AUTH_LOGIN", "로그인"),
+			Map.entry("AUTH_LOGOUT", "로그아웃"),
+			Map.entry("ACCOUNT_VIEW", "내 정보 조회"),
+			Map.entry("DASHBOARD_VIEW", "대시보드 조회"),
+			Map.entry("APPLICATION_LIST_VIEW", "신청 목록 조회"),
+			Map.entry("LIVE_EVENT_LIST_VIEW", "진행 이벤트 목록 조회"),
+			Map.entry("EVENT_VIEW", "이벤트 상세 조회"),
+			Map.entry("EVENT_APPROVE", "이벤트 승인"),
+			Map.entry("EVENT_REJECT", "이벤트 반려"),
+			Map.entry("EVENT_RESULT_VIEW", "이벤트 결과 조회"),
+			Map.entry("ISSUANCE_CSV_DOWNLOAD", "발급 이력 CSV 다운로드"),
+			Map.entry("APPLICATION_SUMMARY_VIEW", "신청 내용 조회"),
+			Map.entry("MONITORING_OVERVIEW_VIEW", "홈 모니터링 조회"),
+			Map.entry("TRAFFIC_PLATFORM_VIEW", "플랫폼 트래픽 조회"),
+			Map.entry("TRAFFIC_EVENT_LIST_VIEW", "트래픽 이벤트 목록 조회"),
+			Map.entry("TRAFFIC_EVENT_VIEW", "이벤트 트래픽 조회"),
+			Map.entry("EXECUTION_VIEW", "자동화 실행 조회"),
+			Map.entry("NOTIFICATION_LIST_VIEW", "알림 목록 조회"),
+			Map.entry("NOTIFICATION_COUNT_VIEW", "안 읽은 알림 수 조회"),
+			Map.entry("NOTIFICATION_READ", "알림 읽음"),
+			Map.entry("NOTIFICATION_READ_ALL", "알림 모두 읽음"),
+			Map.entry("REPORT_LIST_VIEW", "리포트 목록 조회"),
+			Map.entry("REPORT_DOWNLOAD", "리포트 다운로드"),
+			Map.entry("REPORT_MAIL", "리포트 메일 전송"),
+			Map.entry("REPORT_GENERATE", "리포트 생성"),
+			Map.entry("TENANT_LIST_VIEW", "테넌트 목록 조회"),
+			Map.entry("TENANT_EMAIL_CHECK", "테넌트 이메일 중복 확인"),
+			Map.entry("TENANT_REGISTER", "테넌트 등록"),
+			Map.entry("TENANT_VIEW", "테넌트 상세 조회"),
+			Map.entry("TENANT_UPDATE", "테넌트 정보 수정"),
+			Map.entry("TENANT_EVENTS_VIEW", "테넌트 이벤트 조회"),
+			Map.entry("TENANT_RESOURCES_VIEW", "테넌트 리소스 조회"),
+			Map.entry(API_REQUEST, "기타 요청"));
+
 	private AuditActions() {
+	}
+
+	/** 행위 코드의 한글 이름. 표에 없는 코드(다른 버전이 남긴 줄 등)는 코드 그대로, null이면 null */
+	public static String name(String action) {
+		return action == null ? null : NAMES.getOrDefault(action, action);
 	}
 
 	/** 표의 줄(못 찾으면 entry null = API_REQUEST) + 경로 변수. 패턴이 없으면(MVC까지 오지 않음) 경로 변수도 없다. */

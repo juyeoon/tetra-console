@@ -32,7 +32,7 @@ class ReportServiceTest {
 	@Test
 	void bucketComesFromSetting() {
 		var report = new TetraProperties.Report("tetra-dev-operator-logs-000000000000", new TetraProperties.MetaCleanup(true),
-				new TetraProperties.EventResult(true, 3));
+				new TetraProperties.EventResult(true, 3), "");
 		var properties = new TetraProperties("dev", null, null, null, null, null, null, null, null, null, null, null, report,
 				null, null, null, "tetraops.cloud");
 

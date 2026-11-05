@@ -1,5 +1,6 @@
 package com.tetra.ops.report;
 
+import java.time.LocalDate;
 import java.time.YearMonth;
 
 import org.springframework.http.HttpStatus;
@@ -26,9 +27,9 @@ import jakarta.validation.constraints.NotNull;
 
 /**
  * OPS-09 리포트. Tetra Portal 리포트(UI-TP-12)와 같은 화면. 행은 리포트 작업(ReportStore)이 넣는다(없으면 빈 목록).
- * 수동 생성(POST /generate)은 화면 없는 시험 · 재생성용.
+ * 수동 생성(POST /generate)은 OPS-09 [리포트 만들기] 모달(운영자 접속기록 · 이벤트 결과)과 시험 · 재생성에서 부른다.
  */
-@Tag(name = "리포트", description = "OPS-09 리포트 목록 · 다운로드 · 이메일 전송 · 수동 생성(시험 · 재생성용)")
+@Tag(name = "리포트", description = "OPS-09 리포트 목록 · 다운로드 · 이메일 전송 · 수동 생성(운영자 접속기록 · 이벤트 결과)")
 @RestController
 @RequestMapping("/api/ops/reports")
 public class ReportController {
@@ -43,11 +44,15 @@ public class ReportController {
 	}
 
 	public record ReportGenerateRequest(
-			@Schema(description = "리포트 분류. 지금은 EVENT_RESULT만 만든다(MONTHLY · OPERATOR_AUDIT는 501)", example = "EVENT_RESULT",
+			@Schema(description = "리포트 분류. EVENT_RESULT · OPERATOR_AUDIT를 만든다(MONTHLY는 501)", example = "OPERATOR_AUDIT",
 					requiredMode = Schema.RequiredMode.REQUIRED) @NotNull(message = "필수 입력입니다.") ReportCategory category,
-			@Schema(description = "EVENT_RESULT에 필수", example = "123") Long eventId,
-			@Schema(description = "MONTHLY · OPERATOR_AUDIT용 대상 달(yyyy-MM, 다음 MR). EVENT_RESULT에 보내면 400", type = "string",
-					example = "2026-10") YearMonth month) {
+			@Schema(description = "EVENT_RESULT에 필수. 다른 분류에 보내면 400", example = "123") Long eventId,
+			@Schema(description = "MONTHLY용 대상 달(yyyy-MM, 다음 MR). 다른 분류에 보내면 400", type = "string",
+					example = "2026-10") YearMonth month,
+			@Schema(description = "OPERATOR_AUDIT 시작일(KST, 포함)에 필수. EVENT_RESULT에 보내면 400", type = "string",
+					example = "2026-11-01") LocalDate from,
+			@Schema(description = "OPERATOR_AUDIT 종료일(KST, 포함)에 필수. from ≤ to ≤ 오늘, 기간 최대 31일. EVENT_RESULT에 보내면 400",
+					type = "string", example = "2026-11-05") LocalDate to) {
 	}
 
 	@Operation(summary = "OPS-09 리포트 목록", description = "최근 생성순(createdAt · reportId 내림차순). 페이지네이션 없음")
@@ -75,17 +80,21 @@ public class ReportController {
 		service.email(reportId, CurrentOperator.id(jwt));
 	}
 
-	@Operation(summary = "리포트 수동 생성(시험 · 재생성용)",
-			description = "EVENT_RESULT: 이벤트 하나의 결과 리포트를 바로 만든다(자동 생성의 보충 기간 조건 없음). 리포트 작업과 같은 잠금을 "
-					+ "기다리지 않고 잡고, 못 잡으면 409 REPORT_BUSY. 결과 탭이 READY가 아니면 409 RESULT_NOT_READY. 같은 리포트를 다시 "
-					+ "만들면 파일만 덮어쓰고 created=false(메타 · 테넌트 알림은 처음 한 번). filePath는 테넌트 로그 버킷 안의 키. "
-					+ "MONTHLY · OPERATOR_AUDIT는 501 NOT_IMPLEMENTED, EVENT_RESULT에 month를 보내면 400")
+	@Operation(summary = "리포트 수동 생성(OPS-09 [리포트 만들기] · 시험 · 재생성용)",
+			description = "EVENT_RESULT: 이벤트 하나의 결과 리포트를 바로 만든다(자동 생성의 보충 기간 조건 없음). 결과 탭이 READY가 "
+					+ "아니면 409 RESULT_NOT_READY. filePath는 테넌트 로그 버킷 안의 키. "
+					+ "OPERATOR_AUDIT: 기간(from ~ to, KST 날짜 양끝 포함, 최대 31일, 오늘까지)의 운영자 접속기록 CSV를 만든다. filePath는 "
+					+ "운영자 리포트 버킷 안의 키, rows는 데이터 줄 수. 감사 버킷 이름을 정할 수 없으면 409 AUDIT_BUCKET_NOT_CONFIGURED. "
+					+ "두 분류 모두 리포트 작업 잠금을 기다리지 않고 잡고, 못 잡으면 409 REPORT_BUSY. 같은 리포트를 다시 만들면 파일만 "
+					+ "덮어쓰고 created=false(메타 · 알림은 처음 한 번). MONTHLY는 501 NOT_IMPLEMENTED, 분류에 쓰지 않는 값을 보내면 400")
 	@ApiErrorCodes({ ErrorCode.INVALID_INPUT, ErrorCode.EVENT_NOT_FOUND, ErrorCode.RESULT_NOT_READY,
-			ErrorCode.TENANT_NOT_READY, ErrorCode.REPORT_BUSY, ErrorCode.NOT_IMPLEMENTED })
+			ErrorCode.TENANT_NOT_READY, ErrorCode.REPORT_BUSY, ErrorCode.AUDIT_BUCKET_NOT_CONFIGURED,
+			ErrorCode.NOT_IMPLEMENTED })
 	@PostMapping("/generate")
 	public ReportGenerateService.ReportGenerateResponse generate(@Valid @RequestBody ReportGenerateRequest request,
 			@Parameter(hidden = true) @AuthenticationPrincipal Jwt jwt) {
-		return generateService.generate(request.category(), request.eventId(), request.month(), CurrentOperator.id(jwt));
+		return generateService.generate(new ReportGenerateService.Command(request.category(), request.eventId(),
+				request.month(), request.from(), request.to()), CurrentOperator.id(jwt));
 	}
 
 }

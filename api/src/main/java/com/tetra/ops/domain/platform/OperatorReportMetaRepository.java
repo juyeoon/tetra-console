@@ -2,6 +2,7 @@ package com.tetra.ops.domain.platform;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
@@ -16,6 +17,9 @@ public interface OperatorReportMetaRepository extends JpaRepository<OperatorRepo
 
 	/** 같은 리포트(같은 키)가 이미 있는지 — 다시 만들 때 메타 · 알림을 한 번만 남기려고. file_path 인덱스는 없다(한 달 몇 행) */
 	boolean existsByFilePath(String filePath);
+
+	/** 그 키의 메타(운영자 접속기록 수동 생성 응답 · 감사 줄 대상 id). 저장이 멱등이라 보통 한 행 — 여럿이면 먼저 넣은 행 */
+	Optional<OperatorReportMeta> findFirstByFilePathOrderByReportIdAsc(String filePath);
 
 	/** 보관 2년: created_at이 cutoff보다 이른 행을 지운다(idx_operator_report_created). 지운 행 수 */
 	@Transactional

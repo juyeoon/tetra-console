@@ -86,6 +86,16 @@ class CsvWriterTest {
 		assertThat(csv).isEqualTo("a,b,c,d\r\n-1,-0.5,2026-11-01T10:00:00.000+09:00,1043\r\n");
 	}
 
+	/** 코드가 정한 고정 글자(해당 없음 "-")는 가림을 켜도 그대로, 데이터 값 "-"는 가린다. 따옴표 규칙은 그대로 */
+	@Test
+	void literalSkipsFormulaGuardOnly() {
+		String csv = body(CsvWriter.withFormulaGuard("a", "b", "c")
+			.row(new CsvWriter.Literal("-"), "-", new CsvWriter.Literal("-,x"))
+			.toBytes());
+
+		assertThat(csv).isEqualTo("a,b,c\r\n-,'-,\"-,x\"\r\n");
+	}
+
 	@Test
 	void nullIsEmptyTimeIsKstMillisAndDecimalIsPlain() {
 		String csv = body(new CsvWriter("a", "b", "c", "d")

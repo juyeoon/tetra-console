@@ -76,8 +76,7 @@ class ApiDocsTest extends IntegrationTest {
 		JsonNode download = docs.path("paths").path("/api/ops/reports/{reportId}/download").path("get");
 		assertThat(download.path("responses").path("404").path("description").asString()).contains("REPORT_NOT_FOUND");
 
-		// 신청 내용은 501이 아니고 404 · 409를 문서에 둔다. 껍데기 API는 없다 — 501은 리포트 수동 생성의 아직 없는 분류(MONTHLY ·
-		// OPERATOR_AUDIT)뿐
+		// 신청 내용은 501이 아니고 404 · 409를 문서에 둔다. 껍데기 API는 없다 — 501은 리포트 수동 생성의 아직 없는 분류(MONTHLY)뿐
 		JsonNode summary = docs.path("paths").path("/api/ops/events/{eventId}/application-summary").path("get");
 		assertThat(summary.path("responses").has("501")).isFalse();
 		assertThat(summary.path("responses").path("404").path("description").asString()).contains("EVENT_NOT_FOUND");
@@ -88,13 +87,17 @@ class ApiDocsTest extends IntegrationTest {
 		JsonNode generate = docs.path("paths").path("/api/ops/reports/generate").path("post");
 		assertThat(generate.path("responses").path("501").path("description").asString()).contains("NOT_IMPLEMENTED");
 		assertThat(generate.path("responses").path("409").path("description").asString()).contains("REPORT_BUSY",
-				"RESULT_NOT_READY", "TENANT_NOT_READY");
+				"RESULT_NOT_READY", "TENANT_NOT_READY", "AUDIT_BUCKET_NOT_CONFIGURED");
 		assertThat(generate.path("responses").path("404").path("description").asString()).contains("EVENT_NOT_FOUND");
 		assertThat(generate.path("responses").path("400").path("description").asString()).contains("INVALID_INPUT");
 		assertThat(generate.path("responses").path("401").path("description").asString()).contains("UNAUTHENTICATED");
-		// month는 객체가 아니라 yyyy-MM 문자열
+		// month는 객체가 아니라 yyyy-MM 문자열, from · to(운영자 접속기록 기간)는 yyyy-MM-dd 문자열
 		assertThat(docs.path("components").path("schemas").path("ReportGenerateRequest").path("properties").path("month")
 			.path("type").asString()).isEqualTo("string");
+		for (String field : new String[] { "from", "to" }) {
+			assertThat(docs.path("components").path("schemas").path("ReportGenerateRequest").path("properties").path(field)
+				.path("type").asString()).as(field).isEqualTo("string");
+		}
 		// layoutConfig는 문자열이 아니라 객체 스키마
 		assertThat(docs.path("components").path("schemas").path("ApplicationSummaryResponse").path("properties")
 			.path("layoutConfig").path("$ref").asString()).endsWith("/LayoutConfig");
