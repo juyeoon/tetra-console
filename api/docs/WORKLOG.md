@@ -417,3 +417,12 @@
 - 확인: ./gradlew test 544개 통과(HSTS 테스트 1개 지움)
 - 파일: src/main/java/com/tetra/ops/config/SecurityConfig.java, src/main/resources/application.yml(주석), src/test/java/com/tetra/ops/AuditLogApiTest.java, README.md(한 줄)
 - 남은 것: CLAUDE.md(로컬) §7.21 같은 한 줄로 고침
+
+## 2026-11-05 02:30 KST — OPS-04 목록에 입장 · 이벤트 종료 · 호스팅 종료 시각(TL2-1, api)
+- 한 일: GET /api/ops/live-events 항목에 entryAt · endAt · hostingEndAt(startAt 뒤, 시간 순서). entryAt = EntryOpen.at(startAt)(저장값 아님, 지금 입장 리드), endAt = 테넌트 스키마 event.end_at(상세 basic.endAt과 같은 이름 · 뜻 — OPS-05의 endAt은 hosting_end_at, 주석 · @Schema에 적음), hostingEndAt = event.hosting_end_at. 모두 Kst.toOffset(+09:00). READY가 아니거나 테넌트 스키마에 행이 없으면 endAt · hostingEndAt null(목록에서 빼지 않음). 엔드포인트 · 정렬 · counts · 페이지 없음 그대로, asOf 없음
+- 읽기: registry 결과를 테넌트별로 묶어 테넌트마다 한 번 router.inTenant(tenant, () -> LiveEventTimesReader.read(ids))(@Transactional(readOnly) findAllById, TrafficCatalog · AutomationAlertJob 방식). liveEvents()의 @Transactional(readOnly) 뺌(TenantRouter는 트랜잭션 밖) — 공용 스키마 읽기(목록 · 건수 · tenant findAllById)는 저장소 메서드 기본 트랜잭션. 쿼리 수: 공용 3(목록 · 건수 · 테넌트) + READY 테넌트 수
+- 읽기 실패: 한 테넌트 스키마를 읽지 못하면 그 테넌트 이벤트의 두 종료 값만 null(WARN), 목록 · 건수는 정상
+- 테스트: EventQueryApiTest — liveEventsAreApprovedOnlyByStartDescending에 새 필드 단언, 새 4개(테넌트 스키마 값 그대로 · entryAt = startAt − EntryOpen.ENTRY_OPEN_LEAD / 테넌트 2개 저마다 자기 스키마 값 + inTenant 2번(TenantRouter spy) / READY 아님 · 행 없음 → null, 목록에 남음, inTenant 1번 / 한 테넌트 스키마 읽기 실패(spy로 B만 예외) → 200, B 이벤트만 두 종료 값 null, A 값 · 목록 · 건수 정상). ./gradlew test 548개 통과
+- 확인(로컬 bootRun, local 프로필): /v3/api-docs LiveEventItem에 entryAt · endAt · hostingEndAt(설명 포함, startAt 뒤 순서), GET /live-events 1044 → entryAt = startAt − 15분, endAt · hostingEndAt = 로컬 t_ 스키마 값과 같음. 끝난 뒤 앱 끔, 컨테이너 stop(데이터 유지)
+- 파일: src/main/java/com/tetra/ops/event/{EventListService, EventController, LiveEventTimesReader(신규)}.java, src/test/java/com/tetra/ops/EventQueryApiTest.java
+- 남은 것: 목록 화면(web)은 그대로, 타임라인 카드는 TL2-2(web). CLAUDE.md(로컬) §7.7 고침
