@@ -1,6 +1,6 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { formatDate, formatDateTime, formatMonthDayTime } from './datetime.ts';
+import { formatDate, formatDateTime, formatMonthDayTime, formatMonthDayWeekday } from './datetime.ts';
 
 describe('formatDateTime · formatDate (KST 고정)', () => {
   test('API의 +09:00 값을 그대로 표시', () => {
@@ -35,5 +35,19 @@ describe('formatMonthDayTime (KST, 연도 생략)', () => {
   test('값이 없거나 틀리면 -', () => {
     assert.equal(formatMonthDayTime(null), '-');
     assert.equal(formatMonthDayTime('not-a-date'), '-');
+  });
+});
+
+describe('formatMonthDayWeekday (KST 날짜 · 요일)', () => {
+  test("'MM.DD (요일)' — ISO · epoch 모두, 다른 오프셋은 KST 날짜로", () => {
+    assert.equal(formatMonthDayWeekday('2026-11-04T06:00:00+09:00'), '11.04 (수)');
+    assert.equal(formatMonthDayWeekday(Date.parse('2026-11-08T23:59:00+09:00')), '11.08 (일)');
+    // UTC 11-02 15:00 = KST 11-03 00:00(화)
+    assert.equal(formatMonthDayWeekday('2026-11-02T15:00:00Z'), '11.03 (화)');
+  });
+
+  test('값이 없거나 틀리면 -', () => {
+    assert.equal(formatMonthDayWeekday(null), '-');
+    assert.equal(formatMonthDayWeekday('not-a-date'), '-');
   });
 });

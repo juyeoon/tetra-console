@@ -1,9 +1,10 @@
-import { createContext, useContext, useLayoutEffect, useRef, useState } from 'react';
+import { createContext, useContext } from 'react';
 import { Box, Stack, Typography } from '@mui/material';
 import { LineChart } from '@mui/x-charts/LineChart';
 import { ChartsReferenceLine } from '@mui/x-charts/ChartsReferenceLine';
 import { ChartsAxisTooltipContent, ChartsTooltipContainer, useAxesTooltip, type ChartsTooltipProps } from '@mui/x-charts/ChartsTooltip';
 import StatusChip from '@/components/common/StatusChip';
+import { useWidth } from '@/hooks/useWidth';
 import { chartColors, font, line, radius, text, tones } from '@/theme/theme';
 import { formatClock, formatClockMinute } from '@/utils/datetime';
 import { MARKER_LABEL_OFFSET, MARKER_LEVEL_PX, markerLabels, timeTicks, tooltipValue, Y_AXIS_WIDTH, type ChartView, type SeriesRole } from './trafficMonitoringView';
@@ -58,22 +59,6 @@ function NoteTooltip(props: ChartsTooltipProps) {
 
 type MetricChartProps = Pick<ChartView, 'title' | 'unit' | 'x' | 'series' | 'thresholds' | 'guides' | 'markers' | 'empty' | 'delayed'> &
   Partial<Pick<ChartView, 'current' | 'currentUnit' | 'yMax' | 'tooltipNote'>> & { height?: number };
-
-/** 요소 폭(px). 크기가 바뀌면 다시 잰다 — x축 눈금 수를 폭에 맞추는 데 쓴다 */
-function useWidth<T extends HTMLElement>() {
-  const ref = useRef<T | null>(null);
-  const [width, setWidth] = useState(0);
-  useLayoutEffect(() => {
-    const el = ref.current;
-    if (!el) return undefined;
-    setWidth(el.getBoundingClientRect().width);
-    if (typeof ResizeObserver === 'undefined') return undefined;
-    const observer = new ResizeObserver(([entry]) => setWidth(entry.contentRect.width));
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, []);
-  return [ref, width] as const;
-}
 
 /**
  * 머리글(제목 · 단위 · 오른쪽 현재 값) + 선 그래프(축 눈금, 기준 점선, 세로 점선 5종 — 이름은 겹치면 단을 엇갈림) + 범례.

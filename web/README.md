@@ -153,7 +153,7 @@ src/
 - 불러오기 `src/hooks/useApiQuery.ts`: 화면에 들어올 때 부르고 `loading` · `error` · `reload` · `setData`(수정 응답 반영). 표시는 `components/common/QueryStatus.tsx`(스피너 / 서버 문구 + 다시 시도)
 - 폼 오류 `utils/formErrors.ts`: 400 `fields` → 입력란, 409 `EMAIL_DUPLICATED` → email 입력란, 그 밖 → 폼 위 Alert
 
-- 응답 → 화면 모델(순수 함수, node 테스트): 이벤트 `pages/events/eventView.ts`(상태 로그 `statusLogs` → 가로 타임라인 `StatusTimeline`, 반려 사유 · 처리 일시는 그중 신청(APPLICATION) 로그에서, 결과 state `IN_PROGRESS`는 지금 시각과 오픈 시각으로 오픈 전/진행 중), 승인 · 반려 실패 `pages/events/decision.ts`, 테넌트 `pages/tenants/tenantView.ts`, 대시보드 알림 `pages/dashboard/dashboardView.ts`, 대시보드 모니터링 카드(클러스터 · 트래픽 · 테넌트 흐름 점 개수) `pages/dashboard/monitoringView.ts`, 트래픽 모니터링(상태 칸 · 노드 막대 색 · 드롭다운 선택 유지 · 구역 상태별 표시 · KPI · 그래프 7개 변환) `pages/monitoring/trafficMonitoringView.ts`, 알림센터 필터 · 건수 · 검색 · 읽음 `pages/logs/notificationView.ts`, 리포트 표 · 토스트 문구 `pages/logs/reportView.ts`, 신청 요약 항목 · 화면 설정 요약 `pages/events/applicationSummaryView.ts`
+- 응답 → 화면 모델(순수 함수, node 테스트): 이벤트 `pages/events/eventView.ts`(상태 로그 `statusLogs` → 가로 타임라인 `StatusTimeline`, 반려 사유 · 처리 일시는 그중 신청(APPLICATION) 로그에서, 결과 state `IN_PROGRESS`는 지금 시각과 오픈 시각으로 오픈 전/진행 중), 승인 · 반려 실패 `pages/events/decision.ts`, 테넌트 `pages/tenants/tenantView.ts`, 대시보드 알림 `pages/dashboard/dashboardView.ts`, 대시보드 모니터링 카드(클러스터 · 트래픽 · 테넌트 흐름 점 개수) `pages/dashboard/monitoringView.ts`, 트래픽 모니터링(상태 칸 · 노드 막대 색 · 드롭다운 선택 유지 · 구역 상태별 표시 · KPI · 그래프 7개 변환) `pages/monitoring/trafficMonitoringView.ts`, 알림센터 필터 · 건수 · 검색 · 읽음 `pages/logs/notificationView.ts`, 리포트 표 · 토스트 문구 `pages/logs/reportView.ts`, 신청 요약 항목 · 화면 설정 요약 `pages/events/applicationSummaryView.ts`, OPS-04 이벤트 타임라인(기간 4종 · 눈금 · 막대 구간 자르기 · 실패 표시 · 줄 배치 · 동시 호스팅 · 다음 호스팅 · 툴팁 문구, 60초 폴링 · 30초 지금) `pages/events/timelineView.ts`
 
 `TODO:` 주석 위치: 현재 없음
 

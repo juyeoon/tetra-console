@@ -45,6 +45,16 @@ export function formatClock(value: string | number | null | undefined): string {
   return t ? `${t.h}:${t.mi}:${t.s}` : '–';
 }
 
+const WEEKDAYS = ['일', '월', '화', '수', '목', '금', '토'];
+
+/** '2026-11-04T06:00:00+09:00' 또는 epoch 밀리초 → '11.04 (수)' (KST 날짜 · 요일). 값이 없으면 '-' */
+export function formatMonthDayWeekday(value: string | number | null | undefined): string {
+  const t = value == null || value === '' ? null : kst(value);
+  if (!t) return '-';
+  const weekday = WEEKDAYS[new Date(Date.UTC(Number(t.y), Number(t.mo) - 1, Number(t.d))).getUTCDay()];
+  return `${t.mo}.${t.d} (${weekday})`;
+}
+
 /** epoch 밀리초 → '18:09' (시간 축 눈금) */
 export function formatClockMinute(epochMillis: number): string {
   const t = kst(epochMillis);

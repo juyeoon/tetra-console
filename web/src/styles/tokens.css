@@ -241,4 +241,17 @@
   --kpi-value-radius: 0;
   /* 값은 한 줄 유지 — 카드가 좁으면 카드 폭 비율(cqi)만큼 줄어들고, 최대 크기는 --fs-page */
   --kpi-value-fluid: 8.6cqi;
+
+  /* ------------------------------------------------------------------
+     10. 이벤트 타임라인 (OPS-04 이벤트 진행 현황 상단)
+         막대 구간 4개 = 입장 전(호스팅 시작~입장) · 입장(입장~시작) · 진행(시작~종료) · 마무리(종료~호스팅 종료, 빗금)
+     ------------------------------------------------------------------ */
+  --timeline-before-entry: #e1d5fb;
+  --timeline-entry: var(--chart-2);
+  --timeline-live: var(--chart-1);
+  --timeline-wrap-a: var(--mono-300);   /* 마무리 빗금 두 색 */
+  --timeline-wrap-b: #ecebf2;
+  --timeline-overlap: color-mix(in srgb, var(--chart-1) 10%, transparent);   /* 동시 호스팅 띠 */
+  --timeline-failed: var(--tone-red-fg);   /* 실패 점선 테두리 · 상태 문구 */
+  --timeline-past-opacity: 0.55;           /* 호스팅 종료가 지난 이벤트 */
 }
