@@ -58,7 +58,11 @@ public class EventController {
 	}
 
 	@Operation(summary = "OPS-04 진행 목록 + 호스팅상태별 건수",
-			description = "승인된(APPROVED) 이벤트만, 이벤트 시작일 내림차순. counts는 PENDING·HOSTING·ENDED 3개")
+			description = "승인된(APPROVED) 이벤트만, 이벤트 시작일 내림차순. counts는 PENDING·HOSTING·ENDED 3개. "
+					+ "entryAt = 이벤트 시작 − 입장 리드(입장 열림, 저장값 아님), endAt = 이벤트 종료(end_at, 상세 basic.endAt과 같음 — "
+					+ "OPS-05의 endAt은 호스팅 종료), hostingEndAt = 호스팅 종료(hosting_end_at). "
+					+ "endAt·hostingEndAt은 테넌트 스키마에서 읽어, 테넌트가 READY가 아니거나 행이 없거나 그 테넌트 스키마를 읽지 못했을 때 null"
+					+ "(목록에서는 빠지지 않고, 다른 테넌트 값 · 목록 · 건수는 정상)")
 	@GetMapping("/live-events")
 	public EventListService.LiveEventListResponse liveEvents() {
 		return listService.liveEvents();

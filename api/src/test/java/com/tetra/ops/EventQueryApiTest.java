@@ -2,6 +2,8 @@ package com.tetra.ops;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -11,15 +13,27 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.function.Supplier;
 
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentMatchers;
+import org.springframework.dao.DataAccessResourceFailureException;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 
+import com.tetra.ops.domain.platform.Tenant;
+import com.tetra.ops.event.EntryOpen;
 import com.tetra.ops.external.DownloadUrlSigner.SignedUrl;
 import com.tetra.ops.support.IntegrationTest;
 import com.tetra.ops.support.TestData;
+import com.tetra.ops.tenancy.TenantRouter;
 
 /** OPS-02·03·03-1·04·04-1·04-3 조회 (§7.2, 7.5~7.8). */
 class EventQueryApiTest extends IntegrationTest {
+
+	/** 실제 라우팅 그대로, OPS-04 목록이 테넌트 스키마에 들어간 횟수만 센다 */
+	@MockitoSpyBean
+	TenantRouter router;
 
 	@Test
 	void detailBeforeApprovalHasNoHostingStatusOrResources() throws Exception {
@@ -171,7 +185,129 @@ class EventQueryApiTest extends IntegrationTest {
 			.andExpect(jsonPath("$.items.length()").value(4))
 			.andExpect(jsonPath("$.items[0].eventId").value(8002))
 			.andExpect(jsonPath("$.items[3].eventId").value(8003))
-			.andExpect(jsonPath("$.items[0].trafficPlanCode").value("M"));
+			.andExpect(jsonPath("$.items[0].trafficPlanCode").value("M"))
+			// 타임라인용 시각 3개(TestData 기본: 이벤트 종료 = 시작 + 3시간, 호스팅 종료 = 시작 + 5시간)
+			.andExpect(jsonPath("$.items[0].entryAt").value(kst(TestData.FUTURE.plusDays(1).minus(EntryOpen.ENTRY_OPEN_LEAD))))
+			.andExpect(jsonPath("$.items[0].endAt").value(kst(TestData.FUTURE.plusDays(1).plusHours(3))))
+			.andExpect(jsonPath("$.items[0].hostingEndAt").value(kst(TestData.FUTURE.plusDays(1).plusHours(5))))
+			.andExpect(jsonPath("$.items[3].entryAt").value(kst(TestData.FUTURE.minusDays(1).minus(EntryOpen.ENTRY_OPEN_LEAD))))
+			.andExpect(jsonPath("$.items[3].endAt").value(kst(TestData.FUTURE.minusDays(1).plusHours(3))))
+			.andExpect(jsonPath("$.items[3].hostingEndAt").value(kst(TestData.FUTURE.minusDays(1).plusHours(5))));
+	}
+
+	/** endAt · hostingEndAt은 테넌트 스키마 event 값 그대로(+09:00), entryAt = startAt − 입장 리드(EntryOpen) */
+	@Test
+	void liveEventTimesComeFromTenantSchemaAndEntryLead() throws Exception {
+		data.tenant(A, "A사", "ACTIVE", "READY");
+		LocalDateTime start = TestData.FUTURE;
+		data.event(8101, A).approved("DEPLOYED", "SCHEDULED", "aaaa0101").startAt(start).insert();
+		// TestData 기본(시작 + 3시간 · + 5시간)과 다른 값으로 바꿔, 계산이 아니라 테넌트 스키마에서 읽는지 본다
+		LocalDateTime endAt = start.plusMinutes(95).plusSeconds(30);
+		LocalDateTime hostingEndAt = start.plusMinutes(250);
+		setEndTimes(A, 8101, endAt, hostingEndAt);
+
+		mvc.perform(get("/api/ops/live-events").cookie(operatorCookie()))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.items.length()").value(1))
+			.andExpect(jsonPath("$.items[0].startAt").value(kst(start)))
+			.andExpect(jsonPath("$.items[0].entryAt").value(kst(start.minus(EntryOpen.ENTRY_OPEN_LEAD))))
+			.andExpect(jsonPath("$.items[0].endAt").value(kst(endAt)))
+			.andExpect(jsonPath("$.items[0].hostingEndAt").value(kst(hostingEndAt)));
+	}
+
+	/** 테넌트 2개의 이벤트가 저마다 자기 스키마 값으로 채워지고, 테넌트 스키마에는 테넌트마다 한 번만 들어간다 */
+	@Test
+	void liveEventsReadEachTenantSchemaOnce() throws Exception {
+		data.tenant(A, "A사", "ACTIVE", "READY");
+		data.tenant(B, "B사", "ACTIVE", "READY");
+		LocalDateTime start = TestData.FUTURE;
+		data.event(8201, A).approved("HOSTING", "OPEN", "aaaa0201").startAt(start.plusDays(2)).insert();
+		data.event(8202, B).approved("PENDING", "SCHEDULED", "bbbb0202").startAt(start.plusDays(1)).insert();
+		data.event(8203, A).approved("DEPLOYED", "SCHEDULED", "aaaa0203").startAt(start).insert();
+		setEndTimes(A, 8201, start.plusDays(2).plusMinutes(70), start.plusDays(2).plusMinutes(130));
+		setEndTimes(B, 8202, start.plusDays(1).plusMinutes(80), start.plusDays(1).plusMinutes(140));
+		setEndTimes(A, 8203, start.plusMinutes(90), start.plusMinutes(150));
+
+		mvc.perform(get("/api/ops/live-events").cookie(operatorCookie()))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.items[*].eventId").value(org.hamcrest.Matchers.contains(8201, 8202, 8203)))
+			.andExpect(jsonPath("$.items[0].tenantName").value("A사"))
+			.andExpect(jsonPath("$.items[0].endAt").value(kst(start.plusDays(2).plusMinutes(70))))
+			.andExpect(jsonPath("$.items[0].hostingEndAt").value(kst(start.plusDays(2).plusMinutes(130))))
+			.andExpect(jsonPath("$.items[1].tenantName").value("B사"))
+			.andExpect(jsonPath("$.items[1].endAt").value(kst(start.plusDays(1).plusMinutes(80))))
+			.andExpect(jsonPath("$.items[1].hostingEndAt").value(kst(start.plusDays(1).plusMinutes(140))))
+			.andExpect(jsonPath("$.items[2].endAt").value(kst(start.plusMinutes(90))))
+			.andExpect(jsonPath("$.items[2].hostingEndAt").value(kst(start.plusMinutes(150))));
+		// 이벤트 3개 · 테넌트 2개 → 테넌트 스키마 조회 2번
+		verify(router, times(2)).inTenant(any(Tenant.class), ArgumentMatchers.<Supplier<Object>>any());
+	}
+
+	/** READY가 아닌 테넌트의 이벤트 · 테넌트 스키마에 행이 없는 이벤트는 endAt · hostingEndAt null, 목록에서는 빠지지 않는다 */
+	@Test
+	void liveEventsWithoutTenantRowKeepNullEndTimes() throws Exception {
+		data.tenant(A, "A사", "ACTIVE", "READY");
+		data.tenant(B, "B사", "ACTIVE", "PROVISIONING");
+		LocalDateTime start = TestData.FUTURE;
+		data.event(8301, A).approved("HOSTING", "OPEN", "aaaa0301").startAt(start.plusDays(2)).insert();
+		// t_B에 행은 있지만 READY가 아니라 들어가지 않는다
+		data.event(8302, B).approved("PENDING", "SCHEDULED", "bbbb0302").startAt(start.plusDays(1)).insert();
+		data.event(8303, A).approved("PENDING", "SCHEDULED", "aaaa0303").startAt(start).registryOnly().insert();
+
+		mvc.perform(get("/api/ops/live-events").cookie(operatorCookie()))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.counts.PENDING").value(2))
+			.andExpect(jsonPath("$.items[*].eventId").value(org.hamcrest.Matchers.contains(8301, 8302, 8303)))
+			.andExpect(jsonPath("$.items[0].endAt").value(kst(start.plusDays(2).plusHours(3))))
+			.andExpect(jsonPath("$.items[0].hostingEndAt").value(kst(start.plusDays(2).plusHours(5))))
+			.andExpect(jsonPath("$.items[1].endAt").value(org.hamcrest.Matchers.nullValue()))
+			.andExpect(jsonPath("$.items[1].hostingEndAt").value(org.hamcrest.Matchers.nullValue()))
+			.andExpect(jsonPath("$.items[1].entryAt").value(kst(start.plusDays(1).minus(EntryOpen.ENTRY_OPEN_LEAD))))
+			.andExpect(jsonPath("$.items[2].endAt").value(org.hamcrest.Matchers.nullValue()))
+			.andExpect(jsonPath("$.items[2].hostingEndAt").value(org.hamcrest.Matchers.nullValue()))
+			.andExpect(jsonPath("$.items[2].entryAt").value(kst(start.minus(EntryOpen.ENTRY_OPEN_LEAD))));
+		// READY인 A만
+		verify(router, times(1)).inTenant(any(Tenant.class), ArgumentMatchers.<Supplier<Object>>any());
+	}
+
+	/** 한 테넌트 스키마 읽기가 실패해도 200 — 그 테넌트 이벤트만 endAt · hostingEndAt null, 다른 테넌트 · 목록 · 건수는 그대로 */
+	@Test
+	void liveEventsKeepListWhenOneTenantSchemaReadFails() throws Exception {
+		data.tenant(A, "A사", "ACTIVE", "READY");
+		data.tenant(B, "B사", "ACTIVE", "READY");
+		LocalDateTime start = TestData.FUTURE;
+		data.event(8401, A).approved("HOSTING", "OPEN", "aaaa0401").startAt(start.plusDays(2)).insert();
+		data.event(8402, B).approved("PENDING", "SCHEDULED", "bbbb0402").startAt(start.plusDays(1)).insert();
+		data.event(8403, B).approved("PENDING", "SCHEDULED", "bbbb0403").startAt(start).insert();
+		// B 스키마 읽기만 실패시킨다(A는 실제 라우팅 그대로)
+		doThrow(new DataAccessResourceFailureException("t_B 읽기 실패")).when(router)
+			.inTenant(ArgumentMatchers.<Tenant>argThat(t -> t != null && B.equals(t.getTenantId())),
+					ArgumentMatchers.<Supplier<Object>>any());
+
+		mvc.perform(get("/api/ops/live-events").cookie(operatorCookie()))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.counts.PENDING").value(2))
+			.andExpect(jsonPath("$.counts.HOSTING").value(1))
+			.andExpect(jsonPath("$.items[*].eventId").value(org.hamcrest.Matchers.contains(8401, 8402, 8403)))
+			.andExpect(jsonPath("$.items[0].endAt").value(kst(start.plusDays(2).plusHours(3))))
+			.andExpect(jsonPath("$.items[0].hostingEndAt").value(kst(start.plusDays(2).plusHours(5))))
+			.andExpect(jsonPath("$.items[1].tenantName").value("B사"))
+			.andExpect(jsonPath("$.items[1].endAt").value(org.hamcrest.Matchers.nullValue()))
+			.andExpect(jsonPath("$.items[1].hostingEndAt").value(org.hamcrest.Matchers.nullValue()))
+			.andExpect(jsonPath("$.items[1].entryAt").value(kst(start.plusDays(1).minus(EntryOpen.ENTRY_OPEN_LEAD))))
+			.andExpect(jsonPath("$.items[2].endAt").value(org.hamcrest.Matchers.nullValue()))
+			.andExpect(jsonPath("$.items[2].hostingEndAt").value(org.hamcrest.Matchers.nullValue()));
+		verify(router, times(2)).inTenant(any(Tenant.class), ArgumentMatchers.<Supplier<Object>>any());
+	}
+
+	private void setEndTimes(String tenantId, long eventId, LocalDateTime endAt, LocalDateTime hostingEndAt) {
+		data.jdbc().update("UPDATE t_%s.event SET end_at = ?, hosting_end_at = ? WHERE event_id = ?".formatted(tenantId),
+				endAt, hostingEndAt, eventId);
+	}
+
+	/** 응답 일시 형식: KST 벽시계(초 포함) + "+09:00" */
+	private static String kst(LocalDateTime value) {
+		return value.format(DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss")) + "+09:00";
 	}
 
 	// ------------------------------------------------------------ OPS-04-3
